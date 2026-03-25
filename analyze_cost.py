@@ -17,17 +17,20 @@ Output:
     plots/cost_vs_compression_ratio.png
     plots/resolve_rate_vs_compression_ratio.png
     plots/aggregate_summary.png
+    plots/sbp_domain_test_time_compute.png
 """
 
 import argparse
 import glob as glob_module
 import json
+import re
 import sys
 from pathlib import Path
 from statistics import mean
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -208,6 +211,33 @@ def _short_name(instance: str, max_len: int = 24) -> str:
     return instance[:max_len] + "…"
 
 
+def _extract_domain(instance_name: str) -> str:
+    """
+    Extract the ``owner/repo`` domain from an SBP instance name.
+
+    Instance names follow the pattern
+    ``instance_<owner>__<repo>-<40-char-hash>-v<version>``.
+    Returns ``<owner>/<repo>``, e.g. ``element-hq/element-web``.
+    """
+    # Strip leading "instance_" prefix if present
+    name = instance_name
+    if name.startswith("instance_"):
+        name = name[len("instance_"):]
+    # Split on double-underscore to separate owner from the rest
+    if "__" not in name:
+        return name
+    owner, rest = name.split("__", 1)
+    # Find the 40-hex-char hash segment preceded by a hyphen to locate where
+    # the repo name ends.  Everything before "-<hash>" is the repo name.
+    m = re.search(r"-[0-9a-f]{40}(?:-|$)", rest)
+    if m:
+        repo = rest[: m.start()]
+    else:
+        # Fallback: take the part before the first "-"
+        repo = rest.split("-")[0]
+    return f"{owner}/{repo}"
+
+
 def _bar_positions(n: int, width: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(n)
     return x - width / 2, x + width / 2
@@ -383,6 +413,78 @@ def plot_aggregate_summary(
     print(f"  Saved: {output_path}")
 
 
+def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> None:
+    """
+    Scatter plot of cost (X) vs resolve rate (Y) for SBP records with context
+    editing, grouped by domain.
+
+    For each domain two points are drawn (no_compression and smart_context) and
+    connected by an arrow showing the direction of change.
+    """
+    # Group records by domain
+    domain_records: dict[str, list[dict]] = {}
+    for r in records:
+        domain = _extract_domain(r["instance"])
+        domain_records.setdefault(domain, []).append(r)
+
+    if not domain_records:
+        print(f"  No SBP domain data available, skipping {output_path}.")
+        return
+
+    domains = sorted(domain_records.keys())
+    n_domains = len(domains)
+    cmap = plt.get_cmap("tab20")
+    colors = {d: cmap(i / n_domains if n_domains > 1 else 0.5) for i, d in enumerate(domains)}
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for domain in domains:
+        recs = domain_records[domain]
+        color = colors[domain]
+
+        nc_costs = [r["no_comp_cost"] for r in recs if r["no_comp_cost"] is not None]
+        nc_resolves = [r["no_comp_resolve"] for r in recs if r["no_comp_resolve"] is not None]
+        sc_costs = [r["sc_cost"] for r in recs if r["sc_cost"] is not None]
+        sc_resolves = [r["sc_resolve"] for r in recs if r["sc_resolve"] is not None]
+
+        if not nc_costs or not nc_resolves or not sc_costs or not sc_resolves:
+            continue
+
+        nc_x = mean(nc_costs)
+        nc_y = mean(nc_resolves)
+        sc_x = mean(sc_costs)
+        sc_y = mean(sc_resolves)
+
+        ax.scatter(nc_x, nc_y, color=color, marker="o", s=80, zorder=3)
+        ax.scatter(sc_x, sc_y, color=color, marker="s", s=80, zorder=3)
+
+        ax.annotate(
+            "",
+            xy=(sc_x, sc_y),
+            xytext=(nc_x, nc_y),
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
+        )
+
+    # Build legend: one colored patch per domain, plus marker-shape entries
+    domain_handles = [mpatches.Patch(color=colors[d], label=d) for d in domains]
+    shape_handles = [
+        ax.scatter([], [], color="gray", marker="o", s=80, label="no_compression"),
+        ax.scatter([], [], color="gray", marker="s", s=80, label="smart_context"),
+    ]
+    ax.legend(handles=domain_handles + shape_handles, loc="best", fontsize=7, ncol=2)
+
+    ax.set_xlabel("Cost (USD)")
+    ax.set_ylabel("Resolve rate")
+    ax.set_title(
+        "SBP — Test-time Compute: no_compression → smart_context by Domain"
+        " (context editing instances)"
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {output_path}")
+
+
 # ---------------------------------------------------------------------------
 # Summary table
 # ---------------------------------------------------------------------------
@@ -491,6 +593,7 @@ def main() -> None:
         output_path=output_dir / "resolve_rate_vs_compression_ratio.png",
     )
     plot_aggregate_summary(all_records, output_dir / "aggregate_summary.png")
+    plot_domain_test_time_compute(sbp_records, output_dir / "sbp_domain_test_time_compute.png")
 
     print_summary_table(all_records)
     sys.exit(0)
