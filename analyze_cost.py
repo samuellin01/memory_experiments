@@ -245,12 +245,12 @@ _SC_MARKERS = ["s", "^", "D", "v", "P", "*", "X", "h", "p", "8"]
 
 
 def _config_colors(variants: list[str]) -> dict[str, object]:
-    """Return a color mapping: no_compression → steelblue, each variant → tab10 color.
+    """Return a color mapping: no_compression → dimgray, each variant → tab10 color.
 
     Colors cycle through the 10 tab10 palette entries when there are more than 10 variants.
     """
     palette = plt.get_cmap("tab10")
-    colors: dict[str, object] = {"no_compression": "steelblue"}
+    colors: dict[str, object] = {"no_compression": "dimgray"}
     for i, v in enumerate(variants):
         colors[v] = palette((i % 10) / 10)
     return colors
@@ -471,7 +471,7 @@ def plot_aggregate_summary(
 
         ax.bar(x, avgs, color=group_colors, alpha=0.85, width=0.5)
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_xticklabels(labels, fontsize=9, rotation=45, ha="right")
         ax.set_ylabel(ylabel)
         ax.set_title(title_suffix)
         if metric == "resolve":
@@ -514,6 +514,8 @@ def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> Non
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
+    domain_counts: dict[str, int] = {}
+
     for domain in domains:
         recs = domain_records[domain]
         color = domain_colors[domain]
@@ -533,9 +535,19 @@ def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> Non
         if not nc_costs or not nc_resolves:
             continue
 
+        n = len(seen)
+        domain_counts[domain] = n
         nc_x = mean(nc_costs)
         nc_y = mean(nc_resolves)
         ax.scatter(nc_x, nc_y, color=color, marker="o", s=80, zorder=3)
+        ax.annotate(
+            f"n={n}",
+            xy=(nc_x, nc_y),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=7,
+            color=color,
+        )
 
         # One point per smart_context variant
         domain_variants = sorted({r["variant"] for r in recs})
@@ -556,8 +568,15 @@ def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> Non
                 arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
             )
 
-    # Build legend: one colored patch per domain, plus marker-shape entries
-    domain_handles = [mpatches.Patch(color=domain_colors[d], label=d) for d in domains]
+    # Build legend: one colored patch per domain (with count), plus marker-shape entries
+    domain_handles = [
+        mpatches.Patch(
+            color=domain_colors[d],
+            label=f"{d} (n={domain_counts.get(d, '?')})",
+        )
+        for d in domains
+        if d in domain_counts
+    ]
     shape_handles = [
         ax.scatter([], [], color="gray", marker="o", s=80, label="no_compression"),
     ] + [
