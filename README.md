@@ -89,13 +89,3 @@ You can also point either command at a different directory with `--experiment-di
 python repo_manager.py list-instances --experiment-dir /path/to/other/sbp
 python repo_manager.py file-counts --experiment-dir /path/to/other/sbp
 ```
-
-### `visualize_token_usage.py` — Token usage visualization
-
-Generates graphs and an HTML report comparing token usage across experiment variants.
-
-```bash
-python visualize_token_usage.py
-```
-
-Output is saved to the `output_graphs/` directory.
