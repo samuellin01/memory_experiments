@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-analyze_cost.py — Compare monetary cost and resolve rate across experiment
-configurations (no_compression vs smart_context), filtered to only those
-instances where context editing actually occurred.
+analyze_cost.py — Compare monetary cost and resolve rate across multiple
+experiment configurations (no_compression vs each distinct smart_context
+variant such as smart_context_50000_20000, smart_context_100000_40000, …),
+filtered to only those instances where context editing actually occurred.
+
+Variant names are auto-discovered from the data; no hardcoding required.
 
 Also analyzes cost/resolve rate in relation to the effective compression ratio.
 
@@ -238,29 +241,66 @@ def _extract_domain(instance_name: str) -> str:
     return f"{owner}/{repo}"
 
 
-def _bar_positions(n: int, width: float = 0.35) -> tuple[np.ndarray, np.ndarray]:
-    x = np.arange(n)
-    return x - width / 2, x + width / 2
+_SC_MARKERS = ["s", "^", "D", "v", "P", "*", "X", "h", "p", "8"]
+
+
+def _config_colors(variants: list[str]) -> dict[str, object]:
+    """Return a color mapping: no_compression → steelblue, each variant → tab10 color.
+
+    Colors cycle through the 10 tab10 palette entries when there are more than 10 variants.
+    """
+    palette = plt.get_cmap("tab10")
+    colors: dict[str, object] = {"no_compression": "steelblue"}
+    for i, v in enumerate(variants):
+        colors[v] = palette((i % 10) / 10)
+    return colors
+
+
+def _config_markers(variants: list[str]) -> dict[str, str]:
+    """Return a marker mapping: no_compression → 'o', each variant → distinct marker.
+
+    Markers cycle through _SC_MARKERS when there are more than len(_SC_MARKERS) variants.
+    """
+    markers: dict[str, str] = {"no_compression": "o"}
+    for i, v in enumerate(variants):
+        markers[v] = _SC_MARKERS[i % len(_SC_MARKERS)]
+    return markers
 
 
 def plot_cost_comparison(records: list[dict], title: str, output_path: Path) -> None:
-    """Grouped bar chart: no_compression cost vs smart_context cost per instance."""
+    """Grouped bar chart: no_compression cost vs each smart_context variant cost per instance."""
     valid = [r for r in records if r["no_comp_cost"] is not None or r["sc_cost"] is not None]
     if not valid:
         print(f"  No cost data available for {title}, skipping.")
         return
 
-    instances = [_short_name(r["instance"]) for r in valid]
-    nc_costs = [r["no_comp_cost"] if r["no_comp_cost"] is not None else 0 for r in valid]
-    sc_costs = [r["sc_cost"] if r["sc_cost"] is not None else 0 for r in valid]
+    # Build per-instance data: preserve insertion order, deduplicate instances
+    inst_data: dict[str, dict[str, float | None]] = {}
+    for r in valid:
+        inst = r["instance"]
+        if inst not in inst_data:
+            inst_data[inst] = {}
+        inst_data[inst]["no_compression"] = r.get("no_comp_cost")
+        inst_data[inst][r["variant"]] = r.get("sc_cost")
+
+    inst_keys = list(inst_data.keys())
+    instances = [_short_name(k) for k in inst_keys]
+    all_variants = sorted({r["variant"] for r in valid})
+    configs = ["no_compression"] + all_variants
+    colors = _config_colors(all_variants)
 
     n = len(instances)
-    pos_nc, pos_sc = _bar_positions(n)
+    n_configs = len(configs)
+    bar_width = min(0.8 / n_configs, 0.35)
+    x = np.arange(n)
 
     fig, ax = plt.subplots(figsize=(max(10, n * 0.7), 6))
-    ax.bar(pos_nc, nc_costs, width=0.35, label="no_compression", color="steelblue", alpha=0.85)
-    ax.bar(pos_sc, sc_costs, width=0.35, label="smart_context", color="darkorange", alpha=0.85)
-    ax.set_xticks(np.arange(n))
+    for i, config in enumerate(configs):
+        offset = (i - (n_configs - 1) / 2) * bar_width
+        vals = [(inst_data[k].get(config) or 0) for k in inst_keys]
+        ax.bar(x + offset, vals, width=bar_width, label=config, color=colors[config], alpha=0.85)
+
+    ax.set_xticks(x)
     ax.set_xticklabels(instances, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel("Cost (USD)")
     ax.set_title(title)
@@ -272,7 +312,7 @@ def plot_cost_comparison(records: list[dict], title: str, output_path: Path) -> 
 
 
 def plot_resolve_rate(records: list[dict], title: str, output_path: Path) -> None:
-    """Grouped bar chart: no_compression vs smart_context resolve rate per instance."""
+    """Grouped bar chart: no_compression vs each smart_context variant resolve rate per instance."""
     valid = [
         r for r in records
         if r["no_comp_resolve"] is not None or r["sc_resolve"] is not None
@@ -281,17 +321,32 @@ def plot_resolve_rate(records: list[dict], title: str, output_path: Path) -> Non
         print(f"  No resolve rate data available for {title}, skipping.")
         return
 
-    instances = [_short_name(r["instance"]) for r in valid]
-    nc_rr = [r["no_comp_resolve"] if r["no_comp_resolve"] is not None else 0 for r in valid]
-    sc_rr = [r["sc_resolve"] if r["sc_resolve"] is not None else 0 for r in valid]
+    inst_data: dict[str, dict[str, float | None]] = {}
+    for r in valid:
+        inst = r["instance"]
+        if inst not in inst_data:
+            inst_data[inst] = {}
+        inst_data[inst]["no_compression"] = r.get("no_comp_resolve")
+        inst_data[inst][r["variant"]] = r.get("sc_resolve")
+
+    inst_keys = list(inst_data.keys())
+    instances = [_short_name(k) for k in inst_keys]
+    all_variants = sorted({r["variant"] for r in valid})
+    configs = ["no_compression"] + all_variants
+    colors = _config_colors(all_variants)
 
     n = len(instances)
-    pos_nc, pos_sc = _bar_positions(n)
+    n_configs = len(configs)
+    bar_width = min(0.8 / n_configs, 0.35)
+    x = np.arange(n)
 
     fig, ax = plt.subplots(figsize=(max(10, n * 0.7), 6))
-    ax.bar(pos_nc, nc_rr, width=0.35, label="no_compression", color="steelblue", alpha=0.85)
-    ax.bar(pos_sc, sc_rr, width=0.35, label="smart_context", color="darkorange", alpha=0.85)
-    ax.set_xticks(np.arange(n))
+    for i, config in enumerate(configs):
+        offset = (i - (n_configs - 1) / 2) * bar_width
+        vals = [(inst_data[k].get(config) or 0) for k in inst_keys]
+        ax.bar(x + offset, vals, width=bar_width, label=config, color=colors[config], alpha=0.85)
+
+    ax.set_xticks(x)
     ax.set_xticklabels(instances, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel("Resolve rate")
     ax.set_ylim(0, 1.1)
@@ -315,35 +370,43 @@ def plot_scatter(
     ratio for all instances across both benchmarks.
 
     Each point is coloured by benchmark (SBP vs OSWorld) and shaped by config.
+    no_compression uses marker 'o'; each smart_context variant uses a distinct
+    marker from _SC_MARKERS.
     """
     fig, ax = plt.subplots(figsize=(9, 6))
 
-    colors = {"sbp": "steelblue", "osworld": "darkorange"}
-    default_marker = "D"
-    markers = {"no_compression": "o", "smart_context": "s"}
+    bench_colors = {"sbp": "steelblue", "osworld": "darkorange"}
+
+    # Discover all variants across all experiments
+    all_variants = sorted({r["variant"] for records in all_records.values() for r in records})
+    markers = _config_markers(all_variants)
 
     plotted_labels: set[str] = set()
 
     for exp_name, records in all_records.items():
+        color = bench_colors.get(exp_name, "gray")
         for r in records:
             ratio = r["compression_ratio"]
-            # Both no_compression and smart_context values
-            for config_key, val in [
-                ("no_compression", r.get(f"no_comp_{y_key}")),
-                ("smart_context", r.get(f"sc_{y_key}")),
-            ]:
-                if val is None:
-                    continue
-                color = colors.get(exp_name, "gray")
-                marker = markers.get(config_key, default_marker)
-                label = f"{exp_name} / {config_key}"
-                handle = ax.scatter(
-                    ratio,
-                    val,
-                    c=color,
-                    marker=marker,
-                    alpha=0.75,
-                    s=60,
+            # no_compression point
+            nc_val = r.get(f"no_comp_{y_key}")
+            if nc_val is not None:
+                label = f"{exp_name} / no_compression"
+                ax.scatter(
+                    ratio, nc_val,
+                    c=color, marker=markers["no_compression"],
+                    alpha=0.75, s=60,
+                    label=label if label not in plotted_labels else "_nolegend_",
+                )
+                plotted_labels.add(label)
+            # smart_context variant point
+            sc_val = r.get(f"sc_{y_key}")
+            if sc_val is not None:
+                variant = r["variant"]
+                label = f"{exp_name} / {variant}"
+                ax.scatter(
+                    ratio, sc_val,
+                    c=color, marker=markers.get(variant, "D"),
+                    alpha=0.75, s=60,
                     label=label if label not in plotted_labels else "_nolegend_",
                 )
                 plotted_labels.add(label)
@@ -364,8 +427,12 @@ def plot_aggregate_summary(
 ) -> None:
     """
     Summary bar chart with aggregate (average) cost and resolve rate
-    by benchmark and config.
+    by benchmark and config (no_compression + each distinct smart_context variant).
     """
+    # Discover all variants across all experiments for consistent color assignment
+    all_variants = sorted({r["variant"] for records in all_records.values() for r in records})
+    colors = _config_colors(all_variants)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     for ax, metric, ylabel, title_suffix in [
@@ -373,32 +440,36 @@ def plot_aggregate_summary(
         (axes[1], "resolve", "Avg resolve rate", "Average Resolve Rate"),
     ]:
         groups: dict[str, list[float]] = {}
+        group_colors: list[object] = []
+
         for exp_name, records in all_records.items():
-            for config_key in ("no_compression", "smart_context"):
-                if config_key == "no_compression":
-                    vals = [r.get(f"no_comp_{metric}") for r in records if r.get(f"no_comp_{metric}") is not None]
-                else:
-                    vals = [r.get(f"sc_{metric}") for r in records if r.get(f"sc_{metric}") is not None]
-                group_label = f"{exp_name}\n{config_key}"
-                if vals:
-                    groups[group_label] = vals
+            # no_compression — deduplicate by instance so each instance counts once
+            seen: set[str] = set()
+            nc_vals: list[float] = []
+            for r in records:
+                if r["instance"] not in seen and r.get(f"no_comp_{metric}") is not None:
+                    nc_vals.append(float(r[f"no_comp_{metric}"]))
+                    seen.add(r["instance"])
+            nc_label = f"{exp_name}\nno_compression"
+            if nc_vals:
+                groups[nc_label] = nc_vals
+                group_colors.append(colors["no_compression"])
+
+            # Per variant
+            exp_variants = sorted({r["variant"] for r in records})
+            for variant in exp_variants:
+                v_recs = [r for r in records if r["variant"] == variant]
+                sc_vals = [r[f"sc_{metric}"] for r in v_recs if r.get(f"sc_{metric}") is not None]
+                v_label = f"{exp_name}\n{variant}"
+                if sc_vals:
+                    groups[v_label] = sc_vals
+                    group_colors.append(colors.get(variant, "gray"))
 
         labels = list(groups.keys())
         avgs = [mean(v) for v in groups.values()]
-
         x = np.arange(len(labels))
-        bar_colors = []
-        for lbl in labels:
-            if "sbp" in lbl and "no_compression" in lbl:
-                bar_colors.append("steelblue")
-            elif "sbp" in lbl and "smart_context" in lbl:
-                bar_colors.append("royalblue")
-            elif "osworld" in lbl and "no_compression" in lbl:
-                bar_colors.append("darkorange")
-            else:
-                bar_colors.append("orange")
 
-        ax.bar(x, avgs, color=bar_colors, alpha=0.85, width=0.5)
+        ax.bar(x, avgs, color=group_colors, alpha=0.85, width=0.5)
         ax.set_xticks(x)
         ax.set_xticklabels(labels, fontsize=9)
         ax.set_ylabel(ylabel)
@@ -418,8 +489,9 @@ def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> Non
     Scatter plot of cost (X) vs resolve rate (Y) for SBP records with context
     editing, grouped by domain.
 
-    For each domain two points are drawn (no_compression and smart_context) and
-    connected by an arrow showing the direction of change.
+    For each domain one no_compression point is drawn, plus one point per
+    smart_context variant, each connected to the no_compression point by an
+    arrow showing the direction of change.
     """
     # Group records by domain
     domain_records: dict[str, list[dict]] = {}
@@ -434,49 +506,70 @@ def plot_domain_test_time_compute(records: list[dict], output_path: Path) -> Non
     domains = sorted(domain_records.keys())
     n_domains = len(domains)
     cmap = plt.get_cmap("tab20")
-    colors = {d: cmap(i / n_domains if n_domains > 1 else 0.5) for i, d in enumerate(domains)}
+    domain_colors = {d: cmap(i / n_domains if n_domains > 1 else 0.5) for i, d in enumerate(domains)}
+
+    # Gather all variants to assign consistent markers
+    all_variants = sorted({r["variant"] for r in records})
+    variant_markers = _config_markers(all_variants)
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
     for domain in domains:
         recs = domain_records[domain]
-        color = colors[domain]
+        color = domain_colors[domain]
 
-        nc_costs = [r["no_comp_cost"] for r in recs if r["no_comp_cost"] is not None]
-        nc_resolves = [r["no_comp_resolve"] for r in recs if r["no_comp_resolve"] is not None]
-        sc_costs = [r["sc_cost"] for r in recs if r["sc_cost"] is not None]
-        sc_resolves = [r["sc_resolve"] for r in recs if r["sc_resolve"] is not None]
+        # no_compression point — deduplicate by instance
+        seen: set[str] = set()
+        nc_costs: list[float] = []
+        nc_resolves: list[float] = []
+        for r in recs:
+            if r["instance"] not in seen:
+                if r["no_comp_cost"] is not None:
+                    nc_costs.append(r["no_comp_cost"])
+                if r["no_comp_resolve"] is not None:
+                    nc_resolves.append(r["no_comp_resolve"])
+                seen.add(r["instance"])
 
-        if not nc_costs or not nc_resolves or not sc_costs or not sc_resolves:
+        if not nc_costs or not nc_resolves:
             continue
 
         nc_x = mean(nc_costs)
         nc_y = mean(nc_resolves)
-        sc_x = mean(sc_costs)
-        sc_y = mean(sc_resolves)
-
         ax.scatter(nc_x, nc_y, color=color, marker="o", s=80, zorder=3)
-        ax.scatter(sc_x, sc_y, color=color, marker="s", s=80, zorder=3)
 
-        ax.annotate(
-            "",
-            xy=(sc_x, sc_y),
-            xytext=(nc_x, nc_y),
-            arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
-        )
+        # One point per smart_context variant
+        domain_variants = sorted({r["variant"] for r in recs})
+        for variant in domain_variants:
+            v_recs = [r for r in recs if r["variant"] == variant]
+            sc_costs = [r["sc_cost"] for r in v_recs if r["sc_cost"] is not None]
+            sc_resolves = [r["sc_resolve"] for r in v_recs if r["sc_resolve"] is not None]
+            if not sc_costs or not sc_resolves:
+                continue
+
+            sc_x = mean(sc_costs)
+            sc_y = mean(sc_resolves)
+            ax.scatter(sc_x, sc_y, color=color, marker=variant_markers.get(variant, "s"), s=80, zorder=3)
+            ax.annotate(
+                "",
+                xy=(sc_x, sc_y),
+                xytext=(nc_x, nc_y),
+                arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
+            )
 
     # Build legend: one colored patch per domain, plus marker-shape entries
-    domain_handles = [mpatches.Patch(color=colors[d], label=d) for d in domains]
+    domain_handles = [mpatches.Patch(color=domain_colors[d], label=d) for d in domains]
     shape_handles = [
         ax.scatter([], [], color="gray", marker="o", s=80, label="no_compression"),
-        ax.scatter([], [], color="gray", marker="s", s=80, label="smart_context"),
+    ] + [
+        ax.scatter([], [], color="gray", marker=variant_markers.get(v, "s"), s=80, label=v)
+        for v in all_variants
     ]
     ax.legend(handles=domain_handles + shape_handles, loc="best", fontsize=7, ncol=2)
 
     ax.set_xlabel("Cost (USD)")
     ax.set_ylabel("Resolve rate")
     ax.set_title(
-        "SBP — Test-time Compute: no_compression → smart_context by Domain"
+        "SBP — Test-time Compute: no_compression → smart_context variants by Domain"
         " (context editing instances)"
     )
     fig.tight_layout()
@@ -495,26 +588,40 @@ def print_summary_table(all_records: dict[str, list[dict]]) -> None:
     print("SUMMARY TABLE (instances where context editing occurred)")
     print("=" * 72)
 
+    def _fmt(vals: list[float]) -> str:
+        if not vals:
+            return "N/A"
+        return f"{mean(vals):.4f} (n={len(vals)})"
+
     for exp_name, records in all_records.items():
         print(f"\n--- {exp_name.upper()} ---")
         print(f"  Instances with context editing detected: {len(records)}")
 
-        nc_costs = [r["no_comp_cost"] for r in records if r["no_comp_cost"] is not None]
-        sc_costs = [r["sc_cost"] for r in records if r["sc_cost"] is not None]
-        nc_resolve = [r["no_comp_resolve"] for r in records if r["no_comp_resolve"] is not None]
-        sc_resolve = [r["sc_resolve"] for r in records if r["sc_resolve"] is not None]
-        ratios = [r["compression_ratio"] for r in records]
-
-        def _fmt(vals: list[float]) -> str:
-            if not vals:
-                return "N/A"
-            return f"{mean(vals):.4f} (n={len(vals)})"
+        # no_compression — deduplicate by instance
+        seen: set[str] = set()
+        nc_costs: list[float] = []
+        nc_resolve: list[float] = []
+        for r in records:
+            if r["instance"] not in seen:
+                if r["no_comp_cost"] is not None:
+                    nc_costs.append(r["no_comp_cost"])
+                if r["no_comp_resolve"] is not None:
+                    nc_resolve.append(r["no_comp_resolve"])
+                seen.add(r["instance"])
 
         print(f"  Avg cost  no_compression : {_fmt(nc_costs)}")
-        print(f"  Avg cost  smart_context  : {_fmt(sc_costs)}")
         print(f"  Resolve   no_compression : {_fmt(nc_resolve)}")
-        print(f"  Resolve   smart_context  : {_fmt(sc_resolve)}")
-        print(f"  Avg effective compression ratio: {_fmt(ratios)}")
+
+        # Per variant
+        variants = sorted({r["variant"] for r in records})
+        for variant in variants:
+            v_recs = [r for r in records if r["variant"] == variant]
+            sc_costs = [r["sc_cost"] for r in v_recs if r["sc_cost"] is not None]
+            sc_resolve = [r["sc_resolve"] for r in v_recs if r["sc_resolve"] is not None]
+            ratios = [r["compression_ratio"] for r in v_recs]
+            print(f"  Avg cost  {variant} : {_fmt(sc_costs)}")
+            print(f"  Resolve   {variant} : {_fmt(sc_resolve)}")
+            print(f"  Avg effective compression ratio ({variant}): {_fmt(ratios)}")
 
     print()
 
